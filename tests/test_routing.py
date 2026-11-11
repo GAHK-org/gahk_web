@@ -1,11 +1,16 @@
 """The CGI fallback, the development server's .htaccess emulation, and their agreement with .htaccess."""
 
+import re
+from pathlib import Path
+
 import pytest
 from conftest import GANG, Client, image, publish
 
 from gahk_web import routing
 from gahk_web.config import Config
 from gahk_web.devserver import make_dev_app
+
+HTACCESS = Path(__file__).resolve().parents[1] / "public_html" / ".htaccess"
 
 
 def test_no_snapshot_yet_is_503(client: Client) -> None:
@@ -96,6 +101,28 @@ def test_other_methods_are_refused(client: Client) -> None:
     publish(client)
     assert client.request("PUT", "/kontakt").status == 405
     assert client.post("/kontakt").status == 405
+
+
+def test_htaccess_names_the_same_rules() -> None:
+    text = HTACCESS.read_text()
+    assert "DirectorySlash Off" in text
+    assert "RewriteCond %{REQUEST_FILENAME}/index.html -f" in text
+    assert "RewriteRule ^(.*)$ cgi-bin/gahk.cgi/$1 [L,QSA]" in text
+    assert "RewriteRule ^public/image/(.+)$ /static/legacy/image/$1 [R=301,L]" in text
+    rules = re.findall(
+        r"^\s*RewriteRule \^(\S+) https://intern\.gahk\.dk/\S* \[R=308,L\]$", text, re.MULTILINE
+    )
+    assert len(rules) == 6
+    for prefix in (
+        "intern|nyintern",
+        "admin|django-admin|wiki",
+        "photo-album|media",
+        "health",
+        "listansoegninger|eksport",
+        "showAnsoegning|setasreceived|kasser",
+    ):
+        assert any(prefix in rule for rule in rules), prefix
+    assert "max-age=31536000, immutable" in text
 
 
 # --- the development server emulates .htaccess ---

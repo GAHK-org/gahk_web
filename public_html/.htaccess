@@ -1,0 +1,118 @@
+# gahk.dk on Hetzner Webhosting (Apache + mod_rewrite, Python only as CGI).
+#
+# Installed into ~/public_html/ from each release; edit it here, never on the server.
+# Every page is a pre-rendered file; Apache serves those without starting Python. Whatever has no
+# file goes to cgi-bin/gahk.cgi (the sync API, the forms, the visit beacon, the calendar
+# pass-through, redirects of old addresses and the 404 page).
+# gahk_web/routing.py mirrors these rules for the development server; keep the two in step.
+#
+# [VERIFY ON HETZNER] marks what could not be tested before the site ran on the webhost.
+
+Options -Indexes -MultiViews
+# Pages live at /faciliteter (no slash): never let Apache redirect a folder to its slashed form.
+DirectorySlash Off
+DirectoryIndex index.html
+AddDefaultCharset utf-8
+# Apache's own 404s (rare: most misses go to the CGI app, which sends the same page).
+ErrorDocument 404 /404.html
+
+# [VERIFY ON HETZNER] Hetzner runs *.cgi under public_html as CGI out of the box. If gahk.cgi is
+# returned as text instead of run, uncomment these two lines (Options needs AllowOverride Options).
+# Options +ExecCGI
+# AddHandler cgi-script .cgi
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # --- Canonical host and scheme: www.gahk.dk → gahk.dk, http → https ---------------------------
+  # [VERIFY ON HETZNER] that %{HTTPS} is "on" behind Hetzner's TLS termination (no redirect loop).
+  RewriteCond %{HTTP_HOST} ^www\.(.+)$ [NC]
+  RewriteRule ^ https://%1%{REQUEST_URI} [R=301,L,NE]
+  RewriteCond %{HTTPS} !=on
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,NE]
+
+  # --- Never serve dot-files (.htaccess, .tmp-* files mid-write); certificates' .well-known is ok --
+  RewriteRule (^|/)\.(?!well-known/) - [F,L]
+
+  # --- The CGI script itself: stop here (also ends the second round after the rewrite below) ---
+  RewriteRule ^cgi-bin/ - [L]
+
+  # --- The intranet moved to intern.gahk.dk. 308 keeps the method and body (POSTs survive). ---
+  # /intern/x and /nyintern/x → intern.gahk.dk/x
+  RewriteRule ^(?:intern|nyintern)(?:/(.*))?$ https://intern.gahk.dk/$1 [R=308,L]
+  RewriteRule ^((?:admin|django-admin|wiki)(?:/.*)?)$ https://intern.gahk.dk/$1 [R=308,L]
+  RewriteRule ^((?:photo-album|media)/.*)$ https://intern.gahk.dk/$1 [R=308,L]
+  RewriteRule ^health/?$ https://intern.gahk.dk/health [R=308,L]
+  RewriteRule ^(optagelse/(?:listansoegninger|eksport))/?$ https://intern.gahk.dk/$1 [R=308,L]
+  RewriteRule ^(optagelse/(?:showAnsoegning|setasreceived|kasser)/.+)$ https://intern.gahk.dk/$1 [R=308,L]
+
+  # --- The oldest image addresses. The CGI app then sends /static/legacy/image/... on to the
+  # picture's /billeder/ address (from the published snapshot), or answers 404.
+  RewriteRule ^public/image/(.+)$ /static/legacy/image/$1 [R=301,L]
+
+  # --- Icons browsers ask for at the root ---
+  RewriteRule ^favicon\.ico$ static/favicon.ico [L]
+  RewriteRule ^apple-touch-icon(?:-precomposed)?\.png$ static/img/apple-touch-icon.png [L]
+
+  # --- Files that exist are served as they are (GET/HEAD only: a POST must reach the app) ---
+  RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
+  RewriteCond %{REQUEST_FILENAME} -f
+  RewriteRule ^ - [L]
+
+  # --- Pre-rendered pages: /faciliteter and /faciliteter/ both serve faciliteter/index.html ---
+  # [VERIFY ON HETZNER] that the trailing-slash form also finds the file ("…/faciliteter//index.html").
+  RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
+  RewriteCond %{REQUEST_FILENAME}/index.html -f
+  RewriteRule ^(.*?)/?$ $1/index.html [L]
+
+  # --- Everything else: the CGI app, with the original path as PATH_INFO ---
+  # [VERIFY ON HETZNER] that PATH_INFO/REQUEST_URI reach the script (AcceptPathInfo).
+  RewriteRule ^(.*)$ cgi-bin/gahk.cgi/$1 [L,QSA]
+</IfModule>
+
+# --- Files that must never be served, whatever happens to the rules above ---
+<FilesMatch "\.(?:ini|py|pyc|sql|cfg|toml|lock|log|bak|sh)$">
+  Require all denied
+</FilesMatch>
+
+# --- Caching. Applies to files served from disk; the CGI app sets its own headers. ---
+# [VERIFY ON HETZNER] mod_headers and ap_expr <If> (Apache 2.4) are available in .htaccess.
+<IfModule mod_headers.c>
+  # Pre-rendered pages: short, so an edit on intern shows within a minute.
+  <If "%{REQUEST_FILENAME} =~ m#\.(?:html|xml|txt)$#">
+    Header set Cache-Control "public, max-age=60"
+  </If>
+  # Pictures: the address carries the content hash, so they never change.
+  <If "%{REQUEST_FILENAME} =~ m#/billeder/[0-9a-f]{16}/[^/]+$#">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </If>
+  # Site assets with a content hash in the name (site.1a2b3c4d.css).
+  <If "%{REQUEST_FILENAME} =~ m#/static/.+\.[0-9a-f]{8,}\.[a-z0-9]+$#">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </If>
+  # Unhashed assets (fonts, push icons, favicon): a week.
+  <If "%{REQUEST_FILENAME} =~ m#/static/(?:fonts|icons|img)/[^/]+$# || %{REQUEST_FILENAME} =~ m#/static/favicon\.ico$#">
+    Header set Cache-Control "public, max-age=604800"
+  </If>
+  # The self-removing service worker: browsers must always fetch it fresh.
+  <If "%{REQUEST_FILENAME} =~ m#/sw\.js$#">
+    Header set Cache-Control "no-cache"
+  </If>
+
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  # [VERIFY ON HETZNER] only once https works for gahk.dk and www.gahk.dk (browsers remember it).
+  Header always set Strict-Transport-Security "max-age=31536000" "expr=%{HTTPS} == 'on'"
+</IfModule>
+
+<IfModule mod_mime.c>
+  AddType application/manifest+json .webmanifest
+  AddType image/webp .webp
+  AddType font/woff2 .woff2
+</IfModule>
+
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css text/plain text/xml application/xml application/javascript text/javascript image/svg+xml
+</IfModule>

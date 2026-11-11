@@ -1,17 +1,24 @@
 import io
+import os
+import subprocess
+import sys
 from datetime import timedelta
 from email.message import Message
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
-from conftest import Client, page, publish, snapshot, upload_images
+from conftest import SYNC_KEY, Client, page, publish, snapshot, upload_images
 
 from gahk_web import db, kalender, render
 from gahk_web.clock import copenhagen_today
 from gahk_web.config import Config
 from gahk_web.snapshot import validate
+
+REPO = Path(__file__).resolve().parents[1]
+
 
 # --- preview ---
 
@@ -163,3 +170,43 @@ def test_no_rebuild_on_the_same_day(client: Client, cfg: Config) -> None:
     (cfg.public_html / "kontakt/index.html").write_text("edited by hand")
     client.get("/findes-ikke")
     assert (cfg.public_html / "kontakt/index.html").read_text() == "edited by hand"
+
+
+# --- the CGI stub, end to end ---
+
+
+def run_cgi(home: Path, environ: dict[str, str]) -> str:
+    env = {"PATH": os.environ.get("PATH", ""), "GAHK_WEB_HOME": str(home), **environ}
+    stub = REPO / "public_html" / "cgi-bin" / "gahk.cgi"
+    done = subprocess.run([sys.executable, str(stub)], env=env, capture_output=True, check=True, timeout=60)
+    return done.stdout.decode()
+
+
+def test_cgi_stub_without_a_release_answers_503(tmp_path: Path) -> None:
+    (tmp_path / "gahk_web").mkdir()
+    output = run_cgi(tmp_path, {"REQUEST_METHOD": "GET", "PATH_INFO": "/"})
+    assert output.startswith("Status: 503")
+
+
+def test_cgi_stub_runs_the_current_release(tmp_path: Path, cfg: Config, con: db.Connection) -> None:
+    release = tmp_path / "gahk_web" / "releases" / "abc1234"
+    release.mkdir(parents=True)
+    (release / "src").symlink_to(REPO / "src")
+    (tmp_path / "gahk_web" / "CURRENT").write_text("abc1234\n")
+    database = cfg.database
+    (tmp_path / "gahk_web" / "config.ini").write_text(
+        f"[database]\nhost = {database.host}\nport = {database.port}\nname = {database.name}\n"
+        f"user = {database.user}\npassword = {database.password}\n"
+        f"[sync]\nkey = {SYNC_KEY}\n[stats]\nsecret = {'s' * 40}\n"
+        f"[paths]\npublic_html = {cfg.public_html}\nstate_dir = {cfg.state_dir}\n"
+    )
+    output = run_cgi(
+        tmp_path, {"REQUEST_METHOD": "GET", "PATH_INFO": "/api/health", "SERVER_PROTOCOL": "HTTP/1.1"}
+    )
+    assert output.startswith("Status: 200 OK")
+    assert '"ok": true' in output
+    output = run_cgi(
+        tmp_path, {"REQUEST_METHOD": "GET", "PATH_INFO": "/intern/x", "REQUEST_URI": "/intern/x?y=1"}
+    )
+    assert "Status: 308" in output
+    assert "Location: https://intern.gahk.dk/x?y=1" in output
