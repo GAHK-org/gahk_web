@@ -33,7 +33,8 @@ addopts = "-ra"
 [tool.mypy]
 python_version = "3.11"
 mypy_path = "src"
-packages = ["gahk_web"]
+# The package, the build scripts, the release's selftest.py and the CGI stub (Python without .py).
+files = ["src/gahk_web", "scripts", "bundle", "public_html/cgi-bin/gahk.cgi"]
 strict = true
 warn_unreachable = true
 

@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""Build the release bundle the webhost's updater installs: python scripts/build_bundle.py
+
+    dist/gahk_web-<sha>.tar.gz      the release (layout below)
+    dist/manifest.json              {"version", "bundle", "sha256", "size", "built_at", "python"}
+    dist/manifest-<sha>.json        the same, kept beside the bundle so a pin can find it later
+    dist/updater.py, gahk.cgi, htaccess   the three files of the one-time bootstrap (DEPLOY.md)
+
+The bundle, with no absolute paths, no links and fixed owners, dates and modes:
+
+    VERSION                         the git sha
+    selftest.py                     python3 -I selftest.py: may this release go live?
+    bin/updater.py                  the self-updater (a copy of src/gahk_web/updater.py)
+    src/gahk_web/                   the package; its static/ holds only static-manifest.json
+    vendor/                         runtime dependencies from uv.lock, pure Python only
+    public_html/.htaccess
+    public_html/cgi-bin/gahk.cgi
+    public_html/static/             site assets: css/js with content-hashed names, the rest as they are
+
+Dependencies are installed for CPython 3.11 (the webhost's oldest python), then every compiled
+extension is deleted: MarkupSafe falls back to its pure-Python code, and a package that cannot is a
+build error. Finally the bundle's own selftest.py runs on the staged tree. Needs uv on PATH.
+"""
+
+import argparse
+import gzip
+import hashlib
+import io
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+from datetime import UTC, datetime
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+PACKAGE = ROOT / "src" / "gahk_web"
+HASHED_SUFFIXES = (".css", ".js")
+COMPILED_SUFFIXES = (".so", ".pyd", ".dylib")
+SKIP_NAMES = ("__pycache__", ".DS_Store")
+PYTHON_REQUIREMENT = ">=3.11"
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+class BuildError(Exception):
+    pass
+
+
+def run(*args: str, cwd: Path = ROOT, capture: bool = False) -> str:
+    done = subprocess.run(args, cwd=cwd, check=False, text=True, capture_output=capture)  # noqa: S603
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout or "").strip() if capture else ""
+        raise BuildError(f"{' '.join(args)} failed ({done.returncode}) {detail}".strip())
+    return done.stdout or ""
+
+
+def git_version() -> tuple[str, int]:
+    sha = run("git", "rev-parse", "HEAD", capture=True).strip()
+    when = int(run("git", "show", "-s", "--format=%ct", "HEAD", capture=True).strip())
+    if run("git", "status", "--porcelain", "--untracked-files=no", capture=True).strip():
+        print(f"warning: the working tree has uncommitted changes; the bundle still says {sha}")
+    return sha, when
+
+
+def copy_tree(source: Path, target: Path, skip: tuple[str, ...] = ()) -> None:
+    for path in sorted(source.rglob("*")):
+        rel = path.relative_to(source)
+        if any(part in SKIP_NAMES for part in rel.parts) or path.suffix == ".pyc":
+            continue
+        if rel.parts[0] in skip:
+            continue
+        dest = target / rel
+        if path.is_dir():
+            dest.mkdir(parents=True, exist_ok=True)
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, dest)
+
+
+def build_static(stage: Path) -> dict[str, str]:
+    """public_html/static with hashed css/js names; returns {"css/site.css": "css/site.<hash>.css"}."""
+    source = PACKAGE / "static"
+    target = stage / "public_html" / "static"
+    manifest: dict[str, str] = {}
+    for path in sorted(source.rglob("*")):
+        rel = path.relative_to(source)
+        if not path.is_file() or any(part in SKIP_NAMES for part in rel.parts):
+            continue
+        if rel.name == "static-manifest.json":
+            continue
+        name = rel.name
+        if path.suffix in HASHED_SUFFIXES:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+            name = f"{path.stem}.{digest}{path.suffix}"
+            manifest[rel.as_posix()] = rel.with_name(name).as_posix()
+        dest = target / rel.with_name(name)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, dest)
+    data = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    (target / "static-manifest.json").write_text(data, encoding="utf-8")
+    package_static = stage / "src" / "gahk_web" / "static"
+    package_static.mkdir(parents=True, exist_ok=True)
+    (package_static / "static-manifest.json").write_text(data, encoding="utf-8")
+    return manifest
+
+
+def find_python(version: str) -> str:
+    """A base interpreter (not the project's virtualenv): a path as it is, else uv finds the version."""
+    if os.sep in version:
+        return version
+    return run("uv", "python", "find", "--system", version, capture=True).strip()
+
+
+def build_vendor(stage: Path, python: str, scratch: Path) -> None:
+    vendor = stage / "vendor"
+    requirements = scratch / "requirements.txt"
+    run(
+        "uv",
+        "export",
+        "--frozen",
+        "--no-dev",
+        "--no-emit-project",
+        "--format",
+        "requirements-txt",
+        "--output-file",
+        str(requirements),
+        capture=True,
+    )
+    run(
+        "uv",
+        "pip",
+        "install",
+        "--quiet",
+        "--target",
+        str(vendor),
+        "--python",
+        python,
+        "--no-deps",
+        "--only-binary",
+        ":all:",
+        "--require-hashes",
+        "--requirement",
+        str(requirements),
+        capture=True,
+    )
+    for path in sorted(vendor.rglob("*"), reverse=True):
+        if path.is_dir() and (path.name in SKIP_NAMES or path == vendor / "bin"):
+            shutil.rmtree(path)
+        elif path.is_file() and (path.suffix in COMPILED_SUFFIXES or path.suffix == ".pyc"):
+            print(f"removing compiled file {path.relative_to(vendor)}")
+            path.unlink()
+    # Every top-level module must import from vendor/ alone (-S: no site-packages at all).
+    modules = sorted(
+        {
+            path.stem if path.is_file() else path.name
+            for path in vendor.iterdir()
+            if (path.is_dir() and (path / "__init__.py").is_file())
+            or (path.is_file() and path.suffix == ".py")
+        }
+    )
+    check = "import importlib,sys;sys.path.insert(0,sys.argv[1]);[importlib.import_module(m) for m in sys.argv[2:]]"
+    run(python, "-I", "-S", "-B", "-c", check, str(vendor), *modules, capture=True)
+    print(f"vendored and imported: {', '.join(modules)}")
+
+
+def stage_release(stage: Path, version: str, python: str, scratch: Path) -> None:
+    copy_tree(PACKAGE, stage / "src" / "gahk_web", skip=("static",))
+    build_static(stage)
+    for rel in (".htaccess", "cgi-bin/gahk.cgi"):
+        dest = stage / "public_html" / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / "public_html" / rel, dest)
+    (stage / "bin").mkdir()
+    shutil.copyfile(PACKAGE / "updater.py", stage / "bin" / "updater.py")
+    shutil.copyfile(ROOT / "bundle" / "selftest.py", stage / "selftest.py")
+    (stage / "VERSION").write_text(version + "\n", encoding="ascii")
+    build_vendor(stage, python, scratch)
+
+
+EXECUTABLES = {"selftest.py", "bin/updater.py", "public_html/cgi-bin/gahk.cgi"}
+
+
+def write_tarball(stage: Path, target: Path, mtime: int) -> None:
+    """A gzipped tar that depends only on the staged files: sorted, fixed owner, date and modes."""
+
+    def info(rel: str, path: Path) -> tarfile.TarInfo:
+        entry = tarfile.TarInfo(rel)
+        entry.mtime = mtime
+        entry.uid = entry.gid = 0
+        entry.uname = entry.gname = ""
+        if path.is_dir():
+            entry.type = tarfile.DIRTYPE
+            entry.mode = 0o755
+        else:
+            entry.size = path.stat().st_size
+            entry.mode = 0o755 if rel in EXECUTABLES else 0o644
+        return entry
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as tar:
+        for path in sorted(stage.rglob("*"), key=lambda p: p.relative_to(stage).as_posix()):
+            rel = path.relative_to(stage).as_posix()
+            if any(part in SKIP_NAMES for part in path.relative_to(stage).parts) or path.suffix == ".pyc":
+                continue
+            if path.is_symlink():
+                raise BuildError(f"the staged release holds a symlink: {rel}")
+            entry = info(rel, path)
+            if entry.isdir():
+                tar.addfile(entry)
+            else:
+                with path.open("rb") as handle:
+                    tar.addfile(entry, handle)
+    with target.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz:
+        gz.write(buffer.getvalue())
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("--out", type=Path, default=ROOT / "dist", help="output folder (default dist/)")
+    parser.add_argument("--python", default="3.11", help="python to vendor for and self-test with")
+    args = parser.parse_args(argv)
+
+    version, committed_at = git_version()
+    if not SHA_RE.match(version):
+        raise BuildError(f"not a git sha: {version}")
+    python = find_python(args.python)
+    out: Path = args.out
+    out.mkdir(parents=True, exist_ok=True)
+    for old in [*out.glob("gahk_web-*.tar.gz"), *out.glob("manifest*.json")]:
+        old.unlink()  # dist/ holds exactly one release, for CI's upload step
+    with tempfile.TemporaryDirectory(prefix="gahk_web-bundle-") as tmp:
+        scratch = Path(tmp)
+        stage = scratch / "release"
+        stage.mkdir()
+        stage_release(stage, version, python, scratch)
+        # -B: no __pycache__ in the staged tree (the webhost compiles on first use).
+        print(run(python, "-I", "-B", str(stage / "selftest.py"), capture=True).strip())
+
+        bundle_name = f"gahk_web-{version}.tar.gz"
+        bundle = out / bundle_name
+        write_tarball(stage, bundle, int(os.environ.get("SOURCE_DATE_EPOCH", committed_at)))
+
+    data = bundle.read_bytes()
+    manifest = {
+        "version": version,
+        "bundle": bundle_name,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "size": len(data),
+        "built_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "python": PYTHON_REQUIREMENT,
+    }
+    text = json.dumps(manifest, indent=2) + "\n"
+    (out / "manifest.json").write_text(text, encoding="utf-8")
+    (out / f"manifest-{version}.json").write_text(text, encoding="utf-8")
+    shutil.copyfile(PACKAGE / "updater.py", out / "updater.py")
+    shutil.copyfile(ROOT / "public_html" / "cgi-bin" / "gahk.cgi", out / "gahk.cgi")
+    shutil.copyfile(ROOT / "public_html" / ".htaccess", out / "htaccess")
+    print(f"built {bundle} ({len(data)} bytes, sha256 {manifest['sha256']})")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except BuildError as exc:
+        print(f"build_bundle: {exc}", file=sys.stderr)
+        sys.exit(1)
