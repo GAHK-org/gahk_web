@@ -1,0 +1,821 @@
+#!/usr/bin/env python3
+"""gahk.dk's self-updater: installs the newest CI-built release from GitHub. Standard library only.
+
+It runs only when intern.gahk.dk asks for it, with a signed POST /api/update (intern's beat task every
+15 minutes, and the "Opdatér gahk.dk nu" button in intern's Hjemmeside overview). The webhost runs no
+cron job. A nudge can only make the webhost fetch what CI published on GitHub; intern cannot hand it
+code of its own.
+
+One file, three places:
+
+    src/gahk_web/updater.py         in the repository and in every release
+    <release>/bin/updater.py        the same file; each successful update copies it to
+    ~/gahk_web/bin/updater.py       where the cgi-bin stub runs it from. Uploaded once by hand, it is
+                                    also the bootstrap: it installs the very first release.
+
+The cgi-bin stub checks the request's signature itself and then calls nudge() from
+~/gahk_web/bin/updater.py, so an update works before any release is installed and when the active
+release is broken. nudge() starts run() in a detached process and waits for it up to NUDGE_WAIT
+seconds; a slower install carries on after the HTTP request has been answered.
+
+run(), holding an exclusive lock:
+
+     1. read the manifest (manifest_url, or manifest-<pin>.json for a pinned version)
+     2. same version as ~/gahk_web/CURRENT: nothing to do
+     3. download the bundle (redirects followed, size capped), check its size and sha256
+     4. unpack it safely into releases/<sha> (no absolute paths, no "..", no links or devices)
+     5. run the release's selftest.py with this python, in a subprocess
+     6. apply the database migrations with the NEW code
+     7. install public_html/static (new files only), cgi-bin/gahk.cgi and .htaccess
+     8. switch CURRENT (written atomically)          <- the release goes live here
+     9. take the release's bin/updater.py if it passes its own --selftest
+    10. re-render the site with the new templates
+    11. delete hashed static files neither this nor the previous release uses; keep 3 releases
+
+Any failure before step 8 leaves the old release running and untouched (migrations excepted: they
+must keep working with the previous release). Steps 9-11 are repeated or done lazily by the next
+update or request, so an interrupted run never leaves a half-switched site. The outcome goes to
+<state_dir>/update.json, which GET /api/status reports, and every step to ~/gahk_web/var/update.log.
+
+Usage (no SSH on the webhost, so these are for development, tests and CI):
+
+    python3 -I updater.py run [--home DIR]    update now; prints the result as JSON
+    python3 -I updater.py --selftest          check that this file works with this python
+"""
+
+from __future__ import annotations
+
+import configparser
+import contextlib
+import fcntl
+import hashlib
+import io
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from collections.abc import Iterator
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path, PurePosixPath
+from typing import IO, Any
+from urllib.parse import urljoin, urlsplit
+
+DEFAULT_MANIFEST_URL = "https://github.com/GAHK-org/gahk_web/releases/download/production/manifest.json"
+
+KEEP_RELEASES = 3
+MANIFEST_MAX_BYTES = 64 * 1024
+BUNDLE_MAX_BYTES = 50 * 1024 * 1024
+UNPACKED_MAX_BYTES = 300 * 1024 * 1024
+MAX_MEMBERS = 20000
+HTTP_TIMEOUT = 30  # seconds per network operation
+DOWNLOAD_DEADLINE = 300  # seconds for a whole download
+SELFTEST_TIMEOUT = 120
+MIGRATE_TIMEOUT = 300
+RENDER_TIMEOUT = 300
+NUDGE_WAIT = 45  # how long the HTTP request waits for the update before it answers
+LOG_MAX_BYTES = 1024 * 1024
+MIN_PYTHON = (3, 11)
+
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+PYTHON_SPEC_RE = re.compile(r"^>=\s*([0-9]+)\.([0-9]+)$")
+# site.1a2b3c4d5e6f.css: the build gives css and js a content hash in their names.
+HASHED_STATIC_RE = re.compile(r"^.+\.[0-9a-f]{8,}\.[A-Za-z0-9]+$")
+
+# Runs a command of the release (python -m gahk_web <command>) with only its own code on sys.path.
+RELEASE_RUNNER = (
+    "import sys;r=sys.argv.pop(1);sys.path[:0]=[r+'/src',r+'/vendor'];"
+    "from gahk_web.__main__ import main;sys.exit(main(sys.argv[1:]))"
+)
+
+
+class UpdateError(Exception):
+    """An update step failed; the message says which and why (it ends up on intern's overview)."""
+
+
+# --- where things are ---
+
+
+@dataclass(frozen=True)
+class Layout:
+    home: Path
+    config: Path
+    public_html: Path
+    state_dir: Path
+    manifest_url: str = DEFAULT_MANIFEST_URL
+    pin: str = ""
+
+    @property
+    def app(self) -> Path:
+        return self.home / "gahk_web"
+
+    @property
+    def releases(self) -> Path:
+        return self.app / "releases"
+
+    @property
+    def current_file(self) -> Path:
+        return self.app / "CURRENT"
+
+    @property
+    def bin_updater(self) -> Path:
+        return self.app / "bin" / "updater.py"
+
+    @property
+    def var(self) -> Path:
+        return self.app / "var"
+
+    @property
+    def log_file(self) -> Path:
+        return self.var / "update.log"
+
+    @property
+    def lock_file(self) -> Path:
+        return self.var / "update.lock"
+
+    @property
+    def state_file(self) -> Path:
+        return self.state_dir / "update.json"
+
+
+def home_dir(home: Path | str | None = None) -> Path:
+    """The FTP home that holds gahk_web/ and public_html/ (as gahk_web.config decides it)."""
+    if home:
+        return Path(home)
+    return Path(os.environ.get("GAHK_WEB_HOME") or Path.home())
+
+
+def config_path(home: Path) -> Path:
+    explicit = os.environ.get("GAHK_WEB_CONFIG")
+    return Path(explicit) if explicit else home / "gahk_web" / "config.ini"
+
+
+def load_layout(home: Path | str | None = None) -> Layout:
+    """Paths from config.ini ([paths], [update]); defaults when the file or a key is missing."""
+    root = home_dir(home)
+    config = config_path(root)
+    parser = configparser.ConfigParser(interpolation=None)
+    with contextlib.suppress(configparser.Error, OSError):
+        parser.read(config, encoding="utf-8")
+
+    def get(section: str, key: str) -> str:
+        return parser.get(section, key, fallback="").strip()
+
+    return Layout(
+        home=root,
+        config=config,
+        public_html=Path(get("paths", "public_html") or root / "public_html"),
+        state_dir=Path(get("paths", "state_dir") or root / "gahk_web" / "state"),
+        manifest_url=get("update", "manifest_url") or DEFAULT_MANIFEST_URL,
+        pin=get("update", "pin").lower(),
+    )
+
+
+# --- small helpers ---
+
+
+def utc_now() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def log(layout: Layout, message: str) -> None:
+    """Append a line to update.log, which is rotated to update.log.1 at about 1 MB."""
+    try:
+        layout.var.mkdir(parents=True, exist_ok=True)
+        with contextlib.suppress(FileNotFoundError):
+            if layout.log_file.stat().st_size > LOG_MAX_BYTES:
+                layout.log_file.replace(layout.log_file.with_name("update.log.1"))
+        with layout.log_file.open("a", encoding="utf-8") as handle:
+            for line in message.rstrip().splitlines() or [""]:
+                handle.write(f"{utc_now()} {line}\n")
+    except OSError:
+        pass  # a log that cannot be written must not stop the update
+
+
+def write_atomic(target: Path, data: bytes, mode: int = 0o644) -> bool:
+    """Write via a temporary file and os.replace; False when the file already had this content."""
+    try:
+        if target.read_bytes() == data:
+            if (target.stat().st_mode & 0o777) != mode:
+                target.chmod(mode)
+            return False
+    except OSError:
+        pass
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".tmp-{target.name}-", dir=target.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        Path(tmp).chmod(mode)
+        Path(tmp).replace(target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            Path(tmp).unlink()
+        raise
+    return True
+
+
+def read_current(layout: Layout) -> str:
+    try:
+        sha = layout.current_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return sha if SHA_RE.match(sha) else ""
+
+
+def read_state(layout: Layout) -> dict[str, Any]:
+    try:
+        data = json.loads(layout.state_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+@contextlib.contextmanager
+def update_lock(layout: Layout) -> Iterator[bool]:
+    """An exclusive, non-blocking lock. The kernel drops it if the process dies, so it never sticks."""
+    layout.var.mkdir(parents=True, exist_ok=True)
+    with layout.lock_file.open("a") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+# --- the manifest and the download ---
+
+
+@dataclass(frozen=True)
+class Manifest:
+    version: str
+    bundle: str
+    sha256: str
+    size: int
+    python: str = ">=3.11"
+
+
+def parse_manifest(data: bytes) -> Manifest:
+    try:
+        raw = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise UpdateError("the manifest is not JSON") from exc
+    if not isinstance(raw, dict):
+        raise UpdateError("the manifest is not a JSON object")
+    version, bundle, sha256, size = raw.get("version"), raw.get("bundle"), raw.get("sha256"), raw.get("size")
+    python = raw.get("python", ">=3.11")
+    if not isinstance(version, str) or not SHA_RE.match(version):
+        raise UpdateError("the manifest's version is not a full git sha")
+    if bundle != f"gahk_web-{version}.tar.gz":
+        raise UpdateError("the manifest names an unexpected bundle")
+    if not isinstance(sha256, str) or not HEX64_RE.match(sha256):
+        raise UpdateError("the manifest's sha256 is not 64 hex digits")
+    if not isinstance(size, int) or isinstance(size, bool) or not 0 < size <= BUNDLE_MAX_BYTES:
+        raise UpdateError(f"the manifest's bundle size is missing or over {BUNDLE_MAX_BYTES} bytes")
+    if not isinstance(python, str) or not PYTHON_SPEC_RE.match(python):
+        raise UpdateError("the manifest's python requirement is not like >=3.11")
+    return Manifest(version, bundle, sha256, size, python)
+
+
+def python_ok(spec: str, version: tuple[int, ...] = tuple(sys.version_info[:2])) -> bool:
+    """Whether this python satisfies the manifest's requirement (">=3.11")."""
+    match = PYTHON_SPEC_RE.match(spec)
+    if not match:
+        return False
+    return version >= (int(match.group(1)), int(match.group(2)))
+
+
+class _NoDowngradeRedirects(urllib.request.HTTPRedirectHandler):
+    """Follow redirects (GitHub sends release downloads to its storage host), but never https → http."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: Any,  # noqa: ANN401 - http.client.HTTPMessage
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        if urlsplit(req.full_url).scheme == "https" and urlsplit(newurl).scheme != "https":
+            raise UpdateError(f"refused a redirect from https to {urlsplit(newurl).scheme}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open(url: str, allowed_scheme: str) -> IO[bytes]:
+    if urlsplit(url).scheme != allowed_scheme:
+        raise UpdateError(f"refused to fetch {url}: not {allowed_scheme}")
+    opener = urllib.request.build_opener(_NoDowngradeRedirects())
+    request = urllib.request.Request(  # noqa: S310 - the scheme is checked above
+        url, headers={"User-Agent": "gahk_web-updater", "Cache-Control": "no-cache"}
+    )
+    try:
+        response: IO[bytes] = opener.open(request, timeout=HTTP_TIMEOUT)
+    except urllib.error.HTTPError as exc:
+        raise UpdateError(f"{url}: HTTP {exc.code}") from exc
+    except (urllib.error.URLError, OSError) as exc:
+        raise UpdateError(f"{url}: {exc}") from exc
+    return response
+
+
+def fetch(url: str, allowed_scheme: str, limit: int, sink: IO[bytes]) -> str:
+    """Copy url into sink, at most limit bytes and DOWNLOAD_DEADLINE seconds; returns the sha256."""
+    digest = hashlib.sha256()
+    total = 0
+    deadline = time.monotonic() + DOWNLOAD_DEADLINE
+    with _open(url, allowed_scheme) as response:
+        while True:
+            try:
+                chunk = response.read(64 * 1024)
+            except OSError as exc:
+                raise UpdateError(f"{url}: {exc}") from exc
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                raise UpdateError(f"{url} is larger than {limit} bytes")
+            if time.monotonic() > deadline:
+                raise UpdateError(f"{url} took longer than {DOWNLOAD_DEADLINE} s")
+            digest.update(chunk)
+            sink.write(chunk)
+    return digest.hexdigest()
+
+
+def fetch_manifest(layout: Layout, version: str = "") -> Manifest:
+    """The production manifest, or with version the manifest CI keeps beside each bundle."""
+    url = urljoin(layout.manifest_url, f"manifest-{version}.json") if version else layout.manifest_url
+    buffer = io.BytesIO()
+    fetch(url, urlsplit(layout.manifest_url).scheme, MANIFEST_MAX_BYTES, buffer)
+    manifest = parse_manifest(buffer.getvalue())
+    if version and manifest.version != version:
+        raise UpdateError(f"manifest-{version}.json describes {manifest.version}")
+    return manifest
+
+
+def download(layout: Layout, manifest: Manifest, dest: Path) -> None:
+    url = urljoin(layout.manifest_url, manifest.bundle)
+    with dest.open("wb") as handle:
+        sha256 = fetch(
+            url, urlsplit(layout.manifest_url).scheme, min(manifest.size, BUNDLE_MAX_BYTES), handle
+        )
+    if dest.stat().st_size != manifest.size:
+        raise UpdateError(f"the bundle is {dest.stat().st_size} bytes, the manifest says {manifest.size}")
+    if sha256 != manifest.sha256:
+        raise UpdateError("the bundle's sha256 does not match the manifest")
+
+
+# --- unpacking ---
+
+
+def safe_member_path(name: str) -> PurePosixPath:
+    """The member's relative path, or UpdateError for anything that could land outside the release."""
+    if not name or "\x00" in name or "\\" in name:
+        raise UpdateError(f"unsafe path in the bundle: {name!r}")
+    path = PurePosixPath(name)
+    if path.is_absolute() or ".." in path.parts:
+        raise UpdateError(f"unsafe path in the bundle: {name!r}")
+    parts = [part for part in path.parts if part != "."]
+    if not parts:
+        raise UpdateError(f"unsafe path in the bundle: {name!r}")
+    return PurePosixPath(*parts)
+
+
+def unpack(bundle: Path, target: Path) -> None:
+    """Extract into target (which must not exist yet). Every member is checked before any is written:
+    only plain files and folders, relative paths that stay inside target, bounded count and size."""
+    try:
+        with tarfile.open(bundle, "r:gz") as tar:
+            members: list[tuple[PurePosixPath, tarfile.TarInfo]] = []
+            total = 0
+            for member in tar:
+                if len(members) >= MAX_MEMBERS:
+                    raise UpdateError(f"the bundle has more than {MAX_MEMBERS} entries")
+                rel = safe_member_path(member.name)
+                if not (member.isreg() or member.isdir()):
+                    raise UpdateError(f"the bundle holds a link or special file: {member.name!r}")
+                total += member.size
+                if total > UNPACKED_MAX_BYTES:
+                    raise UpdateError(f"the bundle unpacks to more than {UNPACKED_MAX_BYTES} bytes")
+                members.append((rel, member))
+            target.mkdir(parents=True)
+            for rel, member in members:
+                dest = target.joinpath(*rel.parts)
+                if member.isdir():
+                    dest.mkdir(parents=True, exist_ok=True)
+                    dest.chmod(0o755)
+                    continue
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                source = tar.extractfile(member)
+                if source is None:
+                    raise UpdateError(f"cannot read {member.name!r} from the bundle")
+                with source, dest.open("xb") as out:
+                    shutil.copyfileobj(source, out)
+                dest.chmod(0o755 if member.mode & 0o111 else 0o644)
+    except (tarfile.TarError, EOFError, OSError) as exc:
+        raise UpdateError(f"cannot unpack the bundle: {exc}") from exc
+
+
+# --- running the release ---
+
+
+def _subprocess_env(layout: Layout) -> dict[str, str]:
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in ("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR", "SYSTEMROOT")
+    }
+    env["HOME"] = os.environ.get("HOME", str(layout.home))
+    env["GAHK_WEB_HOME"] = str(layout.home)
+    env["GAHK_WEB_CONFIG"] = str(layout.config)
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def run_step(layout: Layout, what: str, args: list[str], timeout: int, cwd: Path | None = None) -> None:
+    """Run a python subprocess; its output goes to the log, a non-zero exit becomes an UpdateError."""
+    try:
+        done = subprocess.run(  # noqa: S603 - our own interpreter with fixed arguments
+            [sys.executable, "-I", *args],
+            cwd=cwd,
+            env=_subprocess_env(layout),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise UpdateError(f"{what} took longer than {timeout} s") from exc
+    except OSError as exc:
+        raise UpdateError(f"{what} could not start: {exc}") from exc
+    output = (done.stdout + done.stderr).decode("utf-8", "replace").strip()
+    if output:
+        log(layout, f"{what}: {output}")
+    if done.returncode != 0:
+        last = output.splitlines()[-1] if output else f"exit status {done.returncode}"
+        raise UpdateError(f"{what} failed: {last}")
+
+
+def run_release(layout: Layout, release: Path, what: str, command: str, timeout: int) -> None:
+    run_step(layout, what, ["-c", RELEASE_RUNNER, str(release), command], timeout)
+
+
+# --- installing ---
+
+
+def static_files(static_root: Path) -> set[str]:
+    if not static_root.is_dir():
+        return set()
+    return {path.relative_to(static_root).as_posix() for path in static_root.rglob("*") if path.is_file()}
+
+
+def install_public(layout: Layout, release: Path) -> None:
+    """Copy the release's public_html files into place: static files first, then the stub, .htaccess."""
+    source = release / "public_html"
+    for required in (".htaccess", "cgi-bin/gahk.cgi"):
+        if not (source / required).is_file():
+            raise UpdateError(f"the release has no public_html/{required}")
+    for rel in sorted(static_files(source / "static")):
+        write_atomic(layout.public_html / "static" / rel, (source / "static" / rel).read_bytes())
+    cgi_bin = layout.public_html / "cgi-bin"
+    cgi_bin.mkdir(parents=True, exist_ok=True)
+    cgi_bin.chmod(0o755)  # suEXEC refuses a script in a group- or world-writable folder
+    write_atomic(cgi_bin / "gahk.cgi", (source / "cgi-bin" / "gahk.cgi").read_bytes(), 0o755)
+    write_atomic(layout.public_html / ".htaccess", (source / ".htaccess").read_bytes())
+
+
+def prune_static(layout: Layout, keep: set[str]) -> list[str]:
+    """Delete content-hashed static files that no kept release ships. Unhashed ones are only replaced."""
+    root = layout.public_html / "static"
+    removed = []
+    for rel in sorted(static_files(root) - keep):
+        if HASHED_STATIC_RE.match(PurePosixPath(rel).name):
+            with contextlib.suppress(OSError):
+                (root / rel).unlink()
+                removed.append(rel)
+    return removed
+
+
+def refresh_updater(layout: Layout, release: Path) -> str:
+    """Take the release's updater for ~/gahk_web/bin/updater.py if it passes its own self-test."""
+    new = release / "bin" / "updater.py"
+    if not new.is_file():
+        return "the release has no bin/updater.py"
+    try:
+        if layout.bin_updater.read_bytes() == new.read_bytes():
+            return ""
+    except OSError:
+        pass
+    try:
+        run_step(layout, "updater self-test", [str(new), "--selftest"], SELFTEST_TIMEOUT)
+    except UpdateError as exc:
+        return f"kept the old bin/updater.py: {exc}"
+    write_atomic(layout.bin_updater, new.read_bytes(), 0o755)
+    log(layout, "installed the release's bin/updater.py")
+    return ""
+
+
+def prune_releases(layout: Layout, current: str) -> list[str]:
+    """Keep the KEEP_RELEASES most recently installed releases (always the current and pinned ones)."""
+    if not layout.releases.is_dir():
+        return []
+    removed = []
+    releases = []
+    for entry in layout.releases.iterdir():
+        if entry.name.startswith(".tmp-"):
+            shutil.rmtree(entry, ignore_errors=True)  # left by an interrupted run; we hold the lock
+        elif entry.is_dir() and SHA_RE.match(entry.name):
+            releases.append(entry)
+    releases.sort(key=lambda entry: entry.stat().st_mtime, reverse=True)
+    keep = {entry.name for entry in releases[:KEEP_RELEASES]} | {current, layout.pin}
+    for entry in releases:
+        if entry.name not in keep:
+            shutil.rmtree(entry, ignore_errors=True)
+            removed.append(entry.name)
+    return removed
+
+
+def release_ok(release: Path, version: str) -> bool:
+    try:
+        return (release / "VERSION").read_text(encoding="utf-8").strip() == version and (
+            release / "src" / "gahk_web"
+        ).is_dir()
+    except OSError:
+        return False
+
+
+def prepare_release(layout: Layout, manifest: Manifest) -> Path:
+    """Download, verify and unpack the release (or reuse an intact copy from an earlier install)."""
+    release = layout.releases / manifest.version
+    if release_ok(release, manifest.version):
+        log(layout, f"{manifest.version}: already unpacked")
+        return release
+    if release.exists():
+        shutil.rmtree(release)
+    layout.releases.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=".tmp-", dir=layout.releases))
+    try:
+        bundle = work / manifest.bundle
+        log(layout, f"{manifest.version}: downloading {manifest.bundle} ({manifest.size} bytes)")
+        download(layout, manifest, bundle)
+        unpacked = work / "release"
+        unpack(bundle, unpacked)
+        if not release_ok(unpacked, manifest.version):
+            raise UpdateError("the bundle's VERSION does not match the manifest")
+        unpacked.replace(release)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return release
+
+
+# --- the update ---
+
+
+@dataclass
+class Result:
+    updated: bool
+    version: str
+    available_version: str | None
+    detail: str
+    error: str | None = None
+
+    def as_response(self) -> dict[str, Any]:
+        return {
+            "updated": self.updated,
+            "version": self.version or None,
+            "available_version": self.available_version,
+            "detail": self.detail,
+        }
+
+
+def save_state(layout: Layout, result: Result) -> None:
+    state = {
+        "checked_at": utc_now(),
+        "available_version": result.available_version,
+        "last_result": "failed" if result.error else ("updated" if result.updated else "unchanged"),
+        "last_error": result.error,
+        "version": result.version or None,
+        "detail": result.detail,
+    }
+    try:
+        layout.state_dir.mkdir(parents=True, exist_ok=True)
+        write_atomic(layout.state_file, json.dumps(state, indent=2).encode("utf-8"))
+    except OSError as exc:
+        log(layout, f"could not write {layout.state_file}: {exc}")
+
+
+def _install(layout: Layout, target: str, manifest: Manifest | None, current: str) -> Result:
+    """Steps 3-11 for a version that differs from the running one. Without a manifest, the release
+    must already be unpacked (a pin back to a release that is still kept)."""
+    if manifest is None:
+        release = layout.releases / target
+        if not release_ok(release, target):
+            raise UpdateError(f"{target} is neither kept here nor described by a manifest")
+        log(layout, f"{target}: using the kept copy")
+    else:
+        if not python_ok(manifest.python):
+            raise UpdateError(f"{target} needs Python {manifest.python}, this is {sys.version.split()[0]}")
+        release = prepare_release(layout, manifest)
+    run_step(layout, "self-test", [str(release / "selftest.py")], SELFTEST_TIMEOUT, cwd=release)
+    run_release(layout, release, "migrations", "migrate", MIGRATE_TIMEOUT)
+    install_public(layout, release)
+
+    write_atomic(layout.current_file, (target + "\n").encode("ascii"))
+    os.utime(release)  # "newest" for prune_releases means most recently installed
+    log(layout, f"switched from {current or 'nothing'} to {target}")
+
+    notes = []
+    note = refresh_updater(layout, release)
+    if note:
+        notes.append(note)
+    try:
+        run_release(layout, release, "re-render", "rebuild", RENDER_TIMEOUT)
+    except UpdateError as exc:  # the site re-renders lazily on the next request anyway
+        notes.append(str(exc))
+    previous = layout.releases / current if current else None
+    keep = static_files(release / "public_html" / "static")
+    if previous is not None:
+        keep |= static_files(previous / "public_html" / "static")
+    removed = prune_static(layout, keep)
+    if removed:
+        log(layout, f"removed old static files: {', '.join(removed)}")
+    gone = prune_releases(layout, target)
+    if gone:
+        log(layout, f"removed old releases: {', '.join(gone)}")
+    detail = f"installed {target}" + (f" (was {current})" if current else "")
+    return Result(True, target, None, "; ".join([detail, *notes]))
+
+
+def run(home: Path | str | None = None) -> Result:
+    """Check for a new release and install it. Never raises: failures are in the result."""
+    layout = load_layout(home)
+    with update_lock(layout) as locked:
+        if not locked:
+            current = read_current(layout)
+            return Result(
+                False, current, read_state(layout).get("available_version"), "an update is already running"
+            )
+        current = read_current(layout)
+        available: str | None = None
+        try:
+            if not layout.config.is_file():
+                raise UpdateError(f"{layout.config} is missing")
+            if layout.pin and not SHA_RE.match(layout.pin):
+                raise UpdateError("[update] pin must be a full 40-character git sha")
+            published = fetch_manifest(layout)
+            available = published.version
+            target = layout.pin or published.version
+            manifest: Manifest | None = published
+            if target != published.version:
+                # A pin: a release that is still kept needs no download, else its own manifest.
+                kept = release_ok(layout.releases / target, target)
+                manifest = None if kept else fetch_manifest(layout, target)
+            if target == current and release_ok(layout.releases / current, current):
+                note = refresh_updater(layout, layout.releases / current)  # heals an interrupted run
+                pinned = (
+                    f" (pinned; {available} is available)" if layout.pin and layout.pin != available else ""
+                )
+                result = Result(False, current, available, f"already running {current}{pinned}")
+                if note:
+                    result.detail += f"; {note}"
+            else:
+                log(layout, f"updating {current or 'nothing'} -> {target}")
+                result = _install(layout, target, manifest, current)
+                result.available_version = available
+        except UpdateError as exc:
+            log(layout, f"update failed: {exc}")
+            result = Result(False, read_current(layout), available, f"failed: {exc}", str(exc))
+        except Exception as exc:  # anything unexpected must still be reported, not lost
+            log(layout, f"update failed unexpectedly: {exc!r}")
+            result = Result(False, read_current(layout), available, f"failed: {exc!r}", repr(exc))
+        save_state(layout, result)
+        return result
+
+
+def nudge(home: Path | str | None = None, wait: float = NUDGE_WAIT) -> dict[str, Any]:
+    """POST /api/update: start run() in its own process and session, wait for it up to `wait` seconds.
+
+    The update is detached from the CGI request, so neither Apache's CGI timeout nor a client that
+    hangs up can stop it halfway; a slow install finishes after the answer, and GET /api/status shows
+    how it ended."""
+    root = home_dir(home)
+    layout = load_layout(root)
+    try:
+        process = subprocess.Popen(  # noqa: S603 - our own interpreter and file
+            [sys.executable, "-I", str(Path(__file__).resolve()), "run", "--home", str(root)],
+            env=_subprocess_env(layout),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+    except OSError as exc:
+        return Result(
+            False, read_current(layout), None, f"failed: could not start the updater: {exc}"
+        ).as_response()
+    try:
+        output, _ = process.communicate(timeout=wait)
+    except subprocess.TimeoutExpired:
+        state = read_state(layout)
+        return Result(
+            False,
+            read_current(layout),
+            state.get("available_version"),
+            "the update is still running; GET /api/status shows how it ends",
+        ).as_response()
+    try:
+        data = json.loads(output.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        data = None
+    if not isinstance(data, dict):
+        tail = read_state(layout).get("detail") or "the updater gave no result"
+        return Result(False, read_current(layout), None, f"failed: {tail}").as_response()
+    return data
+
+
+# --- self-test of this file (python3 -I updater.py --selftest) ---
+
+
+def _tar_bytes(entries: list[tarfile.TarInfo], payload: bytes = b"x") -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for info in entries:
+            tar.addfile(info, io.BytesIO(payload) if info.isreg() else None)
+    return buffer.getvalue()
+
+
+def selftest() -> list[str]:
+    """Problems that would stop this updater from working with this python; empty when it is fine."""
+    problems = []
+    if sys.version_info < MIN_PYTHON:
+        problems.append(f"Python {sys.version.split()[0]} is older than {MIN_PYTHON[0]}.{MIN_PYTHON[1]}")
+    try:
+        import ssl  # noqa: F401 - only to prove HTTPS works here
+
+        urllib.request.HTTPSHandler  # noqa: B018 - missing when python was built without ssl
+    except (ImportError, AttributeError):
+        problems.append("this python has no ssl module, so it cannot fetch from GitHub")
+    sample = json.dumps(
+        {"version": "a" * 40, "bundle": f"gahk_web-{'a' * 40}.tar.gz", "sha256": "b" * 64, "size": 10}
+    ).encode()
+    try:
+        parse_manifest(sample)
+    except UpdateError as exc:
+        problems.append(f"manifest parsing: {exc}")
+    with tempfile.TemporaryDirectory() as scratch:
+        good, bad = tarfile.TarInfo("src/ok.txt"), tarfile.TarInfo("../evil.txt")
+        good.size = bad.size = 1
+        link = tarfile.TarInfo("link")
+        link.type, link.linkname = tarfile.SYMTYPE, "/etc/passwd"
+        for name, entries, should_pass in (
+            ("good", [good], True),
+            ("dotdot", [bad], False),
+            ("symlink", [link], False),
+        ):
+            bundle = Path(scratch) / f"{name}.tar.gz"
+            bundle.write_bytes(_tar_bytes(entries))
+            try:
+                unpack(bundle, Path(scratch) / name)
+                passed = True
+            except UpdateError:
+                passed = False
+            if passed != should_pass:
+                problems.append(f"unpack check failed on the {name} sample")
+        lock_layout = Layout(Path(scratch), Path(scratch) / "c.ini", Path(scratch), Path(scratch))
+        with update_lock(lock_layout) as locked:
+            if not locked:
+                problems.append("cannot take the update lock")
+    return problems
+
+
+def main(argv: list[str]) -> int:
+    if argv == ["--selftest"]:
+        problems = selftest()
+        for problem in problems:
+            print(f"updater selftest: {problem}", file=sys.stderr)
+        if not problems:
+            print(f"updater selftest ok (Python {sys.version.split()[0]})")
+        return 1 if problems else 0
+    if argv[:1] == ["run"] and len(argv) in (1, 3) and (len(argv) == 1 or argv[1] == "--home"):
+        result = run(argv[2] if len(argv) == 3 else None)
+        with contextlib.suppress(OSError):  # nudge() may have answered and gone already
+            print(json.dumps(result.as_response()), flush=True)
+        return 1 if result.error else 0
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

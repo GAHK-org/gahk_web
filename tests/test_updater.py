@@ -1,0 +1,427 @@
+"""The self-updater: fetch, verify, unpack, self-test, migrate, install, switch, prune."""
+
+import ast
+import json
+import sys
+import tarfile
+import threading
+import time
+from collections.abc import Iterator
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+import pytest
+from bundles import css_name, make_bundle, publish, version, write_config
+
+from gahk_web import updater
+
+KEY = "k" * 40
+
+
+@pytest.fixture
+def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.delenv("GAHK_WEB_CONFIG", raising=False)
+    monkeypatch.delenv("GAHK_WEB_HOME", raising=False)
+    home = tmp_path / "home"
+    (home / "public_html").mkdir(parents=True)
+    write_config(home, (tmp_path / "dist").as_uri() + "/manifest.json", KEY)
+    return home
+
+
+@pytest.fixture
+def dist(tmp_path: Path) -> Path:
+    path = tmp_path / "dist"
+    path.mkdir()
+    return path
+
+
+def release(dist: Path, n: int, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+    manifest = make_bundle(dist, version(n), **kwargs)
+    publish(dist, manifest)
+    return manifest
+
+
+def current(home: Path) -> str:
+    return updater.read_current(updater.load_layout(home))
+
+
+def calls(home: Path) -> list[str]:
+    log = home / "calls.log"
+    return log.read_text().splitlines() if log.exists() else []
+
+
+def state(home: Path) -> dict[str, Any]:
+    return json.loads((home / "gahk_web" / "state" / "update.json").read_text())
+
+
+def releases(home: Path) -> set[str]:
+    return {entry.name for entry in (home / "gahk_web" / "releases").iterdir()}
+
+
+def test_first_install_bootstraps_everything(home: Path, dist: Path) -> None:
+    v1 = version(1)
+    release(dist, 1)
+
+    result = updater.run(home)
+
+    assert result.updated and result.error is None, result.detail
+    assert result.as_response() == {
+        "updated": True,
+        "version": v1,
+        "available_version": v1,
+        "detail": f"installed {v1}",
+    }
+    assert current(home) == v1
+    assert calls(home) == [f"{v1[:7]} migrate", f"{v1[:7]} rebuild"]
+    public = home / "public_html"
+    assert (public / ".htaccess").read_text() == f"# {v1}\n"
+    assert (public / "cgi-bin" / "gahk.cgi").stat().st_mode & 0o777 == 0o755
+    assert (public / "static" / css_name(v1)).is_file()
+    assert (public / "static" / "fonts" / "ubuntu.woff2").is_file()
+    bin_updater = home / "gahk_web" / "bin" / "updater.py"
+    assert bin_updater.read_text() == Path(updater.__file__).read_text()
+    assert state(home)["last_result"] == "updated"
+    assert state(home)["available_version"] == v1
+    assert state(home)["last_error"] is None
+    assert "switched from nothing to" in (home / "gahk_web" / "var" / "update.log").read_text()
+
+
+def test_unchanged_manifest_is_a_no_op(home: Path, dist: Path) -> None:
+    v1 = version(1)
+    release(dist, 1)
+    updater.run(home)
+
+    result = updater.run(home)
+
+    assert not result.updated and result.error is None
+    assert result.detail == f"already running {v1}"
+    assert calls(home) == [f"{v1[:7]} migrate", f"{v1[:7]} rebuild"]  # nothing ran again
+    assert state(home)["last_result"] == "unchanged"
+
+
+def test_a_bundle_with_the_wrong_sha256_is_refused(home: Path, dist: Path) -> None:
+    v1, v2 = version(1), version(2)
+    release(dist, 1)
+    updater.run(home)
+    manifest = make_bundle(dist, v2)
+    publish(dist, {**manifest, "sha256": "0" * 64})
+
+    result = updater.run(home)
+
+    assert not result.updated
+    assert result.error == "the bundle's sha256 does not match the manifest"
+    assert current(home) == v1
+    assert releases(home) == {v1}  # no release and no leftover temporary folder
+    assert state(home)["last_result"] == "failed"
+    assert state(home)["available_version"] == v2
+
+
+def test_a_bundle_larger_than_the_manifest_says_is_refused(home: Path, dist: Path) -> None:
+    manifest = make_bundle(dist, version(1))
+    publish(dist, {**manifest, "size": manifest["size"] - 10})
+
+    result = updater.run(home)
+
+    assert result.error is not None and "larger than" in result.error
+    assert current(home) == ""
+
+
+def unsafe(name: str, kind: bytes = tarfile.REGTYPE, linkname: str = "") -> tarfile.TarInfo:
+    info = tarfile.TarInfo(name)
+    info.type = kind
+    info.linkname = linkname
+    info.size = 1 if kind == tarfile.REGTYPE else 0
+    return info
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        unsafe("../evil.py"),
+        unsafe("src/../../evil.py"),
+        unsafe("/tmp/evil.py"),
+        unsafe("src/link", tarfile.SYMTYPE, "/etc/passwd"),
+        unsafe("src/hard", tarfile.LNKTYPE, "VERSION"),
+        unsafe("src/dev", tarfile.CHRTYPE),
+        unsafe("src/fifo", tarfile.FIFOTYPE),
+    ],
+    ids=["dotdot", "nested-dotdot", "absolute", "symlink", "hardlink", "device", "fifo"],
+)
+def test_unsafe_tar_members_are_refused(
+    home: Path, dist: Path, tmp_path: Path, member: tarfile.TarInfo
+) -> None:
+    release(dist, 1, extra=[member])
+
+    result = updater.run(home)
+
+    assert result.error is not None
+    assert "unsafe path" in result.error or "link or special file" in result.error
+    assert current(home) == ""
+    assert releases(home) == set()
+    assert not (tmp_path / "evil.py").exists() and not (home / "gahk_web" / "evil.py").exists()
+
+
+def test_a_failing_selftest_leaves_the_old_release_running(home: Path, dist: Path) -> None:
+    v1, v2 = version(1), version(2)
+    release(dist, 1)
+    updater.run(home)
+    release(dist, 2, failing=("selftest",))
+
+    result = updater.run(home)
+
+    assert not result.updated
+    assert result.error == "self-test failed: selftest broke"
+    assert current(home) == v1
+    assert f"{v2[:7]} migrate" not in calls(home)  # it stopped before the migrations
+    assert (home / "public_html" / ".htaccess").read_text() == f"# {v1}\n"
+    assert not (home / "public_html" / "static" / css_name(v2)).exists()
+
+
+def test_a_failing_migration_leaves_the_old_release_running(home: Path, dist: Path) -> None:
+    v1 = version(1)
+    release(dist, 1)
+    updater.run(home)
+    release(dist, 2, failing=("migrate",))
+
+    result = updater.run(home)
+
+    assert result.error == "migrations failed: migrate broke"
+    assert current(home) == v1
+    assert (home / "public_html" / ".htaccess").read_text() == f"# {v1}\n"
+
+
+def test_a_failing_rerender_does_not_undo_the_switch(home: Path, dist: Path) -> None:
+    v2 = version(2)
+    release(dist, 1)
+    updater.run(home)
+    release(dist, 2, failing=("rebuild",))
+
+    result = updater.run(home)
+
+    assert result.updated and result.error is None
+    assert "re-render failed" in result.detail
+    assert current(home) == v2
+
+
+def test_pin_holds_a_kept_release_without_downloading(home: Path, dist: Path) -> None:
+    v1, v2 = version(1), version(2)
+    release(dist, 1)
+    updater.run(home)
+    release(dist, 2)
+    updater.run(home)
+    (dist / f"gahk_web-{v1}.tar.gz").unlink()  # proves the kept copy is used
+    write_config(home, (dist / "manifest.json").as_uri(), KEY, pin=v1)
+
+    result = updater.run(home)
+
+    assert result.updated, result.detail
+    assert current(home) == v1
+    assert result.available_version == v2
+    assert (home / "public_html" / ".htaccess").read_text() == f"# {v1}\n"
+
+    again = updater.run(home)
+    assert not again.updated
+    assert again.detail == f"already running {v1} (pinned; {v2} is available)"
+
+
+def test_pin_downloads_a_release_from_its_own_manifest(home: Path, dist: Path) -> None:
+    v1, v3 = version(1), version(3)
+    make_bundle(dist, v1)
+    release(dist, 2)
+    make_bundle(dist, v3)
+    write_config(home, (dist / "manifest.json").as_uri(), KEY, pin=v3)
+
+    result = updater.run(home)
+
+    assert result.updated, result.detail
+    assert current(home) == v3
+    assert releases(home) == {v3}
+
+
+def test_a_short_pin_is_refused(home: Path, dist: Path) -> None:
+    release(dist, 1)
+    write_config(home, (dist / "manifest.json").as_uri(), KEY, pin="abc1234")
+
+    assert updater.run(home).error == "[update] pin must be a full 40-character git sha"
+
+
+def test_installs_switch_current_and_keep_three_releases(home: Path, dist: Path) -> None:
+    shas = [version(n) for n in range(1, 5)]
+    for n, sha in enumerate(shas, start=1):
+        release(dist, n)
+        result = updater.run(home)
+        assert result.updated, result.detail
+        assert current(home) == sha
+        time.sleep(0.01)  # distinct install times
+
+    assert releases(home) == set(shas[1:])
+    static = home / "public_html" / "static"
+    # The previous release's hashed files stay (pages cached by browsers still name them).
+    assert not (static / css_name(shas[0])).exists()
+    assert not (static / css_name(shas[1])).exists()
+    assert (static / css_name(shas[2])).exists()
+    assert (static / css_name(shas[3])).exists()
+    assert (static / "fonts" / "ubuntu.woff2").exists()  # unhashed files are only replaced
+
+
+def test_bin_updater_is_replaced_only_by_one_that_passes_its_selftest(home: Path, dist: Path) -> None:
+    release(dist, 1)
+    updater.run(home)
+    bin_updater = home / "gahk_web" / "bin" / "updater.py"
+    before = bin_updater.read_text()
+    release(dist, 2, updater_source="import sys\nsys.exit(3)\n")
+
+    result = updater.run(home)
+
+    assert result.updated
+    assert "kept the old bin/updater.py" in result.detail
+    assert bin_updater.read_text() == before
+
+
+def test_only_one_update_runs_at_a_time(home: Path, dist: Path) -> None:
+    release(dist, 1)
+    layout = updater.load_layout(home)
+    with updater.update_lock(layout) as locked:
+        assert locked
+        result = updater.run(home)
+    assert result.detail == "an update is already running"
+    assert current(home) == ""
+
+
+def test_a_missing_manifest_is_reported(home: Path, dist: Path) -> None:
+    result = updater.run(home)
+
+    assert result.error is not None and "manifest.json" in result.error
+    assert state(home)["last_result"] == "failed"
+
+
+def test_without_config_nothing_happens(home: Path, dist: Path) -> None:
+    release(dist, 1)
+    (home / "gahk_web" / "config.ini").unlink()
+
+    result = updater.run(home)
+
+    assert result.error is not None and "config.ini is missing" in result.error
+    assert not (home / "gahk_web" / "releases").exists()
+    assert current(home) == ""
+
+
+class _Redirecting(SimpleHTTPRequestHandler):
+    """Like GitHub: /download/<name> answers 302 to where the file really is."""
+
+    def do_GET(self) -> None:
+        if self.path.startswith("/download/"):
+            self.send_response(302)
+            self.send_header("Location", "/files/" + self.path.removeprefix("/download/"))
+            self.end_headers()
+            return
+        self.path = self.path.removeprefix("/files")
+        super().do_GET()
+
+    def log_message(self, *args: object) -> None:
+        pass
+
+
+@pytest.fixture
+def http_dist(dist: Path) -> Iterator[str]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), lambda *args: _Redirecting(*args, directory=str(dist)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/download/manifest.json"
+    server.shutdown()
+
+
+def test_downloads_follow_redirects(home: Path, dist: Path, http_dist: str) -> None:
+    release(dist, 1)
+    write_config(home, http_dist, KEY)
+
+    result = updater.run(home)
+
+    assert result.updated, result.detail
+    assert current(home) == version(1)
+
+
+def test_nudge_runs_the_update_in_its_own_process(home: Path, dist: Path) -> None:
+    release(dist, 1)
+
+    result = updater.nudge(home)
+
+    assert result["updated"] is True, result
+    assert result["version"] == version(1)
+    assert current(home) == version(1)
+
+
+def test_nudge_answers_before_a_slow_update_ends(home: Path, dist: Path) -> None:
+    release(dist, 1)
+
+    result = updater.nudge(home, wait=0)
+
+    assert result["updated"] is False
+    assert "still running" in result["detail"]
+    deadline = time.monotonic() + 30
+    while current(home) != version(1) and time.monotonic() < deadline:  # it carries on detached
+        time.sleep(0.1)
+    assert current(home) == version(1)
+    while time.monotonic() < deadline:  # let it finish before tmp_path goes away
+        layout = updater.load_layout(home)
+        with updater.update_lock(layout) as locked:
+            if locked:
+                break
+        time.sleep(0.1)
+
+
+def test_manifest_validation() -> None:
+    good = {"version": "a" * 40, "bundle": f"gahk_web-{'a' * 40}.tar.gz", "sha256": "b" * 64, "size": 10}
+    assert updater.parse_manifest(json.dumps(good).encode()).python == ">=3.11"
+    for bad in (
+        {**good, "version": "abc"},
+        {**good, "bundle": "../evil.tar.gz"},
+        {**good, "sha256": "xyz"},
+        {**good, "size": updater.BUNDLE_MAX_BYTES + 1},
+        {**good, "size": True},
+        {**good, "python": "3.11"},
+    ):
+        with pytest.raises(updater.UpdateError):
+            updater.parse_manifest(json.dumps(bad).encode())
+
+
+def test_a_release_for_a_newer_python_is_refused(home: Path, dist: Path) -> None:
+    manifest = make_bundle(dist, version(1))
+    publish(dist, {**manifest, "python": ">=3.99"})
+
+    result = updater.run(home)
+
+    assert result.error is not None and "needs Python >=3.99" in result.error
+
+
+def test_the_log_is_rotated(home: Path) -> None:
+    layout = updater.load_layout(home)
+    layout.var.mkdir(parents=True)
+    layout.log_file.write_text("x" * (updater.LOG_MAX_BYTES + 1))
+
+    updater.log(layout, "fresh")
+
+    assert layout.log_file.read_text().endswith("fresh\n")
+    assert layout.log_file.with_name("update.log.1").stat().st_size > updater.LOG_MAX_BYTES
+
+
+def test_the_updater_uses_the_standard_library_only() -> None:
+    tree = ast.parse(Path(updater.__file__).read_text())
+    modules = {
+        alias.name.split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    modules |= {
+        (node.module or "").split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.level == 0
+    }
+    assert modules - {"__future__"} <= sys.stdlib_module_names
+    assert not any(isinstance(node, ast.ImportFrom) and node.level for node in ast.walk(tree))
+
+
+def test_the_updater_selftest_passes() -> None:
+    assert updater.selftest() == []

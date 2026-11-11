@@ -220,8 +220,10 @@ def test_rebuild_rerenders_from_the_cache(client: Client, cfg: Config) -> None:
     assert (cfg.public_html / "kontakt/index.html").is_file()
 
 
-def test_update_without_updater_is_501(client: Client) -> None:
-    assert client.api("POST", "/api/update", {}).status == 501
+def test_update_in_a_checkout_is_refused(client: Client) -> None:
+    result = client.api("POST", "/api/update", {})
+    assert result.status == 409
+    assert result.json()["version"] == "dev"
 
 
 def test_unknown_api_paths(client: Client) -> None:

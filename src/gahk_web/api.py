@@ -4,15 +4,14 @@ Every call but GET /api/health carries X-Gahk-Timestamp and X-Gahk-Signature (se
 contract (shapes, status codes) is shared with intern's cms.gahk_web client; change both together.
 """
 
-import importlib
 import json
 from collections.abc import Callable
 from datetime import date, datetime
 from typing import Any
 
-from . import db, images, outbox, signing
+from . import db, images, outbox, signing, updater
 from .clock import copenhagen_today
-from .config import Config
+from .config import Config, home_dir
 from .housekeeping import purge, rebuild
 from .render import load_snapshot, preview_html, render_site
 from .snapshot import HEX64_RE, MAX_IMAGE_BYTES, SnapshotError, validate, validate_preview
@@ -161,13 +160,14 @@ def rebuild_now(api: Api) -> Response:
 
 
 def update(api: Api) -> Response:
-    """Run the self-updater (gahk_web.updater, part of the release) and report what it did."""
-    try:
-        updater = importlib.import_module("gahk_web.updater")
-    except ImportError:
-        return _error(501, "this release has no self-updater", version=code_version())
-    run: Callable[[Config], dict[str, Any]] = updater.run
-    return json_response(200, run(api.cfg))
+    """Run the self-updater and report what it did.
+
+    On the webhost the cgi-bin stub answers POST /api/update itself, before any release is imported
+    (so it works with no release installed, or a broken one); this is the same call for a release
+    started some other way. A development checkout never replaces itself."""
+    if code_version() == "dev":
+        return _error(409, "a development checkout does not update itself", version="dev")
+    return json_response(200, updater.nudge(home_dir()))
 
 
 Handler = Callable[[Api, Request, bytes], Response]
