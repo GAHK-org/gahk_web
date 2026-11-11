@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block hero_title %}<h1 class="font-display hero__title">{{ title }}</h1>{% endblock %}
+
+{% block content %}
+{% if status == 404 %}
+    <p>Vi kan ikke finde den side, du leder efter. Måske er den flyttet eller slettet.</p>
+    <p><a class="btn" href="/">Til forsiden</a></p>
+{% else %}
+    <p>Hjemmesiden er ved at blive opdateret. Prøv igen om et par minutter.</p>
+{% endif %}
+{% endblock %}

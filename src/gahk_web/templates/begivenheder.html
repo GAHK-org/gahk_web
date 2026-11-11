@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block hero_title %}<h1 class="font-display hero__title">Nyheder &amp; begivenheder</h1>{% endblock %}
+
+{% block content %}
+    <div class="stack-lg">
+      <section>
+        <h2 class="font-display section-title">Kommende begivenheder</h2>
+{% if upcoming_events %}
+        <ul class="event-list">
+{% for event in upcoming_events %}
+          <li class="card event">
+            <div class="event__date">
+              <div class="font-display event__day">{{ event.starts_on|da_date("day") }}</div>
+              <div class="event__month">{{ event.starts_on|da_date("month") }}</div>
+            </div>
+            <div>
+              <div class="event__title">{{ event.title }}</div>
+{% if event.description %}
+              <div class="event__text">{{ site.body(event.description)|safe }}</div>
+{% endif %}
+            </div>
+          </li>
+{% endfor %}
+        </ul>
+{% else %}
+        <p class="muted">Ingen kommende begivenheder er annonceret lige nu.</p>
+{% endif %}
+      </section>
+
+      <section>
+        <h2 class="font-display section-title">Nyheder</h2>
+{% if news %}
+        <div class="news-list">
+{% for item in news %}
+          <article class="news">
+            <h3 class="font-display news__title">{{ item.title }}</h3>
+            <div class="news__date">{{ item.published_at|da_date("long") }}</div>
+            <div class="prose-gahk">{{ site.body(item.body)|safe }}</div>
+          </article>
+{% endfor %}
+        </div>
+{% else %}
+        <p class="muted">Ingen nyheder endnu.</p>
+{% endif %}
+      </section>
+
+{% if past_events %}
+      <section>
+        <h2 class="font-display section-title">Tidligere begivenheder</h2>
+        <ul class="past-events">
+{% for event in past_events %}
+          <li><span class="past-events__date">{{ event.starts_on|da_date("iso") }}</span> · {{ event.title }}</li>
+{% endfor %}
+        </ul>
+      </section>
+{% endif %}
+    </div>
+{% endblock %}

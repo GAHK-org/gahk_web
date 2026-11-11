@@ -1,6 +1,6 @@
 import time
 
-from conftest import SYNC_KEY
+from conftest import SYNC_KEY, Client
 
 from gahk_web import signing
 
@@ -64,3 +64,18 @@ def test_missing_or_malformed_headers() -> None:
     assert signing.verify(SYNC_KEY, None, None, "GET", "/api/status", b"") == "missing signature"
     assert signing.verify(SYNC_KEY, "abc", "0" * 64, "GET", "/api/status", b"") == "bad timestamp"
     assert signing.verify("", "1", "0" * 64, "GET", "/api/status", b"") == "signing is not configured"
+
+
+def test_api_refuses_unsigned_and_wrongly_signed_calls(client: Client) -> None:
+    assert client.get("/api/status").status == 401
+    wrong = Client(client.app, key="w" * 40)
+    result = wrong.api("GET", "/api/status")
+    assert result.status == 401
+    assert result.json() == {"error": "bad signature"}
+    assert client.api("GET", "/api/status").status == 200
+
+
+def test_health_needs_no_signature(client: Client) -> None:
+    result = client.get("/api/health")
+    assert result.status == 200
+    assert result.json() == {"ok": True, "version": "dev", "revision": None}
