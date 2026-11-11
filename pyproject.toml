@@ -1,0 +1,42 @@
+[project]
+name = "gahk-web"
+version = "0.1.0"
+description = "gahk.dk: the public site of G. A. Hagemanns Kollegium, rendered from intern.gahk.dk's snapshot"
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.11"
+# Runtime dependencies must stay pure Python: the webhost runs plain CGI with the system python3
+# (3.11 today, 3.13 after Hetzner's 2026 update) and the bundle vendors them.
+dependencies = [
+    "jinja2>=3.1.4",
+    "markupsafe>=2.1",
+    "pg8000>=1.31",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13",
+    "pip-audit>=2.7",
+    "prek>=0.2",
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+packages = ["gahk_web"]
+strict = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["pg8000", "pg8000.*"]
+ignore_missing_imports = true

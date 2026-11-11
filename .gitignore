@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# Local runs (render a dev site into var/public_html, not into the repo's public_html)
+/public_html/*
+!/public_html/.htaccess
+!/public_html/cgi-bin/
+/config.ini
+/var/
+/local/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
