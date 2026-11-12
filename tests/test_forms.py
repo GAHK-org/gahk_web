@@ -46,7 +46,7 @@ def test_form_pages_render_the_fields(client: Client, cfg: Config) -> None:
     assert '<option value="social_media">På sociale medier (Facebook eller Instagram)</option>' in html
     assert 'type="hidden" name="website"' in html
     assert "Udfyld formularen for at anmode om en rundvisning." in html
-    assert 'href="/optagelse/"' in html  # "Før du søger" points at the optagelse page
+    assert 'href="/optagelse/"' in html  # "Før du søger" points at the admissions page
     assert "challenges.cloudflare.com" not in html
     sublet = (cfg.public_html / "optagelse/fremlej/index.html").read_text()
     assert '<label for="id_occupation">Beskæftigelse</label>' in sublet

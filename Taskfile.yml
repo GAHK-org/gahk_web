@@ -3,7 +3,7 @@ version: '3'
 # Dev task runner for gahk_web, the public site gahk.dk.
 #   task dev       -> the development server at http://127.0.0.1:8810 (it emulates .htaccess)
 #   task test      -> the test suite (against PostgreSQL; `task db:create` once first)
-#   task migration -- "besked"  -> a new Alembic revision from what changed in models.py
+#   task migration -- "message" -> a new Alembic revision from what changed in models.py
 #   task bundle    -> build the release bundle into dist/ and smoke-test it on Python 3.13 and 3.14
 #                     (installs its packages from PyPI, as the webhost does)
 #   task webhost   -> build the bundle and install and exercise it on a fake Hetzner webhost (docker:

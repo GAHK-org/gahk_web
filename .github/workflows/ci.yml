@@ -168,8 +168,8 @@ jobs:
         run: |
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
-              --title "Produktion (rullende)" \
-              --notes "Webhotellets opdateringskanal. gahk.dk henter manifest.json herfra, når intern.gahk.dk beder den om at opdatere sig (hvert kvarter og med knappen \"Opdatér gahk.dk nu\"), og installerer den bundle, manifestet peger på. CI erstatter filerne ved hvert merge til main; tagget flytter sig ikke og siger intet om versionen – den står i manifest.json. updater.py, gahk.cgi, gahk.fcgi og htaccess er de fire filer til den første installation (se DEPLOY.md). Slet ikke denne release."
+              --title "Production (rolling)" \
+              --notes "The webhost's update channel. gahk.dk fetches manifest.json from here when intern.gahk.dk asks it to update (every 15 minutes, and with the \"Opdatér gahk.dk nu\" button), and installs the bundle the manifest names. CI replaces the files on every merge into main; the tag does not move and says nothing about the version, which is in manifest.json. updater.py, gahk.cgi, gahk.fcgi and htaccess are the four files for the first install (see DEPLOY.md). Do not delete this release."
           fi
 
       # The bundle first and the manifest last, so the manifest never names a file not there yet.

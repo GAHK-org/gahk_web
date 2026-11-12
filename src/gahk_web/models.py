@@ -117,7 +117,7 @@ class GeneratedFile(Base):
 
 
 class Application(Base):
-    """Outbox: optagelse form submissions until intern pulls and acknowledges them."""
+    """Outbox: admission form submissions until intern pulls and acknowledges them."""
 
     __tablename__ = "applications"
     __table_args__ = (CheckConstraint("kind IN ('tour', 'sublet')", name="kind"),)

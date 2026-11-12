@@ -1,4 +1,4 @@
-"""The outbox intern drains: optagelse applications and visit counts.
+"""The outbox intern drains: admission applications and visit counts.
 
 GET /api/outbox lists what is waiting; POST /api/outbox/ack deletes what intern has stored. Today's
 visit rows are never deleted by an ack, because they are still counting: intern upserts them on every

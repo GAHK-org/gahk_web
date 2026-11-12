@@ -2,7 +2,7 @@
 
     /api/*                              the signed sync API (api.py, a blueprint of its own)
     POST /optagelse/ansoeg, /optagelse/send_rundvisning,
-         /optagelse/fremlej, /optagelse/send_fremleje        the optagelse forms (forms.py)
+         /optagelse/fremlej, /optagelse/send_fremleje        the admission forms (forms.py)
     POST /s                             the visit beacon (stats.py)
     GET  /kalender/<token>.ics          the calendar pass-through to intern (calendar_feed.py)
     anything else (GET/HEAD)            the fallback: old addresses → 301/308, a page in either
@@ -103,7 +103,7 @@ def serve_file(path: Path) -> Response:
     return response(200, path.read_bytes(), content_type, PAGE_CACHE)
 
 
-# --- the optagelse forms (both slash forms; strict_slashes=False never redirects) ---
+# --- the admission forms (both slash forms; strict_slashes=False never redirects) ---
 
 
 @site.post("/optagelse/ansoeg/", strict_slashes=False)

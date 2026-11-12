@@ -1,4 +1,4 @@
-"""The two optagelse forms: request a tour (rundvisning) and apply for a sublet (fremleje).
+"""The two admission forms: request a tour and apply for a sublet.
 
 The fields, labels, limits and choices mirror intern's admissions forms and Application model exactly,
 because intern pulls each submission from the outbox and validates it again as a form post. Only the

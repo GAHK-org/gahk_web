@@ -255,7 +255,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--green); out
   .section-nav { position: sticky; top: 1rem; }
 }
 
-/* ---- Nyheder & begivenheder ---- */
+/* ---- News and events (/begivenheder/) ---- */
 .stack-lg > * + * { margin-top: 2.5rem; }
 .section-title { font-size: 1.5rem; line-height: 2rem; color: var(--emerald-900); margin: 0 0 1rem; font-weight: 400; }
 .event-list > li + li { margin-top: .75rem; }
@@ -275,7 +275,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--green); out
 .past-events li + li { margin-top: .25rem; }
 .past-events__date { color: var(--gray-400); }
 
-/* ---- Optagelse forms ---- */
+/* ---- Admission forms ---- */
 .form-layout { display: grid; gap: 2rem; align-items: start; }
 .form-main { width: 100%; max-width: 36rem; margin: 0 auto; }
 .form-layout--aside .form-main { max-width: none; }

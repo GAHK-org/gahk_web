@@ -180,7 +180,7 @@ base_url = https://gahk.dk
 intern_url = https://intern.gahk.dk
 
 [turnstile]
-; Optional: Cloudflare Turnstile on the two optagelse forms. Leave out for no captcha.
+; Optional: Cloudflare Turnstile on the two admission forms. Leave out for no captcha.
 ; site_key = <public site key>
 ; secret_key = <secret key>
 
