@@ -9,7 +9,7 @@ from collections.abc import Callable
 from datetime import date, datetime
 from typing import Any
 
-from . import db, images, outbox, signing, updater
+from . import db, images, outbox, signing
 from .clock import copenhagen_today
 from .config import Config, home_dir
 from .housekeeping import purge, rebuild
@@ -167,6 +167,8 @@ def update(api: Api) -> Response:
     started some other way. A development checkout never replaces itself."""
     if code_version() == "dev":
         return _error(409, "a development checkout does not update itself", version="dev")
+    from . import updater  # rarely needed here, and it imports much of the standard library
+
     return json_response(200, updater.nudge(home_dir()))
 
 

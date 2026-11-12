@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, TextIO
 from urllib.parse import unquote
 
-from . import api, db, forms, housekeeping, kalender, routing, stats
+from . import api, db, forms, housekeeping, routing, stats
 from .clock import copenhagen_today
 from .config import Config, ConfigError, load_config
 from .render import EMPTY_SNAPSHOT, Site, load_snapshot, page_file, quote_path
@@ -227,11 +227,14 @@ def dispatch(request: Request, ctx: Context, errors: TextIO) -> Response:
             return handle_form(request, ctx, spec)
     if path == "/s":
         return handle_beacon(request, ctx, errors)
-    feed = kalender.token(path)
-    if feed is not None:
-        if request.method not in ("GET", "HEAD"):
-            return method_not_allowed("GET, HEAD")
-        return kalender.pass_through(ctx.cfg.intern_url, feed, request.method)
+    if path.startswith("/kalender/"):
+        from . import kalender  # the only request that calls out (urllib is slow to import)
+
+        feed = kalender.token(path)
+        if feed is not None:
+            if request.method not in ("GET", "HEAD"):
+                return method_not_allowed("GET, HEAD")
+            return kalender.pass_through(ctx.cfg.intern_url, feed, request.method)
     if request.method not in ("GET", "HEAD"):
         return method_not_allowed("GET, HEAD")
     return fallback(request, ctx)

@@ -21,12 +21,15 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlencode, urlsplit
-from urllib.request import urlopen
 
 from . import db
 from .clock import now_utc
 from .wsgi import BodyTooLarge
+
+if TYPE_CHECKING:
+    from http.client import HTTPResponse
 
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 TURNSTILE_TIMEOUT = 5
@@ -230,6 +233,15 @@ def rate_limited(con: db.Connection, client: str) -> bool:
         since=now_utc() - RATE_WINDOW,
     )
     return bool(row and row["n"] >= RATE_LIMIT)
+
+
+def urlopen(url: str, data: bytes, timeout: float) -> "HTTPResponse":
+    """urllib's urlopen, imported on first use: few requests verify a captcha, and urllib is slow to
+    import for a process that lives one request."""
+    from urllib.request import urlopen as open_url
+
+    response: HTTPResponse = open_url(url, data=data, timeout=timeout)  # noqa: S310 - fixed https URL
+    return response
 
 
 def verify_turnstile(secret: str, token: str, ip: str) -> bool:

@@ -17,7 +17,6 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import cache
-from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 from .config import DatabaseConfig
@@ -138,6 +137,8 @@ def try_advisory_lock(con: Connection, key: int) -> Iterator[bool]:
 
 
 def migration_files() -> list[tuple[str, str]]:
+    from importlib import resources
+
     folder = resources.files("gahk_web") / "migrations"
     files = sorted(entry.name for entry in folder.iterdir() if entry.name.endswith(".sql"))
     return [(name.removesuffix(".sql"), (folder / name).read_text(encoding="utf-8")) for name in files]

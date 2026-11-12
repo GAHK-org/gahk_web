@@ -29,10 +29,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from functools import cache
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
-
-import jinja2
 
 from . import db
 from .clock import copenhagen_today, now_utc, to_copenhagen
@@ -40,6 +38,9 @@ from .config import Config
 from .forms import SPECS, SUCCESS_PATH, FormSpec
 from .snapshot import Event, NewsItem, Page, Snapshot
 from .version import code_version
+
+if TYPE_CHECKING:
+    import jinja2
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = PACKAGE_DIR / "templates"
@@ -136,7 +137,10 @@ def da_date(value: str | date | datetime, style: str = "long") -> str:
 
 
 @cache
-def environment() -> jinja2.Environment:
+def environment() -> "jinja2.Environment":
+    # Imported here: most CGI requests (beacon, API calls, redirects) render nothing.
+    import jinja2
+
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(TEMPLATE_DIR),
         autoescape=jinja2.select_autoescape(["html", "xml"]),
