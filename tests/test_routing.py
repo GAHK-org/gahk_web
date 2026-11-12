@@ -198,6 +198,33 @@ def test_old_page_addresses_redirect(client: Client) -> None:
     assert (result.status, result.headers["Location"]) == (301, "/optagelse/ansoeg")
 
 
+def test_the_front_pages_old_address_answers_with_the_front_page(
+    client: Client, dev: Client, cfg: Config
+) -> None:
+    """The old site served the front page at /velkommen too (page 1's slug); intern publishes it as a
+    redirect to the front page. It keeps answering 200, with the front page's canonical link."""
+    data = snapshot()
+    data["redirects"] |= {"velkommen": "", "forside": ""}
+    publish(client, data)
+    front = (cfg.public_html / "index.html").read_text()
+    assert (cfg.public_html / "velkommen" / "index.html").read_text() == front
+    assert '<link rel="canonical" href="https://gahk.dk/">' in front
+    for path in ("/velkommen", "/velkommen/"):
+        for answer in (dev.get(path, query="x=1"), client.get(path, query="x=1")):
+            assert (answer.status, answer.text) == (200, front), path
+    assert "/velkommen" not in client.get("/sitemap.xml").text
+    # Only that fixed alias: any other redirect to the front page stays a redirect.
+    assert not (cfg.public_html / "forside").exists()
+    result = client.get("/forside")
+    assert (result.status, result.headers["Location"]) == (301, "/")
+    # When the snapshot stops redirecting it to the front page, the copy goes.
+    data["redirects"] = {"velkommen": "kontakt"}
+    publish(client, data | {"revision": "e" * 64})
+    assert not (cfg.public_html / "velkommen").exists()
+    result = client.get("/velkommen")
+    assert (result.status, result.headers["Location"]) == (301, "/kontakt")
+
+
 def test_other_methods_are_refused(client: Client) -> None:
     publish(client)
     assert client.request("PUT", "/kontakt").status == 405

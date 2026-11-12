@@ -3,6 +3,7 @@
 Every page of the site is a pre-rendered file that Apache serves without starting Python:
 
     index.html                          the front page
+    velkommen/index.html                the front page again, at its old address (FRONT_PAGE_ALIASES)
     <path>/index.html                   each page (path has one or two segments)
     begivenheder/index.html             news and events
     optagelse/ansoeg/index.html         the tour form       (POSTs go to the app)
@@ -63,6 +64,13 @@ HOME_EVENTS = 3
 HOME_NEWS = 4
 ARCHIVE_NEWS = 40
 ARCHIVE_PAST_EVENTS = 20
+
+# The front page's old second address: the slug of page 1 on the old site, which served it there as
+# an ordinary page (200). intern publishes it as a redirect to the front page; gahk.dk writes a copy
+# of the front page there instead (canonical link: /), so the address keeps answering 200. Only these
+# fixed names, and only while the snapshot redirects them to the front page: every other redirect
+# stays a redirect.
+FRONT_PAGE_ALIASES = ("velkommen",)
 
 # Files outside <path>/index.html that a render produces. Only these and page folders are ever deleted.
 FIXED_FILES = ("404.html", "503.html", "sitemap.xml", "robots.txt", "sw.js")
@@ -440,6 +448,9 @@ class Site:
             out[rel] = (self.page_html(page), self.page_url(page["path"]))
         if "" not in self.pages_by_path:
             out["index.html"] = (self.home_html(None), "/")
+        for alias in FRONT_PAGE_ALIASES:
+            if self.snapshot["redirects"].get(alias) == "" and alias not in self.pages_by_path:
+                out[page_file(alias)] = (out["index.html"][0], "/" + alias)
         out[page_file("begivenheder")] = (self.begivenheder_html(), BEGIVENHEDER_URL)
         for spec in SPECS:
             out[page_file(spec.path)] = (self.form_html(spec), "/" + spec.path)

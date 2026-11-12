@@ -27,6 +27,8 @@ intern or its storage is down.
 - A page is served with or without a trailing slash, without a redirect. Its canonical address is
   the form the menu uses.
 - A page that moved or was renamed on intern answers its old address with a permanent redirect.
+- `/velkommen`, where the old site also showed the front page, still shows the front page (its
+  canonical address stays `/`).
 - Old intranet addresses (`/intern/…`, `/nyintern/…`, `/admin`, `/wiki`, `/photo-album/…`,
   `/media/…`, the old admissions admin pages) redirect to the same path on intern.gahk.dk, keeping
   the query and the method, so a form posted to an old address still arrives. `/intern/…` keeps

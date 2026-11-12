@@ -264,7 +264,10 @@ when no release is installed yet (bootstrap) or the active one is broken.
   to `https://intern.gahk.dk/…`.
 - **Menu** URLs are site paths (`/vision`, `/begivenheder/`) or absolute URLs. A page's canonical
   address has no trailing slash, unless the menu links it with one.
-- **`redirects`** maps old page paths to current ones. gahk.dk answers them with 301.
+- **`redirects`** maps old page paths to current ones. gahk.dk answers them with 301. One fixed
+  exception: `"velkommen": ""` (the front page's slug, which the old site served as a page of its
+  own) makes gahk.dk write a copy of the front page at `/velkommen`, with the front page's canonical
+  link, so that address keeps answering 200. Any other redirect to `""` stays a 301.
 - Unknown keys anywhere, and duplicate page, news or event ids, make gahk.dk refuse the snapshot.
   This way a contract drift shows up as a failed publish, not as missing content.
 
