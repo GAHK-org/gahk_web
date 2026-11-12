@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from gahk_web import routing
 from gahk_web.config import Config
 from gahk_web.devserver import make_dev_app
+from gahk_web.render import STATIC_DIR
 
 HTACCESS = Path(__file__).resolve().parents[1] / "public_html" / ".htaccess"
 
@@ -351,6 +352,33 @@ def test_devserver_serves_assets_and_images(client: Client, dev: Client) -> None
     assert (result.status, result.body) == (200, GANG)
     assert dev.get("/robots.txt").text.startswith("User-agent: *")
     assert dev.get("/sw.js").headers["Content-Type"].startswith(("application/javascript", "text/javascript"))
+
+
+def test_htaccess_serves_the_same_aliases() -> None:
+    rules = re.findall(r"^\s*RewriteRule \^(\S+)\$ (static/\S+) \[L\]$", HTACCESS.read_text(), re.MULTILINE)
+    assert len(rules) == 3
+    for path, target in routing.ALIASES.items():
+        assert [to for pattern, to in rules if re.fullmatch(pattern, path.lstrip("/"))] == [
+            target.lstrip("/")
+        ]
+    for pattern, target in rules:
+        assert (STATIC_DIR / target.removeprefix("static/")).is_file(), target
+
+
+def test_the_old_sites_logo_keeps_its_addresses(client: Client, dev: Client) -> None:
+    """The logo and favicon of every page of the old site; other sites may link it too."""
+    publish(client)
+    logo = (STATIC_DIR / "img" / "lamassu.svg").read_bytes()
+    assert logo.startswith(b"<?xml") and b"<svg" in logo
+    for path in (
+        "/static/legacy/image/elements/lamassu.svg",
+        "/static/legacy/image/elements/lamassu.b8dc291a4e43.svg",
+        "/static/img/lamassu.svg",
+    ):
+        result = dev.get(path)
+        assert (result.status, result.body) == (200, logo), path
+        assert result.headers["Content-Type"] == "image/svg+xml"
+    assert dev.get("/static/legacy/image/elements/lamassu.0123456789ab.svg").status == 404
 
 
 def test_fonts_may_be_fetched_from_any_origin(client: Client, dev: Client) -> None:

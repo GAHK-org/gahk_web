@@ -80,9 +80,11 @@ ErrorDocument 404 /404.html
   # picture's /billeder/ address (from the published snapshot), or answers 404.
   RewriteRule ^public/image/(.+)$ /static/legacy/image/$1 [R=301,L]
 
-  # --- Icons browsers ask for at the root ---
+  # --- Icons browsers ask for at the root, and the old site's logo at its old addresses (the logo
+  # and favicon of every page there, plain and with Django's content hash; others may link it) ---
   RewriteRule ^favicon\.ico$ static/favicon.ico [L]
   RewriteRule ^apple-touch-icon(?:-precomposed)?\.png$ static/img/apple-touch-icon.png [L]
+  RewriteRule ^static/legacy/image/elements/lamassu(?:\.b8dc291a4e43)?\.svg$ static/img/lamassu.svg [L]
 
   # --- Files that exist are served as they are (GET/HEAD only: a POST must reach the app) ---
   RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$

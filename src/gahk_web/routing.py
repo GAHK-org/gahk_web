@@ -89,10 +89,15 @@ def stub_for(path: str, content_length: str = "", *, cgi_only: bool = False) -> 
     return FASTCGI_STUB
 
 
+# Addresses .htaccess serves another file at (a rewrite, not a redirect): the icons browsers ask for
+# at the root, and the old site's logo, which was the logo and favicon of every page there, under its
+# plain name and the one with Django's content hash.
 ALIASES = {
     "/favicon.ico": "/static/favicon.ico",
     "/apple-touch-icon.png": "/static/img/apple-touch-icon.png",
     "/apple-touch-icon-precomposed.png": "/static/img/apple-touch-icon.png",
+    "/static/legacy/image/elements/lamassu.svg": "/static/img/lamassu.svg",
+    "/static/legacy/image/elements/lamassu.b8dc291a4e43.svg": "/static/img/lamassu.svg",
 }
 
 
