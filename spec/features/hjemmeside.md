@@ -54,6 +54,8 @@ intern or its storage is down.
 - GIFs, animations and files that cannot be read are shown as they are. So are new pictures for the
   few minutes until their copies are ready.
 - The original picture keeps its address, so old links to it keep working.
+- A picture the editors take off the site disappears with the next publication, its smaller copies
+  included.
 
 ## Speed and caching
 

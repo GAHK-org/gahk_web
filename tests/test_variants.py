@@ -350,13 +350,35 @@ def test_variants_go_with_their_image(client: Client, cfg: Config, con: db.Conne
 
     later = snapshot(revision="b" * 64)
     publish(client, later)
-    assert not (folder / "galleri.jpg").exists()
-    assert variant_files(cfg, PHOTO_SHA)  # the blob's grace hour: a publish in flight may want it
+    assert not folder.exists()  # taken down: the variants go with the public copy, at once
+    assert images.blob_path(cfg, PHOTO_SHA).exists()  # the blob's grace hour: a publish in flight may want it
+    row = image_row(con, PHOTO_SHA)
+    assert (row["variant_widths"], row["variant_attempts"]) == (None, 0)  # nothing links them any more
+
+    publish(client, photo_snapshot(revision="c" * 64))  # back again within the hour: made again
+    assert variant_files(cfg, PHOTO_SHA) == ["_1600w.webp", "_2000w.webp", "_480w.webp", "_960w.webp"]
+    assert "srcset" in (cfg.public_html / "galleri/index.html").read_text()
 
     db.execute(con, "UPDATE images SET stored_at = now() - interval '2 hours'")
-    publish(client, snapshot(revision="c" * 64))
+    publish(client, snapshot(revision="d" * 64))
     assert not folder.exists()
     assert not images.blob_path(cfg, PHOTO_SHA).exists()
+
+
+def test_variants_of_an_image_collected_meanwhile_are_removed(
+    cfg: Config, con: db.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    images.store(con, cfg, PHOTO_SHA, PHOTO, "image/jpeg")
+    make = variants.make
+
+    def collected_while_making(data: bytes) -> variants.Variants:
+        made = make(data)
+        db.execute(con, "DELETE FROM images WHERE sha256 = :sha", sha=PHOTO_SHA)  # a publish's GC
+        return made
+
+    monkeypatch.setattr(variants, "make", collected_while_making)
+    assert not images.make_variants(con, cfg, PHOTO_SHA)
+    assert not (cfg.public_html / "billeder" / PHOTO_SHA[:16]).exists()  # no orphans left behind
 
 
 def test_a_preview_keeps_intern_images_and_is_sanitised(client: Client) -> None:

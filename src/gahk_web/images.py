@@ -15,8 +15,9 @@ snapshot name, so a variant cannot collide with an image. The images row records
 size and which variant widths exist; pages link the variants instead of the original (render.py).
 Variants are cache: they are made when intern PUTs the image (one image per request spreads the work),
 and whatever is still missing is made, within a time budget, by the next publish, rebuild or
-housekeeping pass. They go with their blob. An image that fails gets none, and pages show the
-original; a publish never fails because of a variant.
+housekeeping pass. A publish that stops using an image deletes its variants at once, together with
+its public copies; only the blob waits out the grace hour. An image that fails gets none, and pages
+show the original; a publish never fails because of a variant.
 """
 
 import contextlib
@@ -227,6 +228,17 @@ def _remove_variant_files(cfg: Config, sha256: str) -> int:
     return removed
 
 
+def _remove_files(paths: Iterable[Path]) -> None:
+    folders: set[Path] = set()
+    for path in paths:
+        folders.add(path.parent)
+        with contextlib.suppress(OSError):
+            path.unlink()
+    for folder in folders:
+        with contextlib.suppress(OSError):
+            folder.rmdir()  # only when nothing else is left in it
+
+
 def make_variants(con: db.Connection, cfg: Config, sha256: str) -> bool:
     """Make (or remake) one image's variants and record them. True when it now has some. Never
     raises for a bad image: that image just gets none."""
@@ -251,11 +263,9 @@ def make_variants(con: db.Connection, cfg: Config, sha256: str) -> bool:
                 write_atomically(target, data)
                 written.append(target)
         except OSError:  # a full disk: try again later
-            for target in written:
-                with contextlib.suppress(OSError):
-                    target.unlink()
+            _remove_files(written)
             return False
-        db.execute(
+        recorded = db.execute(
             con,
             "UPDATE images SET width = :width, height = :height, variant_widths = CAST(:widths AS integer[]),"
             " variant_note = NULL, variant_attempts = 0 WHERE sha256 = :sha",
@@ -264,6 +274,11 @@ def make_variants(con: db.Connection, cfg: Config, sha256: str) -> bool:
             widths=[width for width, _data in made.files],
             sha=sha256,
         )
+        if not recorded:
+            # A publish collected the image while these were made (this runs outside the render
+            # lock): no row is left that could ever delete them, so they go now.
+            _remove_files(written)
+            return False
         return True
     db.execute(
         con,
@@ -354,14 +369,27 @@ def collect_garbage(con: db.Connection, cfg: Config, snapshot: Snapshot) -> int:
         db.execute(con, "DELETE FROM image_files WHERE rel_path = :path", path=rel_path)
 
     cutoff = now_utc() - BLOB_GRACE
-    for row in db.query(con, "SELECT sha256, stored_at FROM images"):
+    for row in db.query(con, "SELECT sha256, stored_at, variant_widths FROM images"):
         sha = row["sha256"]
-        if sha in used_shas or row["stored_at"] > cutoff:
+        if sha in used_shas:
+            continue
+        # An image taken down loses its public variants at once, like its public copies above. Only
+        # the blob waits out the grace hour. Forgetting the widths keeps a publish in flight, whose
+        # variants were checked before it took the lock, from linking the deleted files: it shows
+        # the original, and the next pass makes the variants again.
+        if sha[:16] not in used_folders:
+            removed += _remove_variant_files(cfg, sha)
+        if row["stored_at"] > cutoff:
+            if row["variant_widths"] is not None:
+                db.execute(
+                    con,
+                    "UPDATE images SET variant_widths = NULL, variant_note = NULL, variant_attempts = 0"
+                    " WHERE sha256 = :sha",
+                    sha=sha,
+                )
             continue
         with contextlib.suppress(FileNotFoundError):
             blob_path(cfg, sha).unlink()
             removed += 1
-        if sha[:16] not in used_folders:
-            removed += _remove_variant_files(cfg, sha)
         db.execute(con, "DELETE FROM images WHERE sha256 = :sha", sha=sha)
     return removed
