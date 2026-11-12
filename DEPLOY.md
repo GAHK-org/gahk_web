@@ -5,8 +5,9 @@ CGI, no SSH, one PostgreSQL database. This is the complete runbook: the one-time
 site, day-to-day updates, rollback, and what to do if the account is lost.
 
 **What the webhost must provide** (checked on the account on 2026-11-12, with CGI scripts in
-`public_html`): `/usr/bin/python3` is CPython 3.13 (3.13.5, x86_64); `python3 -m pip` works from a
-CGI request and reaches PyPI over HTTPS; the account's home is `/usr/home/<login>`, with
+`public_html`): `/usr/bin/python3` is CPython 3.13 (3.13.5, x86_64) with glibc 2.41; Debian's pip
+(25.1.1, from `/usr/lib/python3/dist-packages`) works as `python3 -m pip` and as `python3 -I -m pip`
+from a CGI request and reaches PyPI over HTTPS; the account's home is `/usr/home/<login>`, with
 `public_html` directly under it. The updater installs the site's Python packages (Flask, flup,
 Jinja2, MarkupSafe, psycopg with its libpq, Pillow, nh3) with that pip, into each release. Without
 pip on the webhost no release can be installed (section 12).
@@ -114,7 +115,8 @@ stubs in `~/public_html/cgi-bin/`, both from the release:
 When the release cannot run (none installed yet, packages for another python, an import failure),
 `gahk.fcgi` does not crash and restart for every request: it answers like `gahk.cgi` does in that
 case (the 503 page, `/api/health` with the reason) for 30 seconds, then ends, and the next request
-looks again.
+looks again. It ends sooner, after the response in which it sees that a release can run (an
+install, or a reinstall of the packages, has finished).
 
 ## 2. The PostgreSQL database
 
@@ -229,7 +231,7 @@ This is the only manual upload. Afterwards every update comes from GitHub by its
    between `# BEGIN LOCAL` and `# END LOCAL` (an empty block gets the release's). The block holds
    the CGI-only switch, commented out (section 12). Put host-specific lines there too, such as
    `SetEnv GAHK_WEB_HOME /usr/home/<login>` should `gahk.cgi` ever fail to find the home (section
-   12). Make any other change in the repository's `public_html/.htaccess` and let it release. A
+   12; it works only where Apache runs scripts without suEXEC, section 13 item 14). Make any other change in the repository's `public_html/.htaccess` and let it release. A
    change made only on the server outside the LOCAL block is lost at the next install.
 
 The first install happens on the first signed `POST /api/update`. Normally that is intern's beat task
@@ -428,10 +430,12 @@ tried again on every nudge, each time with a few seconds of errors for the forms
 the running version (below) until a fixed release is out.
 
 CI publishes a bundle only when the `lint`, `typecheck`, `test (Python 3.13, PostgreSQL 15)`,
-`test (Python 3.14, PostgreSQL 17)` and `bundle` checks pass. The `bundle` job installs the
-release's packages on x86_64 Linux for Python 3.13 and 3.14 with the updater's own pip command, so a
-package without a wheel for the webhost's python fails there, not on the webhost. That holds as long
-as the webhost's glibc is not older than the CI runner's (section 13 item 14).
+`test (Python 3.14, PostgreSQL 17)`, `bundle` and `webhost` checks pass; make the same checks
+required in the ruleset for `main`. The `bundle` job installs the release's packages on x86_64 Linux
+for Python 3.13 and 3.14 with the updater's own pip command, so a package without a wheel for the
+webhost's python fails there, not on the webhost. The runner's glibc (2.39 on `ubuntu-latest`) is
+not newer than the webhost's (2.41), so every manylinux wheel CI accepts also loads on the webhost.
+The `webhost` job installs the bundle on a fake webhost and exercises it end to end (section 13).
 
 **When PyPI is down.** A release with new packages cannot install: the update fails with
 `failed: pip install: …`, the old release keeps running, and the next nudge (15 minutes later) tries
@@ -515,8 +519,8 @@ them.
 | `/api/*` answers 401 `bad signature` | The `[sync]` key and `GAHK_WEB_KEY` differ, or the sender's clock is off by more than 5 minutes. |
 | `/api/*` answers 503 `database unavailable` | The `[database]` settings, or the database host is down. |
 | The update result says `self-test failed` | The new release does not run on this python. The old one keeps running. See `update.log`. |
-| The update says `failed: pip is not available on the webhost` | `python3 -I -m pip` does not work on the account: if it never did, see section 13 item 14; otherwise Hetzner changed its python. Ask Hetzner support for pip for `/usr/bin/python3`; the old release keeps running meanwhile. |
-| A new release's update says `failed: pip install: ERROR: Could not find a version that satisfies …` or `No matching distribution` | PyPI has no wheel of a package the new release changed for the webhost's python (or for its glibc, section 13 item 14). The old release keeps running, so nothing is down: bump or replace the package in the repo and release again. A pin (section 10) only stops the retries every 15 minutes. |
+| The update says `failed: pip is not available on the webhost` | `python3 -I -m pip` does not work on the account. It did on 2026-11-12 (Debian's pip 25.1.1), so Hetzner changed its python. Ask Hetzner support for pip for `/usr/bin/python3`; the old release keeps running meanwhile. |
+| A new release's update says `failed: pip install: ERROR: Could not find a version that satisfies …` or `No matching distribution` | PyPI has no wheel of a package the new release changed for the webhost's python. The old release keeps running, so nothing is down: bump or replace the package in the repo and release again. A pin (section 10) only stops the retries every 15 minutes. |
 | After a Python upgrade (`/api/health` says `the release's packages are for …`), the update says `failed: pip install: … No matching distribution` | The new python has no wheel yet for one of the running release's packages. No pin helps: every release needs its packages for this python. Release a version with a package that has wheels for it; CI's `bundle` job must pass on that Python. Until then forms and the API answer 503 (pages keep working). |
 | The update says `failed: pip install:` with a network error, or `pip install took longer than 600 s` | PyPI was unreachable or slow. Nothing to do: the next nudge tries again, and the old release keeps running. |
 | The update says `failed: pip install: ERROR: THESE PACKAGES DO NOT MATCH THE HASHES …` | A downloaded file is not the one the release names (a broken download, or something between the webhost and PyPI). It is refused; the next nudge tries again. If it persists, find out why before anything else. |
@@ -528,9 +532,9 @@ them.
 | The update says `the site does not answer with the new release (…); put back the previous release, .htaccess and stubs` | After the switch, `/api/health` did not come from the new release through FastCGI: Apache rejected the new `.htaccess` (HTTP 500, a syntax error or a directive Hetzner does not allow), or the new release or `gahk.fcgi` does not start under FastCGI (`through gahk.fcgi`). The previous ones are back and running. `update.log` says what answered (`site check:`), the error log why. Fix it in the repo; until then every nudge tries again, with a few seconds of errors for forms and the API each time, so pin the running version (section 10). |
 | The whole site, `/api/update` included, answers 500 right after an update | The new `.htaccess` breaks the site and the check did not catch it (it could not reach the site). Upload the previous release's `htaccess` asset to `~/public_html/.htaccess` by SFTP, then fix it in the repo. |
 | `gahk.cgi` or `gahk.fcgi` is shown as text, or 500 with "Premature end of script headers" | Their mode or permissions (section 4), or no `/usr/bin/python3` (both stubs name it). |
-| Every page answers *"gahk.dk er ved at blive installeret"* although a release is installed | The stub looks in the wrong home. `gahk.fcgi` takes the account's home or the folder above `public_html`; `gahk.cgi` also takes `SetEnv GAHK_WEB_HOME /usr/home/<login>` between the `# BEGIN LOCAL` and `# END LOCAL` lines of `~/public_html/.htaccess` (mod_fcgid does not pass it on). If only FastCGI looks in the wrong place, the CGI-only switch (below) works around it; report it, the stub needs a fix. |
+| Every page answers *"gahk.dk er ved at blive installeret"* although a release is installed | The stub looks in the wrong home. `gahk.fcgi` takes the account's home or the folder above `public_html`; `gahk.cgi` also takes `SetEnv GAHK_WEB_HOME /usr/home/<login>` between the `# BEGIN LOCAL` and `# END LOCAL` lines of `~/public_html/.htaccess`, but only without suEXEC (section 13 item 14; mod_fcgid never passes it on). If only FastCGI looks in the wrong place, the CGI-only switch (below) works around it; report it, the stub needs a fix. |
 | After an update, or a change to `config.ini`, a form or the API still behaves as before | A FastCGI process that has been idle since: it answers one more request with what it had, then ends, and the next request gets a fresh process. To end them all at once, change `~/gahk_web/config.ini`'s modification time (open it in the file manager and save it, or upload it again): every process ends after its next request. |
-| `/api/health` answers 503 `the release cannot start: …` with `X-Gahk-Runner: gahk.fcgi` | The release fails to import in the FastCGI process; the error log has the traceback. `gahk.fcgi` answers 503 for 30 seconds at a time, then tries again. If CGI works (`/api/update` answers), the CGI-only switch keeps the site up while the release is fixed. |
+| `/api/health` answers 503 `the release cannot start: …` with `X-Gahk-Runner: gahk.fcgi` | The release fails to import in the FastCGI process; the error log has the traceback. `gahk.fcgi` answers 503 for 30 seconds at a time, then tries again (at once after an update). If CGI works (`/api/update` answers), the CGI-only switch keeps the site up while the release is fixed. |
 | Error log: `mod_fcgid: can't apply process slot`, `… exceeds MaxRequestLen`, or `read data timeout` | One of mod_fcgid's limits: more processes at once than Webhosting S allows (not known), a body under 100 000 bytes still over Hetzner's `FcgidMaxRequestLen` (larger ones already go to CGI), or a request running longer than mod_fcgid waits (`FcgidIOTimeout`, 40 s by default; see section 13 item 12). The CGI-only switch avoids all three. |
 | Error log: `gahk.fcgi[<pid>]: exiting (…)` | Normal: a FastCGI process ended after a change, 500 requests or an hour. |
 
@@ -551,77 +555,120 @@ restarts them all.
 ## 13. Things to verify on Hetzner
 
 These are assumptions that could not be tested before the site ran on the webhost. The same items
-are marked `[VERIFY ON HETZNER]` in `.htaccess`. Settled on 2026-11-12: `/usr/bin/python3` is
-CPython 3.13.5 on x86_64, its pip installs binary wheels from PyPI from a CGI request, outbound
-HTTPS works, and the home is `/usr/home/<login>` with `public_html` directly under it. `*.fcgi`
-runs as FastCGI and `*.cgi`/`*.py` as CGI anywhere under `public_html` with no `.htaccess` line; a
-FastCGI process serves request after request, lives at least about 7 minutes idle, and a second one
-starts when the first is busy (section 1). The `.htaccess` rules themselves were tried with Debian's
-Apache 2.4.69 and mod_fcgid 2.3.9 (x86_64), not yet on Hetzner.
+are marked `[VERIFY ON HETZNER]` in `.htaccess`.
+
+**Settled on the webhost** (2026-11-12, with CGI scripts in `public_html`): `/usr/bin/python3` is
+CPython 3.13.5 on x86_64 with glibc 2.41. Debian's pip 25.1.1 (`/usr/lib/python3/dist-packages`)
+answers both `python3 -m pip` and `python3 -I -m pip`, the updater's form, and installs binary
+wheels from PyPI from a CGI request; outbound HTTPS works. The home is `/usr/home/<login>` with
+`public_html` directly under it. `*.fcgi` runs as FastCGI and `*.cgi`/`*.py` as CGI anywhere under
+`public_html` with no `.htaccess` line; a FastCGI process serves request after request, lives at
+least about 7 minutes idle, and a second one starts when the first is busy (section 1). CI's
+runners have glibc 2.39, not newer than the webhost's, so a manylinux wheel the `bundle` job
+accepts also loads on the webhost.
+
+### The fake webhost
+
+The `webhost` CI job (`task webhost` locally, `scripts/fake_webhost/`) builds a stand-in for the
+account in docker and runs the release on it end to end. It is Debian trixie, the release Hetzner's
+python comes from: Apache 2.4 with mod_rewrite, mod_headers, mod_expires, mod_cgid, mod_fcgid
+2.3.9 and suEXEC, the system python3 3.13.5 with Debian's pip 25.1.1 and glibc 2.41 (the driver
+checks these against the webhost's, through a CGI script, like the check above). The handlers for
+`*.cgi`, `*.py` and `*.fcgi` are mapped in the server's configuration, not in `.htaccess`, and
+scripts run as the account's user, whose home is `/usr/home/<login>`. PostgreSQL 17 runs beside it.
+
+The driver plays the operator, GitHub, intern and visitors. It uploads only the four bootstrap
+files and `config.ini`, as by SFTP, then sends a signed `POST /api/update` with a CGI timeout of
+2 seconds, so Apache gives up long before pip is done. It then checks:
+
+- the first install from PyPI with the real `requirements.lock`, a bundle download that GitHub's
+  way redirects to another host, and the stand-in for the release giving way at once;
+- a publish with real JPEGs, small ones through FastCGI and large ones through CGI, and their WebP
+  variants;
+- pages, pictures and assets served by Apache without Python, with their cache headers;
+- the redirects of old addresses and of http and www, the 404 page, a POST to a page;
+- a form post to its 303, the visit beacon, the outbox and its ack, a preview, and the calendar
+  pass-through;
+- refusals of both stubs asked for directly, of any other script and of dot-files;
+- a second release, which switches `CURRENT` and replaces every FastCGI process (seen with `ps`
+  in the container, nothing in the site's answers), with a request that tries to name another
+  manifest;
+- the CGI-only switch (everything through CGI, the site intact);
+- three broken releases that must leave the running one in place: one whose self-test fails, one
+  whose `.htaccess` Apache rejects, and one whose `gahk.fcgi` cannot start (both put back by the
+  health check after the switch);
+- a pin back to the first release, from the kept copy, without a download.
+
+Apache's error log must stay free of tracebacks and of mod_fcgid's and suEXEC's complaints
+throughout. The run takes about a minute, plus the image build. Every assumption about Hetzner
+that it makes is a knob in `scripts/fake_webhost/entrypoint.sh` (`--no-suexec` runs Apache itself
+as the account instead).
+
+It cannot show what only the real account has. Hetzner's own Apache configuration (its mod_fcgid
+limits, its CGI timeout, whether scripts run through suEXEC or something like it) is guessed; the
+process, memory and CPU limits of Webhosting S, and anything that kills long-running processes, are
+not modelled; Varnish and Hetzner's TLS termination are left out (Apache terminates TLS itself);
+konsoleH's database and its certificates are not used. The items below say which of these matter.
+
+### The items
+
+Marked **fake webhost** where the fake webhost (Debian's Apache 2.4.69, mod_fcgid 2.3.9) shows
+it; each of those still needs a look on Hetzner only if its Apache is set up differently.
 
 1. `/cgi-bin/` is the folder `~/public_html/cgi-bin`, not a server-wide `ScriptAlias` (Debian's
-   default configuration has one, which made every dynamic request 404 in the trial). After the
-   first install, `curl -sI https://gahk.dk/api/health` must show an `X-Gahk-Runner` header.
-2. mod_rewrite supports the lookahead in the dot-file rule. `%{HTTPS}` is `on` for TLS requests, so
-   the http→https rule does not loop.
+   default configuration has one, which made every dynamic request 404 in the trial). **Not
+   verified on Hetzner**; the fake webhost simply has none. After the first install,
+   `curl -sI https://gahk.dk/api/health` must show an `X-Gahk-Runner` header.
+2. mod_rewrite supports the lookahead in the dot-file rule: **fake webhost** (PCRE2; `/.htaccess`,
+   `/.git/config` and `/static/.tmp-site.css` are refused, `/.well-known/acme-challenge/…` is
+   served). `%{HTTPS}` is `on` for TLS requests, so the http→https rule does not loop: **fake
+   webhost** only, where Apache terminates TLS itself; **not verified on Hetzner**, whose TLS
+   termination may sit in front of Apache.
 3. `RewriteCond %{REQUEST_FILENAME}/index.html -f` also matches the trailing-slash form, so both
-   `/faciliteter` and `/faciliteter/` are served without a redirect.
-4. A POST to an existing file reaches the app, because the file rules only apply to GET and HEAD.
+   `/faciliteter` and `/faciliteter/` are served without a redirect, by Apache, with
+   `DirectorySlash Off`: **fake webhost**.
+4. A POST to an existing file reaches the app, because the file rules only apply to GET and HEAD:
+   **fake webhost**.
 5. The rewrites to `cgi-bin/gahk.fcgi/…` and `cgi-bin/gahk.cgi/…` keep the original `REQUEST_URI`,
-   which the app routes on and the API signature covers, and `REDIRECT_STATUS` is empty on the
+   which the app routes on and the API signature covers; `REDIRECT_STATUS` is empty on the
    browser's own request but set after a rewrite (the `.htaccess` refuses direct requests for
-   `cgi-bin/` with it). `%{HTTP:Content-Length}` and the `E=` flag of the CGI-only switch work in
-   `.htaccess`. All four held in the trial.
-6. mod_headers with `<If>` expressions works in `.htaccess`.
-7. HSTS is sent only once https works for `gahk.dk` and `www`.
-8. `REMOTE_ADDR` is the real client (Varnish off).
+   `cgi-bin/` with it); `%{HTTP:Content-Length}` and the `E=` flag of the CGI-only switch work in
+   `.htaccess`: all **fake webhost** (signed requests through both stubs, the refusals, uploads on
+   either side of 100 000 bytes, the switch).
+6. mod_headers with `<If>` expressions works in `.htaccess`: **fake webhost** (every cache header).
+7. HSTS is sent only over https (**fake webhost**), and must only be released once https works for
+   `gahk.dk` and `www`.
+8. `REMOTE_ADDR` is the real client (Varnish off). **Not verified on Hetzner.**
 9. The database is reachable with konsoleH's hostname, and `verify-full` works with `sqlca.pem`.
+   **Not verified on Hetzner.**
 10. Hardlinks work in the home: from `~/gahk_web/state` to `~/public_html/billeder`, and between
     releases' `vendor/` folders. If they do not, the code copies instead (more disk, section 10).
+    **Not verified on Hetzner** (the fake webhost has one ordinary file system).
 11. A CGI process may start a child in its own session that outlives the request. The updater does
     this for installs slower than 45 seconds, and pip runs in that child. If Hetzner kills it, the
     install stops before the switch, or after it with only cleanup left, and the next nudge carries
-    on. In tests an install takes a few seconds, plus the pip download on the first install.
+    on. **Fake webhost**: Apache gave up on the request after its 2-second timeout (504) and the
+    install finished all the same. **Not verified on Hetzner**, which may kill such processes. The
+    first install takes about 10 seconds there (the pip download included), later ones a few.
 12. mod_fcgid's limits on Webhosting S. Not known, and nothing depends on them: the idle timeout and
     the most processes at once. `FcgidMaxRequestLen`: 128 KiB by default and only raised in the
-    server's configuration, so bodies of 100 000 bytes and more go to CGI. `FcgidIOTimeout`: 40 s by
-    default; a FastCGI request that runs longer is cut off. The longest are `POST /api/rebuild` (at
-    most 30 s of picture variants, then the render) and a publish under 100 000 bytes (20 s, then
-    the render). If `read data timeout` appears in the error log, lower those budgets
-    (`housekeeping.py`) or send those paths to CGI. A FastCGI process keeps the memory a request
-    once needed (Pillow, item 13) until it ends, at most an hour later.
+    server's configuration, so bodies of 100 000 bytes and more go to CGI (with the defaults:
+    **fake webhost**). `FcgidIOTimeout`: 40 s by default; a FastCGI request that runs longer is cut
+    off. The longest are `POST /api/rebuild` (at most 30 s of picture variants, then the render)
+    and a publish under 100 000 bytes (20 s, then the render). If `read data timeout` appears in
+    the error log, lower those budgets (`housekeeping.py`) or send those paths to CGI. A FastCGI
+    process keeps the memory a request once needed (Pillow, item 13) until it ends, at most an hour
+    later. **Not verified on Hetzner.**
 13. A CGI or FastCGI process may use the memory Pillow needs for the WebP variants: about 50 MB above
     the process for a 2400 px picture (what intern sends), about 200 MB for a 10 MP one. If Hetzner
     kills it, that request fails once: a killed `PUT` makes intern's publish fail, and the next
     sync publishes again. The `PUT`, `publish` and `rebuild` requests never retry an image whose
     attempt was killed; the visit beacon and the updater's re-render do, where a kill costs nobody
     an answer. After three killed attempts the image gets no variants, and pages show its
-    original. A full disk does not count as an attempt.
-14. The updater runs pip as `python3 -I -m pip` (isolated: no user site-packages, no `PYTHON*`
-    variables), while the check on 2026-11-12 ran `python3 -m pip`. And the host's glibc is only
-    known to be 2.28 or newer (numpy's `manylinux_2_28` wheels loaded), while CI's `bundle` job
-    checks the wheels on Ubuntu with glibc 2.39. Check both once, before the bootstrap upload of
-    `.htaccess` (which refuses every script but its two stubs): upload this as
-    `~/public_html/hostcheck.cgi` (mode 755), open `https://<webhost>/hostcheck.cgi`, record the
-    answers here, and delete the file.
-
-    ```python
-    #!/usr/bin/python3
-    import os, subprocess
-
-    print("Content-Type: text/plain\n", flush=True)
-    subprocess.run(["/usr/bin/python3", "-I", "-m", "pip", "--version"], stderr=subprocess.STDOUT)
-    print("glibc", os.confstr("CS_GNU_LIBC_VERSION"))
-    ```
-
-    - If pip answers `No module named pip` (it lives only in the user site), the updater must run
-      it with `-E -P` instead of `-I`, keeping `PIP_CONFIG_FILE=/dev/null` and `--target`. Until
-      then every install fails with `failed: pip is not available on the webhost`.
-    - If glibc is older than 2.39, the `bundle` job must install with pip's
-      `--platform manylinux_<major>_<minor>_x86_64` for the host's glibc, so that a wheel needing a
-      newer glibc fails in CI. Until then such a wheel passes CI and fails only on the webhost:
-      harmless for a new release (the old one keeps running), but it would block the repair after
-      a Python upgrade.
-15. mod_fcgid passes the FastCGI process little of Apache's environment. Both stubs name
-    `/usr/bin/python3` rather than relying on `PATH`, and `gahk.fcgi` finds the home without
-    `GAHK_WEB_HOME` (section 12). The trial passed no `SetEnv` to it.
+    original. A full disk does not count as an attempt. **Not verified on Hetzner.**
+14. Scripts run as the account. With suEXEC, a script gets only suEXEC's own list of variables, so a
+    `SetEnv` in `.htaccess` reaches neither stub (**fake webhost**), and both stubs and their
+    folder must not be writable by group or others (section 4). Both stubs find the home without
+    `GAHK_WEB_HOME`, and name `/usr/bin/python3` rather than relying on `PATH`, which mod_fcgid
+    does not pass on: **fake webhost**, with and without suEXEC. Whether Hetzner uses suEXEC is
+    **not verified**; the November trial passed no `SetEnv` either way.

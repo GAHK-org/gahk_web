@@ -40,7 +40,8 @@ The runbook is DEPLOY.md.
 - Update requests and large uploads (pictures, publications) start a new program each time, so an
   update can always repair a broken version.
 - When the running version cannot start, those requests get *"Siden opdateres"*, and the program
-  tries again every 30 seconds, without the web server ever giving up on it.
+  tries again every 30 seconds, without the web server ever giving up on it. Once an update has
+  installed a version that can run, the next request after it already gets that version.
 - An operator can send everything to a new program per request with one line in the webhost's
   configuration, should the running program misbehave.
 
@@ -99,3 +100,9 @@ The runbook is DEPLOY.md.
   hand-written web layer. flup is old but small, pure Python, and works on the webhost's Python and
   the next one; its one unsafe corner (an error page that shows tracebacks when debugging) is
   replaced.
+- **Every release runs on a stand-in for the webhost before it is published.** Unit tests cannot
+  show what Apache's rewrite rules, its FastCGI and CGI modules and the webhost's own Python do
+  together. CI builds a copy of the webhost as close as it can get (the same Linux and Python
+  versions, the same way of running scripts, its guesses where Hetzner's set-up is unknown),
+  installs the release on it from the first-time upload, and uses it as visitors and intern would.
+  What only the real webhost can show stays on a list in the runbook.

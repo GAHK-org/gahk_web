@@ -70,7 +70,7 @@ def find_home() -> Path:
 
     On Hetzner that is /usr/home/<login>, with public_html directly under it (checked 2026-11-12).
     In order: $GAHK_WEB_HOME (SetEnv in the .htaccess LOCAL block, should a path ever differ; it
-    reaches CGI only, not FastCGI), the account's home directory (both run as the account), the
+    reaches CGI only, not FastCGI, and not through suEXEC), the account's home directory (both run as the account), the
     folder above public_html.
     """
     candidates = []

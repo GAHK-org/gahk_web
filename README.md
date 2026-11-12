@@ -46,11 +46,31 @@ skrev ud (nøglen står også i `local/config.ini`), og gem en side under *Hjemm
 task db:create   # opret test-databasen (én gang)
 task test        # kør testsuiten mod Postgres, som CI
 task bundle      # byg release-bundlen i dist/ og røgtest den på Python 3.13 og 3.14 (henter pakker fra PyPI)
+task webhost     # byg bundlen, og installér og afprøv den på et falsk webhotel i docker
 ```
 
 Testene genskaber skemaet i test-databasen (`gahk_web_test`) ved hver kørsel.
 `task bundle -- --database postgres://…/en_smid_vaek_database` prøver også den første installation
 gennem CGI-scriptet og forespørgsler til FastCGI-scriptet, ligesom CI gør. Den sletter alle tabeller i databasen, så brug kun en til formålet.
+
+`task webhost` kræver docker og er CI's `webhost`-job. Den bygger et image (`scripts/fake_webhost/`),
+der ligner Hetzners webhotel så meget, vi kan: Debian trixie med Apache 2.4, mod_rewrite, mod_fcgid,
+CGI og suEXEC og systemets python3 (3.13.5 med Debians pip 25.1.1 og glibc 2.41, som på webhotellet).
+Den starter det ved siden af en PostgreSQL 17 og spiller selv operatør, GitHub, intern og besøgende:
+upload af de fire bootstrap-filer, første installation med pip fra PyPI, publicering med billeder,
+statiske sider og deres cache-headere, formularer, besøgstæller, omdirigeringer, adresser der skal
+afvises, en ny release, CGI-only-kontakten og ødelagte releases, som ikke må komme i drift. Det tager
+omkring et minut plus byggetiden af imaget. Containerne hedder `gahkweb-e2e-*` og fjernes bagefter.
+
+```sh
+task webhost -- --keep                 # lad containerne køre bagefter, så man kan kigge ind
+task webhost -- --wheelhouse ~/wheels  # tag pakkerne fra en mappe med wheels i stedet for PyPI
+task webhost -- --no-suexec            # det andet gæt: Apache selv kører som kontoen, uden suEXEC
+task webhost -- --platform linux/amd64 # webhotellets arkitektur (langsommere på en Mac med ARM)
+```
+
+Hvad kørslen viser, og hvad den ikke kan vise om det rigtige webhotel, står i
+[DEPLOY.md](DEPLOY.md) afsnit 13.
 
 ## Code Quality: lint + typer + pre-commit
 
@@ -65,7 +85,7 @@ task hooks        # installér prek git pre-commit hooks (kør én gang)
 runner) via `.pre-commit-config.yaml`. Derefter kører **ruff** (check + format) og **mypy** automatisk
 ved hvert commit. Kør manuelt på alt med `uv run prek run --all-files`. De samme tjek håndhæves i CI
 (`.github/workflows/ci.yml`): `lint`, `typecheck`, `test` (Python 3.13 med PostgreSQL 15 og 3.14 med
-17), `bundle` og `security`. Et merge til `main` udgiver derefter en ny bundle (`release`).
+17), `bundle`, `webhost` og `security`. Et merge til `main` udgiver derefter en ny bundle (`release`).
 
 Bundlen indeholder ikke selve afhængighederne, kun `requirements.lock` (eksporteret fra `uv.lock`,
 hver fil låst med sin sha256). Webhotellets updater installerer dem med pip for sin egen Python, når

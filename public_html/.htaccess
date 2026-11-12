@@ -12,7 +12,8 @@
 # public_html without any line here (verified 2026-11-12), so every other script is refused below.
 # gahk_web/routing.py mirrors these rules for the development server; keep the two in step.
 #
-# [VERIFY ON HETZNER] marks what could not be tested before the site ran on the webhost.
+# [VERIFY ON HETZNER] marks what could not be tested before the site ran on the webhost. Every rule
+# here runs end to end on a fake webhost in CI (Debian's Apache 2.4; DEPLOY.md section 13).
 
 Options -Indexes -MultiViews
 # Pages live at /faciliteter (no slash): never let Apache redirect a folder to its slashed form.
@@ -23,7 +24,7 @@ AddDefaultCharset utf-8
 ErrorDocument 404 /404.html
 
 # Host-specific lines, edited on the server only (e.g. SetEnv GAHK_WEB_HOME /usr/home/<login>, which
-# reaches gahk.cgi only). Every install keeps what stands between these two markers in the installed
+# reaches gahk.cgi only, and only where scripts do not run through suEXEC). Every install keeps what stands between these two markers in the installed
 # file (an empty block gets the release's). Keep the marker lines as they are.
 #
 # The CGI-only switch: remove the "# " in front of the RewriteRule below to send everything the app
@@ -38,7 +39,8 @@ ErrorDocument 404 /404.html
   RewriteBase /
 
   # --- Canonical host and scheme: www.gahk.dk → gahk.dk, http → https ---------------------------
-  # [VERIFY ON HETZNER] that %{HTTPS} is "on" behind Hetzner's TLS termination (no redirect loop).
+  # [VERIFY ON HETZNER] that %{HTTPS} is "on" behind Hetzner's TLS termination (no redirect loop);
+  # it is where Apache terminates TLS itself (the fake webhost).
   RewriteCond %{HTTP_HOST} ^www\.(.+)$ [NC]
   RewriteRule ^ https://%1%{REQUEST_URI} [R=301,L,NE]
   RewriteCond %{HTTPS} !=on
@@ -83,7 +85,7 @@ ErrorDocument 404 /404.html
   RewriteRule ^ - [L]
 
   # --- Pre-rendered pages: /faciliteter and /faciliteter/ both serve faciliteter/index.html ---
-  # [VERIFY ON HETZNER] that the trailing-slash form also finds the file ("…/faciliteter//index.html").
+  # The trailing-slash form also finds the file ("…/faciliteter//index.html"; the fake webhost).
   RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
   RewriteCond %{REQUEST_FILENAME}/index.html -f
   RewriteRule ^(.*?)/?$ $1/index.html [L]
@@ -109,7 +111,8 @@ ErrorDocument 404 /404.html
 </FilesMatch>
 
 # --- Caching. Applies to files served from disk; the CGI app sets its own headers. ---
-# [VERIFY ON HETZNER] mod_headers and ap_expr <If> (Apache 2.4) are available in .htaccess.
+# [VERIFY ON HETZNER] mod_headers and ap_expr <If> (Apache 2.4) are available in .htaccess (they work
+# on the fake webhost; whether Hetzner loads mod_headers is its choice).
 <IfModule mod_headers.c>
   # Pre-rendered pages: short, so an edit on intern shows within a minute.
   <If "%{REQUEST_FILENAME} =~ m#\.(?:html|xml|txt)$#">
