@@ -31,17 +31,20 @@ run(), holding an exclusive lock:
      6. run the release's selftest.py with this python and the new packages, then make them its
         vendor/ (vendor/.abi records the python they are for)
      7. apply the database migrations with the NEW code
-     8. install public_html/static (new files only), cgi-bin/gahk.cgi and .htaccess (keeping the
-        installed file's LOCAL block); if the site then answers 5xx and the previous .htaccess cures
-        that, put it back and fail
+     8. install public_html/static (new files only), cgi-bin/gahk.cgi and gahk.fcgi, and .htaccess
+        (keeping the installed file's LOCAL block)
      9. switch CURRENT (written atomically)          <- the release goes live here
-    10. take the release's bin/updater.py if it passes its own --selftest
-    11. re-render the site with the new templates
-    12. delete hashed static files neither this nor the previous release uses; keep 3 releases
+    10. ask the site's own GET /api/health until the new release answers, through FastCGI (CGI when
+        the LOCAL block switches to CGI only); FastCGI processes of the old release answer once more
+        and end. If it never does and the previous .htaccess, stubs and release cure the site, put
+        them back and fail
+    11. take the release's bin/updater.py if it passes its own --selftest
+    12. re-render the site with the new templates
+    13. delete hashed static files neither this nor the previous release uses; keep 3 releases
 
 Any failure before step 9 leaves the old release running and untouched (migrations excepted: they
-must keep working with the previous release). Steps 10-12 are repeated or done lazily by the next
-update or request, so an interrupted run never leaves a half-switched site. The outcome goes to
+must keep working with the previous release); step 10 puts it back. Steps 11-13 are repeated or
+done lazily by the next update or request, so an interrupted run never leaves a half-switched site. The outcome goes to
 <state_dir>/update.json, which GET /api/status reports, and every step to ~/gahk_web/var/update.log.
 Temporary files live in ~/gahk_web/tmp and in .tmp-* folders, which every run clears first.
 
@@ -92,6 +95,8 @@ UNPACKED_MAX_BYTES = 300 * 1024 * 1024
 MAX_MEMBERS = 20000
 HTTP_TIMEOUT = 30  # seconds per network operation
 SITE_CHECK_TIMEOUT = 15  # seconds for the request to the site's own /api/health
+SITE_CHECK_ATTEMPTS = 8  # requests to /api/health after the switch, SITE_CHECK_PAUSE apart
+SITE_CHECK_PAUSE = 0.5
 DOWNLOAD_DEADLINE = 300  # seconds for a whole download
 SELFTEST_TIMEOUT = 120
 MIGRATE_TIMEOUT = 300
@@ -106,6 +111,8 @@ REQUIREMENTS = "requirements.lock"  # in the bundle's root: uv export of uv.lock
 ABI_FILE = ".abi"  # in vendor/: the python the packages were installed for (interpreter_abi())
 PIP_MODULE = "pip"
 FIND_LINKS_ENV = "GAHK_WEB_PIP_FIND_LINKS"
+STUBS = ("gahk.cgi", "gahk.fcgi")  # public_html/cgi-bin/: CGI, and the persistent FastCGI process
+RUNNER_HEADER = "X-Gahk-Runner"  # on GET /api/health: what answered (gahk_web/api.py)
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -730,17 +737,26 @@ def static_files(static_root: Path) -> set[str]:
 
 
 def keep_local_block(new: bytes, installed: bytes | None) -> bytes:
-    """The release's .htaccess with the installed file's LOCAL block in place of its own (empty) one."""
+    """The release's .htaccess with the installed file's LOCAL block in place of its own. An empty
+    installed block takes the release's (its commented-out switches)."""
     old = LOCAL_BLOCK_RE.search(installed or b"")
     block = LOCAL_BLOCK_RE.search(new)
-    if old is None or block is None:
+    if old is None or block is None or not old.group(1).strip():
         return new
     return new[: block.start(1)] + old.group(1) + new[block.end(1) :]
 
 
+def cgi_only(htaccess: bytes) -> bool:
+    """Whether the LOCAL block switches the site to CGI only (an uncommented GAHK_CGI_ONLY line)."""
+    block = LOCAL_BLOCK_RE.search(htaccess)
+    lines = block.group(1).decode("utf-8", "replace").splitlines() if block else []
+    return any("GAHK_CGI_ONLY" in line and not line.lstrip().startswith("#") for line in lines)
+
+
 def install_public(layout: Layout, release: Path, installed_htaccess: bytes | None = None) -> None:
-    """Copy the release's public_html files into place: static files first, then the stub, .htaccess
-    (keeping the LOCAL block of the installed one)."""
+    """Copy the release's public_html files into place: static files first, then the stubs, .htaccess
+    (keeping the LOCAL block of the installed one). A release without gahk.fcgi (from before FastCGI,
+    after a pin) takes the installed one away."""
     source = release / "public_html"
     for required in (".htaccess", "cgi-bin/gahk.cgi"):
         if not (source / required).is_file():
@@ -750,49 +766,121 @@ def install_public(layout: Layout, release: Path, installed_htaccess: bytes | No
     cgi_bin = layout.public_html / "cgi-bin"
     cgi_bin.mkdir(parents=True, exist_ok=True)
     cgi_bin.chmod(0o755)  # suEXEC refuses a script in a group- or world-writable folder
-    write_atomic(cgi_bin / "gahk.cgi", (source / "cgi-bin" / "gahk.cgi").read_bytes(), 0o755)
+    for stub in STUBS:
+        if (source / "cgi-bin" / stub).is_file():
+            write_atomic(cgi_bin / stub, (source / "cgi-bin" / stub).read_bytes(), 0o755)
+        else:
+            (cgi_bin / stub).unlink(missing_ok=True)
     htaccess = keep_local_block((source / ".htaccess").read_bytes(), installed_htaccess)
     write_atomic(layout.public_html / ".htaccess", htaccess)
 
 
-def site_status(layout: Layout) -> int | None:
-    """The HTTP status of the site's own GET /api/health, or None when it cannot be reached."""
+@dataclass(frozen=True)
+class Health:
+    """What the site's own GET /api/health answered."""
+
+    status: int | None  # None: the site could not be reached
+    version: str | None = None
+    runner: str = ""  # X-Gahk-Runner: "fastcgi" or "cgi" (the release), "gahk.cgi"/"gahk.fcgi" (a stub)
+
+    def describe(self) -> str:
+        if self.status is None:
+            return "no answer"
+        return f"HTTP {self.status}, version {self.version or 'unknown'}, through {self.runner or 'unknown'}"
+
+
+def site_health(layout: Layout) -> Health:
     url = layout.base_url + "/api/health"
     if urlsplit(url).scheme not in ("http", "https"):
-        return None
-    request = urllib.request.Request(url, headers={"User-Agent": "gahk_web-updater"})  # noqa: S310
+        return Health(None)
+    request = urllib.request.Request(  # noqa: S310 - the configured http(s) base_url
+        url, headers={"User-Agent": "gahk_web-updater", "Cache-Control": "no-cache"}
+    )
     try:
         with urllib.request.urlopen(request, timeout=SITE_CHECK_TIMEOUT) as response:  # noqa: S310
-            return int(response.status)
+            status, headers, body = int(response.status), response.headers, response.read(4096)
     except urllib.error.HTTPError as exc:
-        return exc.code
+        status, headers, body = exc.code, exc.headers, exc.read(4096)
     except (urllib.error.URLError, OSError) as exc:
         log(layout, f"site check: {url}: {exc}")
-        return None
+        return Health(None)
+    try:
+        data = json.loads(body)
+    except ValueError:
+        data = None
+    version = data.get("version") if isinstance(data, dict) else None
+    return Health(status, version if isinstance(version, str) else None, headers.get(RUNNER_HEADER) or "")
 
 
-def check_htaccess(layout: Layout, previous: bytes | None) -> None:
-    """After install_public: when the site answers 5xx and the previous .htaccess cures that, put the
-    previous one back and fail the update, so the CGI stub (and with it POST /api/update) keeps working.
+def wait_for_site(layout: Layout, version: str, runner: str | None) -> Health:
+    """Ask the site until the given release answers (through the given runner, unless None), or give
+    up. An old FastCGI process answers one more request after CURRENT changed and then ends, and
+    mod_fcgid may have several, so a few old answers are expected."""
+    health = site_health(layout)
+    for _ in range(SITE_CHECK_ATTEMPTS - 1):
+        if health.status is None or (health.version == version and runner in (None, health.runner)):
+            break
+        time.sleep(SITE_CHECK_PAUSE)
+        health = site_health(layout)
+    return health
 
-    Apache answers 500 for every URL under an .htaccess it rejects. A 5xx that the previous file does
-    not cure (the database is down, say) is not the .htaccess's fault, so the new one stays. Skipped
-    on the first install, where the operator is watching, and when the file did not change."""
-    target = layout.public_html / ".htaccess"
-    new = target.read_bytes()
-    if previous is None or previous == new:
+
+def control_files(layout: Layout) -> dict[Path, bytes | None]:
+    """The installed .htaccess and stubs (None: absent): what decides how requests reach the app."""
+    paths = [layout.public_html / ".htaccess", *(layout.public_html / "cgi-bin" / stub for stub in STUBS)]
+    files: dict[Path, bytes | None] = {}
+    for path in paths:
+        try:
+            files[path] = path.read_bytes()
+        except FileNotFoundError:
+            files[path] = None
+    return files
+
+
+def put_back(layout: Layout, files: dict[Path, bytes | None], version: str) -> None:
+    """Install these control files and make version the active release."""
+    for path, data in files.items():
+        if data is None:
+            path.unlink(missing_ok=True)
+        else:
+            write_atomic(path, data, 0o644 if path.name == ".htaccess" else 0o755)
+    write_atomic(layout.current_file, (version + "\n").encode("ascii"))
+
+
+def check_site(
+    layout: Layout, release: Path, target: str, current: str, previous: dict[Path, bytes | None]
+) -> None:
+    """After the switch: the site must answer GET /api/health from the new release, through FastCGI
+    (through CGI when the release has no gahk.fcgi or the LOCAL block switches to CGI only).
+
+    Otherwise the previous .htaccess, stubs and release go back; when that cures the site, the update
+    fails. When they do no better (the database is down, say), it is not the new release's fault,
+    and it stays. Skipped on the first install, where the operator is watching; when the site cannot
+    be reached from here; and when what answers is not this site (before the DNS switch, gahk.dk is
+    still the old site)."""
+    if previous.get(layout.public_html / ".htaccess") is None or not current:
         return
-    status = site_status(layout)
-    if status is None or status < 500:
+    installed = control_files(layout)
+    htaccess = installed[layout.public_html / ".htaccess"] or b""
+    fastcgi = (release / "public_html" / "cgi-bin" / "gahk.fcgi").is_file() and not cgi_only(htaccess)
+    runner = "fastcgi" if fastcgi else "cgi"
+    health = wait_for_site(layout, target, runner)
+    if health.status is None or (health.version == target and health.runner == runner):
+        log(layout, f"site check: {health.describe()}")
         return
-    write_atomic(target, previous)
-    restored = site_status(layout)
-    if restored is not None and restored < 500:
+    if health.status < 500 and not health.runner:
+        log(layout, f"site check: not this site ({health.describe()}); skipped")
+        return
+    log(layout, f"site check: {health.describe()}, expected {target} through {runner}; trying the previous")
+    put_back(layout, previous, current)
+    before = wait_for_site(layout, current, None)
+    if before.status is not None and before.status < 500 and before.version == current:
         raise UpdateError(
-            f"the new .htaccess breaks the site (HTTP {status}); put back the previous .htaccess"
+            f"the site does not answer with the new release ({health.describe()}, expected {target}"
+            f" through {runner}); put back the previous release, .htaccess and stubs"
         )
-    log(layout, f"site check: HTTP {status} with the new .htaccess and {restored} with the old one")
-    write_atomic(target, new)
+    log(layout, f"site check: the previous release does no better ({before.describe()}); keeping the new")
+    put_back(layout, installed, target)
 
 
 def prune_static(layout: Layout, keep: set[str]) -> list[str]:
@@ -929,16 +1017,13 @@ def _install(layout: Layout, target: str, manifest: Manifest | None, current: st
         release = prepare_release(layout, manifest)
     ready_release(layout, release, current)
     run_release(layout, release, "migrations", "migrate", MIGRATE_TIMEOUT)
-    try:
-        previous_htaccess: bytes | None = (layout.public_html / ".htaccess").read_bytes()
-    except FileNotFoundError:
-        previous_htaccess = None
-    install_public(layout, release, previous_htaccess)
-    check_htaccess(layout, previous_htaccess)
+    controls = control_files(layout)
+    install_public(layout, release, controls[layout.public_html / ".htaccess"])
 
     write_atomic(layout.current_file, (target + "\n").encode("ascii"))
-    os.utime(release)  # "newest" for prune_releases means most recently installed
     log(layout, f"switched from {current or 'nothing'} to {target}")
+    check_site(layout, release, target, current, controls)
+    os.utime(release)  # "newest" for prune_releases means most recently installed
 
     notes = []
     note = refresh_updater(layout, release)

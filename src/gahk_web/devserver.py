@@ -2,10 +2,11 @@
 
 Werkzeug's development server with its reloader (the app restarts when a .py file changes), in front
 of a layer that emulates public_html/.htaccess (routing.py): the redirects to intern, existing files
-and <path>/index.html are served as files, scripts and dot-files are refused, and everything else
-goes to the Flask app. Site assets come from the package's static/ folder when public_html has no
-static/ of its own (in production the release installs them there). Development only: no TLS, no
-hardening.
+and <path>/index.html are served as files, scripts, cgi-bin/ and dot-files are refused, and
+everything else goes to the Flask app as the stub would run it: as gahk.fcgi does (one reused
+database connection), or for /api/update, large bodies and with --cgi-only as gahk.cgi does. Site
+assets come from the package's static/ folder when public_html has no static/ of its own (in
+production the release installs them there). Development only: no TLS, no hardening.
 """
 
 import argparse
@@ -61,16 +62,22 @@ def static_response(cfg: Config, method: str, path: str, query: str) -> Response
     return None
 
 
-def make_dev_app(cfg: Config, app: WsgiApp | None = None) -> WsgiApp:
-    inner = app or create_app(cfg)
+def make_dev_app(
+    cfg: Config, app: WsgiApp | None = None, fastcgi_app: WsgiApp | None = None, *, cgi_only: bool = False
+) -> WsgiApp:
+    """The .htaccess emulation in front of the app: app answers what gahk.cgi gets, fastcgi_app
+    (default: app) what gahk.fcgi gets."""
+    cgi = app or create_app(cfg, runner="cgi")
+    fastcgi = fastcgi_app or (cgi if app else create_app(cfg, persistent=True, runner="fastcgi"))
 
     def dev_app(environ: dict[str, Any], start_response: StartResponse) -> Iterable[bytes]:
         use_browser_path(environ)
         request = Request(environ)
         answer = static_response(cfg, request.method, request.path, request.query_string.decode("latin-1"))
-        if answer is None:
-            return inner(environ, start_response)
-        return answer(environ, start_response)
+        if answer is not None:
+            return answer(environ, start_response)
+        stub = routing.stub_for(request.path, environ.get("CONTENT_LENGTH") or "", cgi_only=cgi_only)
+        return (cgi if stub == routing.CGI_STUB else fastcgi)(environ, start_response)
 
     return dev_app
 
@@ -100,6 +107,7 @@ def main(argv: list[str] | None = None) -> None:
         "--config", type=Path, help="config.ini (default: $GAHK_WEB_CONFIG or ~/gahk_web/config.ini)"
     )
     parser.add_argument("--no-reload", action="store_true", help="do not restart when a .py file changes")
+    parser.add_argument("--cgi-only", action="store_true", help="as .htaccess's CGI-only switch")
     args = parser.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -109,7 +117,7 @@ def main(argv: list[str] | None = None) -> None:
     if is_running_from_reloader() or not reload:  # the reloader's own process only watches files
         prepare(cfg)
         print(f"Serving {cfg.public_html} at http://{args.host}:{args.port}/ (base_url {cfg.base_url})")
-    run_simple(args.host, args.port, make_dev_app(cfg), use_reloader=reload)
+    run_simple(args.host, args.port, make_dev_app(cfg, cgi_only=args.cgi_only), use_reloader=reload)
 
 
 if __name__ == "__main__":

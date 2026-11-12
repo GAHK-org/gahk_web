@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from conftest import GANG, Client, image, publish
 
-from gahk_web import routing
+from gahk_web import db, routing
 from gahk_web.config import Config
 from gahk_web.devserver import make_dev_app
 
@@ -121,7 +121,7 @@ def test_htaccess_names_the_same_rules() -> None:
     text = HTACCESS.read_text()
     assert "DirectorySlash Off" in text
     assert "RewriteCond %{REQUEST_FILENAME}/index.html -f" in text
-    assert "RewriteRule ^(.*)$ cgi-bin/gahk.cgi/$1 [L,QSA]" in text
+    assert "RewriteRule ^(.*)$ cgi-bin/gahk.fcgi/$1 [L,QSA]" in text
     assert "RewriteRule ^public/image/(.+)$ /static/legacy/image/$1 [R=301,L]" in text
     rules = re.findall(
         r"^\s*RewriteRule \^(\S+) https://intern\.gahk\.dk/\S* \[R=308,L\]$", text, re.MULTILINE
@@ -137,9 +137,89 @@ def test_htaccess_names_the_same_rules() -> None:
     ):
         assert any(prefix in rule for rule in rules), prefix
     assert "max-age=31536000, immutable" in text
-    # No script but the stub runs: the cgi-bin rule comes first, then every other *.cgi/*.fcgi is refused.
-    assert text.index("RewriteRule ^cgi-bin/ - [L]") < text.index(r"RewriteRule \.(?:cgi|fcgi)$ - [F,L]")
-    assert re.search(r'<FilesMatch "[^"]*\|fcgi\)\$">', text)
+
+
+def rule_lines(text: str) -> list[str]:
+    return [line.strip() for line in text.splitlines() if line.strip().startswith(("Rewrite", "# Rewrite"))]
+
+
+def test_htaccess_runs_the_stubs_only_through_its_own_rewrites() -> None:
+    lines = rule_lines(HTACCESS.read_text())
+    refuse = lines.index("RewriteRule ^cgi-bin(?:/|$) - [F,L]")
+    assert lines[refuse - 1] == "RewriteCond %{ENV:REDIRECT_STATUS} ^$"  # only the browser's request
+    assert lines[refuse + 1] == r"RewriteRule ^cgi-bin/gahk\.f?cgi(?:/|$) - [L]"  # the second round
+    assert lines[refuse + 2] == "RewriteRule ^cgi-bin(?:/|$) - [F,L]"  # anything else in cgi-bin
+    scripts = lines.index(r"RewriteRule (?:^|/)[^/]*\.(?:py|cgi|fcgi)(?:[./]|$) - [F,L,NC]")
+    assert refuse < scripts < lines.index("RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$")
+    assert routing._SCRIPT_RE.pattern == r"(?:^|/)[^/]*\.(?:py|cgi|fcgi)(?:[./]|$)"
+    # The stubs themselves may run; every other Python file is denied outright.
+    files_match = re.search(r'<FilesMatch "([^"]+)">', HTACCESS.read_text())
+    assert files_match and "py|" in files_match.group(1) and "cgi" not in files_match.group(1)
+
+
+def test_htaccess_sends_updates_and_large_bodies_to_cgi_and_the_rest_to_fastcgi() -> None:
+    lines = rule_lines(HTACCESS.read_text())
+    tail = lines[lines.index("RewriteRule ^api/update$ cgi-bin/gahk.cgi/api/update [L,QSA]") :]
+    assert tail == [
+        "RewriteRule ^api/update$ cgi-bin/gahk.cgi/api/update [L,QSA]",
+        "RewriteCond %{HTTP:Content-Length} ^[0-9]{6,}$",
+        "RewriteRule ^(.*)$ cgi-bin/gahk.cgi/$1 [L,QSA]",
+        "RewriteCond %{ENV:GAHK_CGI_ONLY} =1",
+        "RewriteRule ^(.*)$ cgi-bin/gahk.cgi/$1 [L,QSA]",
+        "RewriteRule ^(.*)$ cgi-bin/gahk.fcgi/$1 [L,QSA]",
+    ]
+    assert routing._LARGE_BODY_RE.pattern == "^[0-9]{6,}$"
+    assert routing.UPDATE_PATH == "/api/update"
+
+
+def test_the_cgi_only_switch_is_in_the_local_block_and_off() -> None:
+    text = HTACCESS.read_text()
+    block = text[text.index("# BEGIN LOCAL") : text.index("# END LOCAL")]
+    assert "\n# RewriteRule ^ - [E=GAHK_CGI_ONLY:1]\n" in block  # commented out: FastCGI by default
+    # It comes before every other rule, so later RewriteConds see the variable in the same round.
+    assert text.index("# RewriteRule ^ - [E=GAHK_CGI_ONLY:1]") < text.index("RewriteEngine On")
+    from gahk_web import updater
+
+    assert not updater.cgi_only(text.encode())
+    assert updater.cgi_only(text.replace("# RewriteRule ^ - [E=", "RewriteRule ^ - [E=").encode())
+
+
+@pytest.mark.parametrize(
+    ("path", "content_length", "cgi_only", "stub"),
+    [
+        ("/api/update", "2", False, "gahk.cgi"),
+        ("/api/update/", "2", False, "gahk.fcgi"),
+        ("/api/publish", "99999", False, "gahk.fcgi"),
+        ("/api/publish", "100000", False, "gahk.cgi"),
+        ("/api/images/" + "a" * 64, "2400000", False, "gahk.cgi"),
+        ("/s", "", False, "gahk.fcgi"),
+        ("/optagelse/ansoeg", "512", False, "gahk.fcgi"),
+        ("/findes-ikke", "", True, "gahk.cgi"),
+    ],
+)
+def test_which_stub_answers(path: str, content_length: str, cgi_only: bool, stub: str) -> None:
+    assert routing.stub_for(path, content_length, cgi_only=cgi_only) == stub
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/x.py",
+        "/fcgitest/test.fcgi",
+        "/fcgitest/test.fcgi/extra",
+        "/install.cgi",
+        "/A.FCGI",
+        "/billeder/0123456789abcdef/a.cgi.jpg",
+        "/x.Py",
+    ],
+)
+def test_scripts_are_refused(path: str) -> None:
+    assert routing.is_script(path)
+
+
+@pytest.mark.parametrize("path", ["/faciliteter", "/static/css/site.1a2b3c4d.css", "/pycon", "/a.pyc"])
+def test_other_paths_are_not_scripts(path: str) -> None:
+    assert not routing.is_script(path)
 
 
 # --- the development server emulates .htaccess ---
@@ -186,6 +266,18 @@ def test_devserver_matches_production_routing(client: Client, dev: Client) -> No
     assert dev.get("/.htaccess").status == 403
     assert dev.get("/fcgitest/test.fcgi").status == 403  # a test left by hand is never run
     assert dev.get("/install.cgi").status == 403
+    assert dev.get("/install.py").status == 403
+    assert dev.get("/cgi-bin/gahk.fcgi/api/health").status == 403  # the stubs only through rewrites
+    assert dev.get("/cgi-bin/gahk.cgi/api/update").status == 403
     assert dev.get("/static/../../etc/passwd").status == 403
     # POSTs never hit a file, even where one exists.
     assert dev.post("/optagelse/ansoeg").status == 403  # no Origin: refused by the app, not served as a file
+
+
+def test_devserver_answers_as_the_stub_would(cfg: Config, con: db.Connection) -> None:
+    dev = Client(make_dev_app(cfg))
+    assert dev.get("/api/health").headers["X-Gahk-Runner"] == "fastcgi"
+    big = dev.request("GET", "/api/health", b"x" * 100_000)
+    assert big.headers["X-Gahk-Runner"] == "cgi"  # too large for mod_fcgid
+    cgi_only = Client(make_dev_app(cfg, cgi_only=True))
+    assert cgi_only.get("/api/health").headers["X-Gahk-Runner"] == "cgi"

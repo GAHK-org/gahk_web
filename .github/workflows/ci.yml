@@ -60,9 +60,9 @@ jobs:
   # For 3.13 and 3.14 each: pip installs requirements.lock from PyPI with exactly the updater's
   # command (bin/updater.py packages), so a missing wheel or a compiled package that will not load
   # fails here, not in production; then both self-tests run with only the bundle and those packages
-  # on sys.path. Then a first install through the CGI stub from the three bootstrap files, a
-  # publish, an update that must change nothing, and the repair after a python upgrade
-  # (scripts/smoke_bundle.py).
+  # on sys.path. Then a first install through the CGI stub from the four bootstrap files, a
+  # publish, requests to the FastCGI stub run as mod_fcgid runs it, an update that must change
+  # nothing, and the repair after a python upgrade (scripts/smoke_bundle.py).
   bundle:
     runs-on: ubuntu-latest
     services:
@@ -144,7 +144,7 @@ jobs:
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
               --title "Produktion (rullende)" \
-              --notes "Webhotellets opdateringskanal. gahk.dk henter manifest.json herfra, når intern.gahk.dk beder den om at opdatere sig (hvert kvarter og med knappen \"Opdatér gahk.dk nu\"), og installerer den bundle, manifestet peger på. CI erstatter filerne ved hvert merge til main; tagget flytter sig ikke og siger intet om versionen – den står i manifest.json. updater.py, gahk.cgi og htaccess er de tre filer til den første installation (se DEPLOY.md). Slet ikke denne release."
+              --notes "Webhotellets opdateringskanal. gahk.dk henter manifest.json herfra, når intern.gahk.dk beder den om at opdatere sig (hvert kvarter og med knappen \"Opdatér gahk.dk nu\"), og installerer den bundle, manifestet peger på. CI erstatter filerne ved hvert merge til main; tagget flytter sig ikke og siger intet om versionen – den står i manifest.json. updater.py, gahk.cgi, gahk.fcgi og htaccess er de fire filer til den første installation (se DEPLOY.md). Slet ikke denne release."
           fi
 
       # The bundle first and the manifest last, so the manifest never names a file not there yet.
@@ -152,7 +152,8 @@ jobs:
         name: Upload the bundle
         run: |
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
-            dist/gahk_web-*.tar.gz dist/manifest-*.json dist/updater.py dist/gahk.cgi dist/htaccess
+            dist/gahk_web-*.tar.gz dist/manifest-*.json dist/updater.py dist/gahk.cgi dist/gahk.fcgi \
+            dist/htaccess
       - if: steps.tip.outputs.result == 'true'
         name: Upload the manifest (main must still be here)
         run: |

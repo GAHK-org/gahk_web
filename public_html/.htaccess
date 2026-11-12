@@ -1,12 +1,15 @@
-# gahk.dk on Hetzner Webhosting (Apache + mod_rewrite, Python only as CGI).
+# gahk.dk on Hetzner Webhosting (Apache + mod_rewrite; Python through FastCGI and CGI).
 #
 # Installed into ~/public_html/ by every release, which overwrites the whole file except the LOCAL
 # block below. Make every change here, in the repository, and let it release; a change made only on
 # the server is lost at the next install. Only host-specific lines go in the LOCAL block on the server.
 #
 # Every page is a pre-rendered file; Apache serves those without starting Python. Whatever has no
-# file goes to cgi-bin/gahk.cgi (the sync API, the forms, the visit beacon, the calendar
-# pass-through, redirects of old addresses and the 404 page).
+# file (the sync API, the forms, the visit beacon, the calendar pass-through, redirects of old
+# addresses and the 404 page) goes to the Flask app: through cgi-bin/gahk.fcgi, a persistent FastCGI
+# process, except /api/update and large request bodies, which go to cgi-bin/gahk.cgi (CGI, one
+# process per request). The server runs *.fcgi as FastCGI and *.cgi and *.py as CGI anywhere under
+# public_html without any line here (verified 2026-11-12), so every other script is refused below.
 # gahk_web/routing.py mirrors these rules for the development server; keep the two in step.
 #
 # [VERIFY ON HETZNER] marks what could not be tested before the site ran on the webhost.
@@ -16,20 +19,18 @@ Options -Indexes -MultiViews
 DirectorySlash Off
 DirectoryIndex index.html
 AddDefaultCharset utf-8
-# Apache's own 404s (rare: most misses go to the CGI app, which sends the same page).
+# Apache's own 404s (rare: most misses go to the app, which sends the same page).
 ErrorDocument 404 /404.html
 
-# [VERIFY ON HETZNER] Hetzner runs *.cgi under public_html as CGI out of the box. If gahk.cgi is
-# returned as text instead of run, uncomment these two lines here in the repository and let it
-# release (Options needs AllowOverride Options). For the very first install, upload the edited file
-# as the bootstrap htaccess. Uncommenting them only on the server lasts until the next install.
-# Options +ExecCGI
-# AddHandler cgi-script .cgi
-
-# Host-specific lines, edited on the server only (e.g. SetEnv GAHK_WEB_HOME /usr/home/<login>).
-# Every install keeps what stands between these two markers in the installed file; the release's own
-# block stays empty. Keep the marker lines as they are.
+# Host-specific lines, edited on the server only (e.g. SetEnv GAHK_WEB_HOME /usr/home/<login>, which
+# reaches gahk.cgi only). Every install keeps what stands between these two markers in the installed
+# file (an empty block gets the release's). Keep the marker lines as they are.
+#
+# The CGI-only switch: remove the "# " in front of the RewriteRule below to send everything the app
+# answers to gahk.cgi instead of the FastCGI process (should FastCGI misbehave). Slower (a Python
+# start per request), but nothing else changes. Put the "# " back to return to FastCGI.
 # BEGIN LOCAL
+# RewriteRule ^ - [E=GAHK_CGI_ONLY:1]
 # END LOCAL
 
 <IfModule mod_rewrite.c>
@@ -46,11 +47,18 @@ ErrorDocument 404 /404.html
   # --- Never serve dot-files (.htaccess, .tmp-* files mid-write); certificates' .well-known is ok --
   RewriteRule (^|/)\.(?!well-known/) - [F,L]
 
-  # --- The CGI script itself: stop here (also ends the second round after the rewrite below) ---
-  RewriteRule ^cgi-bin/ - [L]
+  # --- The two stubs in cgi-bin/ run only through the rewrites at the end of this file. Asked for
+  # directly (/cgi-bin/gahk.fcgi/api/publish) they are refused: the app only ever sees the path the
+  # browser sent, which is also the path intern signs. REDIRECT_STATUS is empty on the browser's own
+  # request and set in the second round, after a rewrite below.
+  RewriteCond %{ENV:REDIRECT_STATUS} ^$
+  RewriteRule ^cgi-bin(?:/|$) - [F,L]
+  RewriteRule ^cgi-bin/gahk\.f?cgi(?:/|$) - [L]
+  RewriteRule ^cgi-bin(?:/|$) - [F,L]
 
-  # --- No other script runs: the server would run any *.cgi or *.fcgi under public_html ---
-  RewriteRule \.(?:cgi|fcgi)$ - [F,L]
+  # --- No other script runs: the server would run any *.py, *.cgi or *.fcgi under public_html (and,
+  # as Apache maps handlers by every extension, a.cgi.jpg too), whatever the case of its name ---
+  RewriteRule (?:^|/)[^/]*\.(?:py|cgi|fcgi)(?:[./]|$) - [F,L,NC]
 
   # --- The intranet moved to intern.gahk.dk. 308 keeps the method and body (POSTs survive). ---
   # /intern/x and /nyintern/x → intern.gahk.dk/x
@@ -80,14 +88,23 @@ ErrorDocument 404 /404.html
   RewriteCond %{REQUEST_FILENAME}/index.html -f
   RewriteRule ^(.*?)/?$ $1/index.html [L]
 
-  # --- Everything else: the CGI app, with the original path as PATH_INFO ---
-  # [VERIFY ON HETZNER] that PATH_INFO/REQUEST_URI reach the script (AcceptPathInfo).
+  # --- Everything else: the Flask app, with the original path as PATH_INFO (the app reads
+  # REQUEST_URI, the browser's own request line, which every rewrite keeps) ---
+  # /api/update always goes to gahk.cgi: it runs the self-updater without importing the release,
+  # so an update can repair a broken release, or a broken FastCGI process, from there.
+  RewriteRule ^api/update$ cgi-bin/gahk.cgi/api/update [L,QSA]
+  # Bodies of 100 000 bytes and more (image uploads, publishes) go to gahk.cgi: mod_fcgid refuses
+  # bodies over FcgidMaxRequestLen (128 KiB unless Hetzner raised it), which no .htaccess can change.
+  RewriteCond %{HTTP:Content-Length} ^[0-9]{6,}$
   RewriteRule ^(.*)$ cgi-bin/gahk.cgi/$1 [L,QSA]
+  # The CGI-only switch in the LOCAL block.
+  RewriteCond %{ENV:GAHK_CGI_ONLY} =1
+  RewriteRule ^(.*)$ cgi-bin/gahk.cgi/$1 [L,QSA]
+  RewriteRule ^(.*)$ cgi-bin/gahk.fcgi/$1 [L,QSA]
 </IfModule>
 
-# --- Files that must never be served or run, whatever happens to the rules above. (fcgi: the site
-# has no FastCGI script; one added to cgi-bin/ must leave this list.) ---
-<FilesMatch "\.(?:ini|py|pyc|sql|cfg|toml|lock|log|bak|sh|fcgi)$">
+# --- Files that must never be served or run, whatever happens to the rules above ---
+<FilesMatch "\.(?:ini|py|pyc|sql|cfg|toml|lock|log|bak|sh)$">
   Require all denied
 </FilesMatch>
 

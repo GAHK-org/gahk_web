@@ -11,14 +11,15 @@ updater installs them (unless --find-links names a folder of wheels).
 For each python it unpacks dist/gahk_web-<sha>.tar.gz into a temporary folder, installs the
 release's requirements.lock with `python -I bin/updater.py packages <release>` (the updater's own
 pip command), and runs `python -I selftest.py` and `python -I bin/updater.py --selftest` there.
-With --database it then plays the webhost: a fresh home with config.ini and the three bootstrap
-files from dist/ (updater.py, gahk.cgi, htaccess), a signed POST /api/update through the CGI stub
-(installs the bundle from a file:// manifest, packages from PyPI), GET /api/health, a signed GET
-/api/status, a signed publish of a small snapshot (renders the pages with the release's
-templates), a page fetched through the stub's fallback, a second POST /api/update that must change
-nothing, and finally a python "upgrade" (vendor/.abi made foreign): the site answers 503 until the
-next POST /api/update reinstalls the packages. The database's tables are dropped first: never
-point it at anything but a throwaway database.
+With --database it then plays the webhost: a fresh home with config.ini and the four bootstrap
+files from dist/ (updater.py, gahk.cgi, gahk.fcgi, htaccess), a signed POST /api/update through the
+CGI stub (installs the bundle from a file:// manifest, packages from PyPI), GET /api/health, a
+signed GET /api/status, a signed publish of a small snapshot (renders the pages with the release's
+templates), a page fetched through the stub's fallback, the same through gahk.fcgi started as
+mod_fcgid starts it (one process answering several requests), a second POST /api/update that must
+change nothing, and finally a python "upgrade" (vendor/.abi made foreign): the site answers 503
+(gahk.fcgi without exiting) until the next POST /api/update reinstalls the packages. The database's
+tables are dropped first: never point it at anything but a throwaway database.
 """
 
 import argparse
@@ -30,6 +31,8 @@ import json
 import os
 import secrets
 import shutil
+import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -172,6 +175,78 @@ def cgi(
     return int(status_line.split()[1]), content
 
 
+FCGI_HEADER = struct.Struct("!BBHHBx")  # version, type, request id, content length, padding
+
+
+def _fcgi_record(kind: int, content: bytes = b"") -> bytes:
+    return FCGI_HEADER.pack(1, kind, 1, len(content), 0) + content
+
+
+def _fcgi_params(params: dict[str, str]) -> bytes:
+    out = b""
+    for name, value in params.items():
+        for item in (name.encode(), value.encode()):
+            out += bytes([len(item)]) if len(item) < 128 else struct.pack("!I", len(item) | 0x80000000)
+        out += name.encode() + value.encode()
+    return out
+
+
+def fastcgi(python: str, home: Path, paths: list[str]) -> list[tuple[int, dict[str, str], bytes]]:
+    """Start public_html/cgi-bin/gahk.fcgi as mod_fcgid does (a listening socket on fd 0), GET each
+    path over a connection of its own, and check that one process answered them all."""
+    stub = home / "public_html" / "cgi-bin" / "gahk.fcgi"
+    answers = []
+    with socket.create_server(("127.0.0.1", 0)) as listener, tempfile.TemporaryFile() as log:
+        env = {**base_env(), "GAHK_WEB_HOME": str(home)}
+        process = subprocess.Popen(  # noqa: S603 - as mod_fcgid runs it
+            [python, str(stub)], stdin=listener.fileno(), stdout=log, stderr=log, env=env
+        )
+        try:
+            for path in paths:
+                params = {
+                    "REQUEST_METHOD": "GET",
+                    "REQUEST_URI": path,
+                    "SCRIPT_NAME": "/cgi-bin/gahk.fcgi",
+                    "PATH_INFO": path,
+                    "QUERY_STRING": "",
+                    "SERVER_NAME": "gahk.dk",
+                    "SERVER_PORT": "443",
+                    "SERVER_PROTOCOL": "HTTP/1.1",
+                    "HTTPS": "on",
+                    "REMOTE_ADDR": "192.0.2.1",
+                }
+                message = (
+                    _fcgi_record(1, struct.pack("!HB5x", 1, 0))
+                    + _fcgi_record(4, _fcgi_params(params))
+                    + _fcgi_record(4)
+                    + _fcgi_record(5)
+                )
+                out, data = b"", b""
+                with socket.create_connection(listener.getsockname(), timeout=120) as conn:
+                    conn.sendall(message)
+                    while chunk := conn.recv(65536):
+                        data += chunk
+                at = 0
+                while at + FCGI_HEADER.size <= len(data):
+                    _version, kind, _rid, length, padding = FCGI_HEADER.unpack_from(data, at)
+                    if kind == 6:
+                        out += data[at + FCGI_HEADER.size : at + FCGI_HEADER.size + length]
+                    at += FCGI_HEADER.size + length + padding
+                head, _, content = out.partition(b"\r\n\r\n")
+                headers = dict(line.split(": ", 1) for line in head.decode("latin-1").split("\r\n") if line)
+                answers.append((int(headers.pop("Status", "0").split()[0]), headers, content))
+                if process.poll() is not None:
+                    raise SmokeError(f"gahk.fcgi ended after GET {path}")
+        finally:
+            process.terminate()
+            process.wait(timeout=30)
+            log.seek(0)
+            output = log.read().decode(errors="replace")
+    if any(status == 0 for status, _, _ in answers):
+        raise SmokeError(f"gahk.fcgi gave no answer: {answers}\n{output}")
+    return answers
+
+
 def expect_json(result: tuple[int, bytes], status: int, what: str) -> Any:  # noqa: ANN401
     code, body = result
     if code != status:
@@ -242,10 +317,11 @@ def install(python: str, dist: Path, version: str, database: str, scratch: Path)
     (home / "gahk_web" / "config.ini").write_text(
         config_ini(database, key, (dist / "manifest.json").resolve().as_uri()), encoding="utf-8"
     )
-    # The one-time bootstrap upload (DEPLOY.md): three files from the release.
+    # The one-time bootstrap upload (DEPLOY.md): four files from the release.
     shutil.copyfile(dist / "updater.py", home / "gahk_web" / "bin" / "updater.py")
-    shutil.copyfile(dist / "gahk.cgi", home / "public_html" / "cgi-bin" / "gahk.cgi")
-    (home / "public_html" / "cgi-bin" / "gahk.cgi").chmod(0o755)
+    for stub in ("gahk.cgi", "gahk.fcgi"):
+        shutil.copyfile(dist / stub, home / "public_html" / "cgi-bin" / stub)
+        (home / "public_html" / "cgi-bin" / stub).chmod(0o755)
     shutil.copyfile(dist / "htaccess", home / "public_html" / ".htaccess")
 
     code, _ = cgi(python, home, "GET", "/")
@@ -280,6 +356,15 @@ def install(python: str, dist: Path, version: str, database: str, scratch: Path)
     code, content = cgi(python, home, "GET", "/faciliteter/")
     if code != 200 or "Røgtest".encode() not in content:
         raise SmokeError(f"the stub's fallback did not serve the page: {code}")
+    answers = fastcgi(python, home, ["/api/health", "/faciliteter/", "/intern/x", "/api/health"])
+    (health_code, health_headers, health_body), (page_code, _, page_body) = answers[0], answers[1]
+    if (health_code, health_headers.get("X-Gahk-Runner")) != (200, "fastcgi") or json.loads(health_body)[
+        "version"
+    ] != version:
+        raise SmokeError(f"gahk.fcgi's health: {answers[0]}")
+    if page_code != 200 or "Røgtest".encode() not in page_body or answers[2][0] != 308:
+        raise SmokeError(f"gahk.fcgi did not serve the page and the redirect: {answers[1:3]}")
+    print("  fastcgi: one process answered health, a page, a redirect and health again")
 
     again = update(python, home, key, "second update")
     if again.get("updated") or not str(again.get("detail", "")).startswith("already running"):
@@ -295,6 +380,11 @@ def install(python: str, dist: Path, version: str, database: str, scratch: Path)
         raise SmokeError(f"unexpected health with foreign packages: {sick}")
     if cgi(python, home, "GET", "/faciliteter/")[0] != 503:
         raise SmokeError("a page did not answer 503 with foreign packages")
+    standing_in = fastcgi(python, home, ["/api/health", "/faciliteter/"])
+    if [answer[0] for answer in standing_in] != [503, 503] or standing_in[0][1].get(
+        "X-Gahk-Runner"
+    ) != "gahk.fcgi":
+        raise SmokeError(f"gahk.fcgi with foreign packages: {standing_in}")
     repaired = update(python, home, key, "update after the python upgrade")
     if not str(repaired.get("detail", "")).startswith("reinstalled packages for"):
         raise SmokeError(f"the update did not reinstall the packages: {repaired}")

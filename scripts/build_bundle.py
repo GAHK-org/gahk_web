@@ -4,7 +4,8 @@
     dist/gahk_web-<sha>.tar.gz      the release (layout below)
     dist/manifest.json              {"version", "bundle", "sha256", "size", "built_at", "python"}
     dist/manifest-<sha>.json        the same, kept beside the bundle so a pin can find it later
-    dist/updater.py, gahk.cgi, htaccess   the three files of the one-time bootstrap (DEPLOY.md)
+    dist/updater.py, gahk.cgi, gahk.fcgi, htaccess   the four files of the one-time bootstrap
+                                    (DEPLOY.md)
 
 The bundle, with no absolute paths, no links and fixed owners, dates and modes:
 
@@ -222,7 +223,8 @@ def main(argv: list[str]) -> int:
     (out / "manifest.json").write_text(text, encoding="utf-8")
     (out / f"manifest-{version}.json").write_text(text, encoding="utf-8")
     shutil.copyfile(PACKAGE / "updater.py", out / "updater.py")
-    shutil.copyfile(ROOT / "public_html" / "cgi-bin" / "gahk.cgi", out / "gahk.cgi")
+    for stub in ("gahk.cgi", "gahk.fcgi"):
+        shutil.copyfile(ROOT / "public_html" / "cgi-bin" / stub, out / stub)
     shutil.copyfile(ROOT / "public_html" / ".htaccess", out / "htaccess")
     print(f"built {bundle} ({len(data)} bytes, sha256 {manifest['sha256']})")
     return 0

@@ -122,10 +122,12 @@ def make_bundle(
     htaccess: str = "",
     requirements: str = LOCK,
     extra: list[tarfile.TarInfo] | None = None,
+    fcgi: bool = True,
 ) -> dict[str, Any]:
     """Write dist/gahk_web-<sha>.tar.gz and dist/manifest-<sha>.json; returns the manifest.
 
-    failing may name "selftest", "migrate" or "rebuild" to make that step fail."""
+    failing may name "selftest", "migrate" or "rebuild" to make that step fail. fcgi=False makes a
+    release from before FastCGI (no cgi-bin/gahk.fcgi)."""
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
         _file(tar, "VERSION", f"{sha}\n".encode())
@@ -138,6 +140,9 @@ def make_bundle(
         _file(tar, "bin/updater.py", updater_source.encode(), 0o755)
         _file(tar, "public_html/.htaccess", (htaccess or f"# {sha}\n").encode())
         _file(tar, "public_html/cgi-bin/gahk.cgi", f"#!/usr/bin/env python3\n# {sha}\n".encode(), 0o755)
+        if fcgi:
+            stub = f"#!/usr/bin/env python3\n# fcgi {sha}\n".encode()
+            _file(tar, "public_html/cgi-bin/gahk.fcgi", stub, 0o755)
         _file(tar, f"public_html/static/{css_name(sha)}", f"/* {sha} */".encode())
         _file(tar, "public_html/static/fonts/ubuntu.woff2", b"font")
         for info in extra or []:

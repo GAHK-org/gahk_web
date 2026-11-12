@@ -318,6 +318,9 @@ def test_keep_local_block() -> None:
     assert updater.keep_local_block(new, None) == new
     assert updater.keep_local_block(new, b"no block") == new
     assert updater.keep_local_block(b"no block", installed) == b"no block"
+    # An empty installed block takes the release's commented-out switches.
+    switches = b"a\n# BEGIN LOCAL\n# RewriteRule ^ - [E=GAHK_CGI_ONLY:1]\n# END LOCAL\n"
+    assert updater.keep_local_block(switches, b"# BEGIN LOCAL\n\n# END LOCAL\n") == switches
 
 
 def test_unchanged_manifest_is_a_no_op(home: Path, dist: Path) -> None:
@@ -595,24 +598,46 @@ def test_downloads_follow_redirects(home: Path, dist: Path, http_dist: str) -> N
 
 
 class _Site(SimpleHTTPRequestHandler):
-    """Plays Apache for GET /api/health: 500 while public_html/.htaccess holds "Broken", like an
-    .htaccess Apache rejects, and STATUS (as set by the test) otherwise."""
+    """Plays Apache and the app for GET /api/health: 500 while public_html/.htaccess holds "Broken"
+    (an .htaccess Apache rejects); otherwise STATUS with the version in CURRENT, through RUNNER
+    ("cgi" when the LOCAL block switches to CGI only). The first OLD_ANSWERS answers come from
+    FastCGI processes of the release before (PREVIOUS)."""
 
-    public_html: Path
+    home: Path
     status = 200
+    runner = "fastcgi"
+    old_answers = 0
+    previous = ""
+    served = 0
 
     def do_GET(self) -> None:
-        broken = "Broken" in (self.public_html / ".htaccess").read_text()
-        self.send_response(500 if broken else self.status)
+        site = type(self)
+        site.served += 1
+        htaccess = (self.home / "public_html" / ".htaccess").read_bytes()
+        if b"Broken" in htaccess:
+            self.send_response(500)
+            self.end_headers()
+            return
+        version = (self.home / "gahk_web" / "CURRENT").read_text().strip()
+        runner = "cgi" if updater.cgi_only(htaccess) else site.runner
+        if site.old_answers > 0:
+            site.old_answers -= 1
+            version = site.previous
+        body = json.dumps({"ok": site.status == 200, "version": version, "revision": None}).encode()
+        self.send_response(site.status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("X-Gahk-Runner", runner)
         self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, *args: object) -> None:
         pass
 
 
 @pytest.fixture
-def site(home: Path) -> Iterator[type[_Site]]:
-    handler = type("Site", (_Site,), {"public_html": home / "public_html"})
+def site(home: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[type[_Site]]:
+    monkeypatch.setattr(updater, "SITE_CHECK_PAUSE", 0)
+    handler = type("Site", (_Site,), {"home": home})
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -620,6 +645,25 @@ def site(home: Path) -> Iterator[type[_Site]]:
     write_config(home, manifest_url, KEY, base_url=f"http://127.0.0.1:{server.server_address[1]}")
     yield handler
     server.shutdown()
+
+
+def test_after_the_switch_the_new_release_must_answer_through_fastcgi(
+    home: Path, dist: Path, site: type[_Site]
+) -> None:
+    v1, v2 = version(1), version(2)
+    release(dist, 1)
+    updater.run(home)
+    release(dist, 2)
+    # Two old FastCGI processes answer once more each, then end; the third answer is the new release.
+    site.old_answers, site.previous, site.served = 2, v1, 0
+
+    result = updater.run(home)
+
+    assert result.updated, result.detail
+    assert current(home) == v2
+    assert site.served == 3
+    assert (home / "public_html" / "cgi-bin" / "gahk.fcgi").read_text().endswith(f"# fcgi {v2}\n")
+    assert f"site check: HTTP 200, version {v2}, through fastcgi" in update_log(home)
 
 
 def test_an_htaccess_that_breaks_the_site_is_put_back(home: Path, dist: Path, site: type[_Site]) -> None:
@@ -630,28 +674,108 @@ def test_an_htaccess_that_breaks_the_site_is_put_back(home: Path, dist: Path, si
 
     result = updater.run(home)
 
-    assert result.error is not None and "the new .htaccess breaks the site (HTTP 500)" in result.error
+    assert (
+        result.error is not None and "the site does not answer with the new release (HTTP 500" in result.error
+    )
+    assert "put back the previous release, .htaccess and stubs" in result.error
     assert (home / "public_html" / ".htaccess").read_text() == f"# {v1}\n"
-    assert current(home) == v1  # the old release keeps running
-    assert calls(home)[-1] == f"{v2[:7]} migrate"  # not switched, so not re-rendered
+    assert current(home) == v1  # the old release runs again
+    assert calls(home)[-1] == f"{v2[:7]} migrate"  # put back before it was re-rendered
     assert state(home)["last_result"] == "failed"
 
 
-def test_a_5xx_the_old_htaccess_does_not_cure_keeps_the_new_one(
+def test_a_release_fastcgi_cannot_run_is_put_back(home: Path, dist: Path, site: type[_Site]) -> None:
+    """gahk.fcgi's stand-in answers for the new release (it cannot start): the previous one goes back."""
+    v1 = version(1)
+    release(dist, 1)
+    updater.run(home)
+    release(dist, 2)
+    site.runner = "gahk.fcgi"
+
+    result = updater.run(home)
+
+    assert result.error is not None and "through gahk.fcgi, expected" in result.error
+    assert current(home) == v1
+    # The stubs went back too: a broken new gahk.fcgi must not outlive the rollback.
+    assert (home / "public_html" / "cgi-bin" / "gahk.fcgi").read_text().endswith(f"# fcgi {v1}\n")
+    assert (home / "public_html" / "cgi-bin" / "gahk.fcgi").stat().st_mode & 0o777 == 0o755
+
+
+def test_a_5xx_the_old_release_does_not_cure_keeps_the_new_one(
     home: Path, dist: Path, site: type[_Site]
 ) -> None:
-    """The database is down, say: not the .htaccess's fault, so the update goes through."""
+    """The database is down, say: not the new release's fault, so the update goes through."""
     v2 = version(2)
     release(dist, 1)
     updater.run(home)
     release(dist, 2)
     site.status = 503
+    site.runner = ""  # the site answers 503 without the app (the old release's answer would do the same)
 
     result = updater.run(home)
 
     assert result.updated, result.detail
     assert current(home) == v2
     assert (home / "public_html" / ".htaccess").read_text() == f"# {v2}\n"
+    assert "the previous release does no better" in update_log(home)
+
+
+def test_with_the_cgi_only_switch_the_release_must_answer_through_cgi(
+    home: Path, dist: Path, site: type[_Site]
+) -> None:
+    v2 = version(2)
+    template = "# {}\n# BEGIN LOCAL\n# RewriteRule ^ - [E=GAHK_CGI_ONLY:1]\n# END LOCAL\n"
+    release(dist, 1, htaccess=template.format("one"))
+    updater.run(home)
+    installed = home / "public_html" / ".htaccess"
+    installed.write_text(installed.read_text().replace("# RewriteRule", "RewriteRule"))
+    release(dist, 2, htaccess=template.format("two"))
+
+    result = updater.run(home)
+
+    assert result.updated, result.detail
+    assert current(home) == v2
+    assert "RewriteRule ^ - [E=GAHK_CGI_ONLY:1]\n# END LOCAL" in installed.read_text()
+    assert f"version {v2}, through cgi" in update_log(home)
+
+
+def test_a_release_from_before_fastcgi_must_answer_through_cgi(
+    home: Path, dist: Path, site: type[_Site]
+) -> None:
+    """A pin back to a release without gahk.fcgi takes the installed one away."""
+    v1, v2 = version(1), version(2)
+    release(dist, 1)
+    updater.run(home)
+    site.runner = "cgi"
+    release(dist, 2, fcgi=False)
+
+    result = updater.run(home)
+
+    assert result.updated, result.detail
+    assert current(home) == v2
+    assert not (home / "public_html" / "cgi-bin" / "gahk.fcgi").exists()
+    assert (home / "public_html" / "cgi-bin" / "gahk.cgi").read_text().endswith(f"# {v2}\n")
+    assert v1 != v2
+
+
+def test_an_answer_from_another_site_skips_the_check(home: Path, dist: Path, site: type[_Site]) -> None:
+    """Before the DNS switch gahk.dk is still the old site, which knows no /api/health."""
+    release(dist, 1)
+    updater.run(home)
+    release(dist, 2)
+    site.status, site.runner = 404, ""
+
+    result = updater.run(home)
+
+    assert result.updated, result.detail
+    assert "not this site" in update_log(home)
+
+
+def test_cgi_only() -> None:
+    assert not updater.cgi_only(b"# BEGIN LOCAL\n# RewriteRule ^ - [E=GAHK_CGI_ONLY:1]\n# END LOCAL\n")
+    assert updater.cgi_only(b"# BEGIN LOCAL\n  RewriteRule ^ - [E=GAHK_CGI_ONLY:1]\n# END LOCAL\n")
+    assert not updater.cgi_only(b"RewriteRule ^ - [E=GAHK_CGI_ONLY:1]\n")  # only the LOCAL block counts
+    assert not updater.cgi_only(b"# BEGIN LOCAL\n# END LOCAL\nRewriteCond %{ENV:GAHK_CGI_ONLY} =1\n")
 
 
 def test_nudge_runs_the_update_in_its_own_process(home: Path, dist: Path) -> None:

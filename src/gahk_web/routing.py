@@ -1,9 +1,9 @@
 """The routing rules of public_html/.htaccess, in Python.
 
-Apache applies these in production before the CGI app ever runs. The development server applies the
-same rules (so `python -m gahk_web.devserver` behaves like the webhost), and the CGI fallback applies
-the redirects once more as a safety net. Keep this file and public_html/.htaccess in step; the tests
-check that both name the same paths.
+Apache applies these in production before the app ever runs. The development server applies the
+same rules (so `python -m gahk_web.devserver` behaves like the webhost), and the app's fallback
+applies the redirects once more as a safety net. Keep this file and public_html/.htaccess in step;
+the tests check that both name the same paths.
 """
 
 import re
@@ -46,14 +46,32 @@ def is_hidden(path: str) -> bool:
     return any(segment.startswith(".") for segment in segments) and not path.startswith("/.well-known/")
 
 
+# A name Apache would run (it maps handlers by every extension, case-insensitively: a.cgi.jpg too).
+_SCRIPT_RE = re.compile(r"(?:^|/)[^/]*\.(?:py|cgi|fcgi)(?:[./]|$)", re.IGNORECASE)
+# Content-Length with six digits or more (100 000 bytes and up): too large for mod_fcgid.
+_LARGE_BODY_RE = re.compile(r"^[0-9]{6,}$")
+UPDATE_PATH = "/api/update"
+CGI_STUB = "gahk.cgi"
+FASTCGI_STUB = "gahk.fcgi"
+
+
 def is_stub(path: str) -> bool:
     """The cgi-bin folder: its stubs run only through the rewrites, never when asked for directly."""
     return path == "/cgi-bin" or path.startswith("/cgi-bin/")
 
 
 def is_script(path: str) -> bool:
-    """A CGI or FastCGI script outside cgi-bin/: Apache would run it, so it is refused."""
-    return path.endswith((".cgi", ".fcgi"))
+    """A Python, CGI or FastCGI script anywhere: the server would run it, so it is refused."""
+    return bool(_SCRIPT_RE.search(path))
+
+
+def stub_for(path: str, content_length: str = "", *, cgi_only: bool = False) -> str:
+    """Which stub .htaccess hands a request for the app to: gahk.cgi for /api/update (the updater
+    must work when the release or FastCGI does not), for bodies too large for mod_fcgid, and for
+    everything while the operator's CGI-only switch is on; gahk.fcgi for the rest."""
+    if path == UPDATE_PATH or _LARGE_BODY_RE.match(content_length) or cgi_only:
+        return CGI_STUB
+    return FASTCGI_STUB
 
 
 ALIASES = {
