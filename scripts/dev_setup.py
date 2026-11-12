@@ -12,7 +12,8 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
-import pg8000.native
+import psycopg
+from psycopg import sql
 
 ROOT = Path(__file__).resolve().parent.parent
 LOCAL_CONFIG = ROOT / "local" / "config.ini"
@@ -62,23 +63,21 @@ state_dir = {ROOT / "var" / "state"}
 
 def create_databases(server: str, names: list[str]) -> int:
     url = urlsplit(server)
-    con = pg8000.native.Connection(
+    with psycopg.connect(
         user=url.username or "",
         password=url.password or None,
         host=url.hostname or "localhost",
         port=url.port or 5432,
-        database="postgres",
-    )
-    try:
-        existing = {row[0] for row in con.run("SELECT datname FROM pg_database")}
+        dbname="postgres",
+        autocommit=True,  # CREATE DATABASE cannot run in a transaction
+    ) as con:
+        existing = {row[0] for row in con.execute("SELECT datname FROM pg_database")}
         for name in names:
             if name in existing:
                 print(f"database {name} exists")
                 continue
-            con.run(f"CREATE DATABASE {pg8000.native.identifier(name)}")
+            con.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
             print(f"created database {name}")
-    finally:
-        con.close()
     return 0
 
 

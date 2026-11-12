@@ -1,25 +1,32 @@
-"""PostgreSQL access over pg8000 (pure Python, so it survives the host's Python upgrades).
+"""PostgreSQL access over psycopg 3 (its binary wheel, which brings libpq along).
 
 The webhost's database is a cache and an outbox, never the source of truth: the cached snapshot,
 the image index, the list of generated files, and form submissions plus visit counts until intern
 pulls them. Losing it costs at most the not-yet-pulled outbox.
 
+The SQL in this package names its parameters :name, and query()/execute() take them as keyword
+arguments; rows come back as dicts. A connection is in autocommit mode: every statement commits on
+its own unless it runs inside transaction(). psycopg is imported on the first connect(), so requests
+that need no database do not pay for it.
+
 Schema changes are plain SQL files in gahk_web/migrations/NNNN_name.sql, applied in name order by
 migrate() and recorded in schema_migrations. Each file runs in its own transaction.
 """
 
-import ssl
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
+from functools import cache
 from importlib import resources
-from typing import Any
-
-import pg8000.native
+from typing import TYPE_CHECKING, Any
 
 from .config import DatabaseConfig
 
-type Connection = pg8000.native.Connection
-Row = dict[str, Any]
+if TYPE_CHECKING:
+    import psycopg
+
+type Row = dict[str, Any]
+type Connection = psycopg.Connection[Row]
 
 # Advisory lock keys (pg_advisory_lock takes a bigint). "gahk" in hex, then a purpose.
 LOCK_MIGRATE = 0x6761686B_0001
@@ -27,38 +34,68 @@ LOCK_RENDER = 0x6761686B_0002
 
 CONNECT_TIMEOUT = 10
 
+# :name outside a ::cast, and every % (which psycopg's own placeholders would otherwise claim).
+_PARAM_RE = re.compile(r"(?<![:\w]):([A-Za-z_]\w*)|%")
 
-def _ssl_context(cfg: DatabaseConfig) -> ssl.SSLContext | None:
-    if cfg.sslmode == "disable":
-        return None
+
+def conninfo(cfg: DatabaseConfig) -> dict[str, str | int]:
+    """libpq connection parameters for config.ini's [database] section.
+
+    sslmode "require" encrypts without checking the server's certificate (libpq's meaning, so a
+    configured sslrootcert is not passed on: libpq would verify against it); "verify-full" checks it
+    against sslrootcert, else against the system's certificate authorities; "disable" is for a
+    local development database only."""
+    params: dict[str, str | int] = {
+        "host": cfg.host,
+        "port": cfg.port,
+        "dbname": cfg.name,
+        "user": cfg.user,
+        "application_name": "gahk_web",
+        "connect_timeout": CONNECT_TIMEOUT,
+        "sslmode": cfg.sslmode,
+        "gssencmode": "disable",  # no Kerberos here; skips a round trip
+        "options": "-c TimeZone=UTC",
+    }
+    if cfg.password:
+        params["password"] = cfg.password
     if cfg.sslmode == "verify-full":
-        return ssl.create_default_context(cafile=cfg.sslrootcert or None)
-    # "require": encrypted, but the server certificate is not checked (libpq's meaning of the word).
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    return context
+        params["sslrootcert"] = cfg.sslrootcert or _system_cafile()
+    return params
+
+
+def _system_cafile() -> str:
+    """The CA bundle Python's ssl module trusts. libpq's own "system" means the OpenSSL compiled
+    into the psycopg wheel, whose default folders need not exist on this host."""
+    import ssl
+    from pathlib import Path
+
+    paths = ssl.get_default_verify_paths()
+    for candidate in (paths.cafile, paths.openssl_cafile):
+        if candidate and Path(candidate).is_file():
+            return candidate
+    return "system"
 
 
 def connect(cfg: DatabaseConfig) -> Connection:
-    con = pg8000.native.Connection(
-        user=cfg.user,
-        password=cfg.password or None,
-        host=cfg.host,
-        port=cfg.port,
-        database=cfg.name,
-        ssl_context=_ssl_context(cfg),
-        timeout=CONNECT_TIMEOUT,
-        application_name="gahk_web",
-    )
-    con.run("SET TIME ZONE 'UTC'")
-    return con
+    import psycopg
+    from psycopg.conninfo import make_conninfo
+    from psycopg.rows import dict_row
+
+    return psycopg.connect(make_conninfo("", **conninfo(cfg)), autocommit=True, row_factory=dict_row)
+
+
+@cache
+def _sql(sql: str) -> str:
+    """:name placeholders as psycopg's %(name)s."""
+    return _PARAM_RE.sub(lambda m: f"%({m.group(1)})s" if m.group(1) else "%%", sql)
+
+
+def _run(con: Connection, sql: str, params: dict[str, object]) -> "psycopg.Cursor[Row]":
+    return con.execute(_sql(sql), params) if params else con.execute(sql)
 
 
 def query(con: Connection, sql: str, **params: object) -> list[Row]:
-    rows = con.run(sql, **params) or []
-    names = [column["name"] for column in (con.columns or [])]
-    return [dict(zip(names, row, strict=True)) for row in rows]
+    return _run(con, sql, params).fetchall()
 
 
 def query_one(con: Connection, sql: str, **params: object) -> Row | None:
@@ -68,40 +105,36 @@ def query_one(con: Connection, sql: str, **params: object) -> Row | None:
 
 def execute(con: Connection, sql: str, **params: object) -> int:
     """Run a statement and return the affected row count."""
-    con.run(sql, **params)
-    return int(con.row_count or 0)
+    return max(_run(con, sql, params).rowcount, 0)
 
 
 @contextmanager
 def transaction(con: Connection) -> Iterator[Connection]:
-    con.run("START TRANSACTION")
-    try:
+    """Commits on exit, rolls back on an exception."""
+    with con.transaction():
         yield con
-    except BaseException:
-        con.run("ROLLBACK")
-        raise
-    con.run("COMMIT")
 
 
 @contextmanager
 def advisory_lock(con: Connection, key: int) -> Iterator[None]:
     """Session-level lock; waits for it. Released on exit (and by Postgres if the process dies)."""
-    con.run("SELECT pg_advisory_lock(:key)", key=key)
+    execute(con, "SELECT pg_advisory_lock(:key)", key=key)
     try:
         yield
     finally:
-        con.run("SELECT pg_advisory_unlock(:key)", key=key)
+        execute(con, "SELECT pg_advisory_unlock(:key)", key=key)
 
 
 @contextmanager
 def try_advisory_lock(con: Connection, key: int) -> Iterator[bool]:
     """Yields whether the lock was taken; never waits."""
-    got = bool(con.run("SELECT pg_try_advisory_lock(:key)", key=key)[0][0])
+    row = query_one(con, "SELECT pg_try_advisory_lock(:key) AS got", key=key)
+    got = bool(row and row["got"])
     try:
         yield got
     finally:
         if got:
-            con.run("SELECT pg_advisory_unlock(:key)", key=key)
+            execute(con, "SELECT pg_advisory_unlock(:key)", key=key)
 
 
 def migration_files() -> list[tuple[str, str]]:
@@ -114,17 +147,19 @@ def migrate(con: Connection) -> list[str]:
     """Apply pending migrations; returns the names applied. Safe to run concurrently and repeatedly."""
     applied_now: list[str] = []
     with advisory_lock(con, LOCK_MIGRATE):
-        con.run(
+        execute(
+            con,
             "CREATE TABLE IF NOT EXISTS schema_migrations ("
-            " name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
+            " name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())",
         )
-        done = {row[0] for row in con.run("SELECT name FROM schema_migrations")}
+        done = {row["name"] for row in query(con, "SELECT name FROM schema_migrations")}
         for name, sql in migration_files():
             if name in done:
                 continue
             with transaction(con):
-                # Simple-query protocol: a migration file may hold several statements.
-                con.execute_simple(sql)
-                con.run("INSERT INTO schema_migrations (name) VALUES (:name)", name=name)
+                # Without parameters psycopg uses the simple-query protocol, so a migration file may
+                # hold several statements.
+                execute(con, sql)
+                execute(con, "INSERT INTO schema_migrations (name) VALUES (:name)", name=name)
             applied_now.append(name)
     return applied_now

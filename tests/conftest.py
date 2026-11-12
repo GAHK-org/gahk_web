@@ -48,8 +48,8 @@ def database_config() -> DatabaseConfig:
 def db_config() -> Iterator[DatabaseConfig]:
     cfg = database_config()
     con = db.connect(cfg)
-    con.run("DROP SCHEMA public CASCADE")
-    con.run("CREATE SCHEMA public")
+    db.execute(con, "DROP SCHEMA public CASCADE")
+    db.execute(con, "CREATE SCHEMA public")
     db.migrate(con)
     con.close()
     yield cfg
@@ -58,10 +58,11 @@ def db_config() -> Iterator[DatabaseConfig]:
 @pytest.fixture
 def con(db_config: DatabaseConfig) -> Iterator[db.Connection]:
     connection = db.connect(db_config)
-    connection.run(f"TRUNCATE {', '.join(TABLES)}")
-    connection.run(
+    db.execute(connection, f"TRUNCATE {', '.join(TABLES)}")
+    db.execute(
+        connection,
         "UPDATE site_state SET snapshot = NULL, revision = NULL, published_at = NULL, received_at = NULL,"
-        " rendered_at = NULL, rendered_on = NULL, rendered_version = NULL"
+        " rendered_at = NULL, rendered_on = NULL, rendered_version = NULL",
     )
     yield connection
     connection.close()

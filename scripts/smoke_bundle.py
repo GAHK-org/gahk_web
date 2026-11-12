@@ -308,10 +308,10 @@ def reset_database(python: str, database: str, release: Path) -> None:
     """Drop every table, so the bootstrap starts from an empty database (as on a new webhost)."""
     url = urlsplit(database)
     code = (
-        "import sys;sys.path[:0]=[sys.argv[1]+'/src',sys.argv[1]+'/vendor'];import pg8000.native as p;"
-        "c=p.Connection(user=sys.argv[2],password=sys.argv[3] or None,host=sys.argv[4],"
-        "port=int(sys.argv[5]),database=sys.argv[6]);"
-        "c.run('DROP SCHEMA public CASCADE');c.run('CREATE SCHEMA public');c.close()"
+        "import sys;sys.path[:0]=[sys.argv[1]+'/vendor'];import psycopg;"
+        "c=psycopg.connect(user=sys.argv[2],password=sys.argv[3] or None,host=sys.argv[4],"
+        "port=int(sys.argv[5]),dbname=sys.argv[6],autocommit=True);"
+        "c.execute('DROP SCHEMA public CASCADE');c.execute('CREATE SCHEMA public');c.close()"
     )
     check(
         python,

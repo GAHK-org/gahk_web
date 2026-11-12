@@ -153,7 +153,7 @@ def test_rate_limit_five_per_hour(client: Client, con: db.Connection) -> None:
     assert post(other, "/optagelse/ansoeg", VALID).status == 303
     stored = db.query(con, "SELECT client FROM form_rate_limit")
     assert all("192.0.2" not in row["client"] for row in stored)
-    con.run("UPDATE form_rate_limit SET at = at - interval '61 minutes'")
+    db.execute(con, "UPDATE form_rate_limit SET at = at - interval '61 minutes'")
     assert post(client, "/optagelse/ansoeg", VALID).status == 303
 
 

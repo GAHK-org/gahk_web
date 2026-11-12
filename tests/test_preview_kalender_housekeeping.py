@@ -182,8 +182,10 @@ def test_lazy_rebuild_when_the_day_changed(client: Client, cfg: Config, con: db.
         snap = validate(data)
         images.materialize(con, cfg, snap)
         render.render_site(con, cfg, snap, yesterday, store_snapshot=True)
-    con.run(
-        "INSERT INTO visit_seen (day, path, visitor) VALUES (:d, '*', 'old')", d=today - timedelta(days=3)
+    db.execute(
+        con,
+        "INSERT INTO visit_seen (day, path, visitor) VALUES (:d, '*', 'old')",
+        d=today - timedelta(days=3),
     )
     assert "Igaar-fest" in (cfg.public_html / "index.html").read_text()
 

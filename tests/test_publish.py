@@ -188,7 +188,7 @@ def test_unused_images_are_collected_after_publish(client: Client, cfg: Config, 
     assert not (cfg.public_html / kokken["url"].lstrip("/")).parent.exists()
     # The blob stays for an hour (a publish in flight may still need it).
     assert (cfg.state_dir / "images" / kokken["sha256"]).is_file()
-    con.run("UPDATE images SET stored_at = now() - interval '2 hours'")
+    db.execute(con, "UPDATE images SET stored_at = now() - interval '2 hours'")
     again = snapshot(revision="d" * 64) | {"images": data["images"], "pages": data["pages"]}
     assert client.api("POST", "/api/publish", again).status == 200
     assert not (cfg.state_dir / "images" / kokken["sha256"]).exists()

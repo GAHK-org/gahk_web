@@ -24,7 +24,7 @@ import gahk_web
 MIN_PYTHON = (3, 13)
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # The runtime dependencies, by import name (pyproject.toml's [project] dependencies).
-DEPENDENCIES = ("jinja2", "markupsafe", "pg8000")
+DEPENDENCIES = ("jinja2", "markupsafe", "psycopg", "psycopg_binary")
 
 
 def sample_snapshot() -> dict[str, Any]:
@@ -89,6 +89,11 @@ def check_imports() -> None:
 def check_packages(vendor: Path | None) -> None:
     """The packages come from vendor/, were installed for this python, and their compiled parts load."""
     importlib.import_module("markupsafe._speedups")  # MarkupSafe's C escaping, not the slow fallback
+    import psycopg
+
+    # The binary wheel brings libpq; without it psycopg would look for the host's libpq and fail.
+    if psycopg.pq.__impl__ != "binary":
+        raise AssertionError(f"psycopg uses its {psycopg.pq.__impl__} implementation, not binary")
     if vendor is None:
         return
     from .updater import ABI_FILE, interpreter_abi

@@ -45,15 +45,17 @@ def test_outbox_lists_and_acks(client: Client, con: db.Connection) -> None:
     publish(client)
     today = copenhagen_today()
     yesterday = today - timedelta(days=1)
-    con.run(
+    db.execute(
+        con,
         "INSERT INTO visits (day, path, views, visitors) VALUES (:d, '*', 7, 3), (:d, 'kontakt', 2, 1)",
         d=yesterday,
     )
     beacon(client, "/kontakt")
-    con.run(
+    db.execute(
+        con,
         "INSERT INTO applications (id, kind, fields, submitted_at) VALUES"
         " ('11111111-1111-4111-8111-111111111111', 'fremleje', '{\"full_name\": \"A\"}', now()),"
-        " ('22222222-2222-4222-8222-222222222222', 'rundvisning', '{\"full_name\": \"B\"}', now())"
+        " ('22222222-2222-4222-8222-222222222222', 'rundvisning', '{\"full_name\": \"B\"}', now())",
     )
     data: dict[str, Any] = client.api("GET", "/api/outbox").json()
     assert [app["id"] for app in data["applications"]] == [
