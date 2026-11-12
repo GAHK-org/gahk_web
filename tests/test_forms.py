@@ -7,7 +7,7 @@ import pytest
 from conftest import Client, Result, publish
 
 from gahk_web import db, forms
-from gahk_web.app import make_app
+from gahk_web.app import create_app
 from gahk_web.config import Config
 
 ORIGIN = {"Origin": "https://gahk.dk", "Content-Type": "application/x-www-form-urlencoded"}
@@ -173,7 +173,7 @@ class FakeResponse(io.BytesIO):
 def turnstile_client(cfg: Config, con: db.Connection) -> Client:
     from dataclasses import replace
 
-    return Client(make_app(replace(cfg, turnstile_site_key="site-key", turnstile_secret_key="secret")))
+    return Client(create_app(replace(cfg, turnstile_site_key="site-key", turnstile_secret_key="secret")))
 
 
 def test_turnstile_success(

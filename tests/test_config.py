@@ -59,6 +59,11 @@ def test_conninfo_passes_the_certificate_only_where_it_is_checked() -> None:
         "sslmode": "require",
         "gssencmode": "disable",
         "options": "-c TimeZone=UTC",
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 3,
+        "tcp_user_timeout": 15000,
     }
     assert "password" not in db.conninfo(DatabaseConfig("h", 5432, "n", "u", ""))
 

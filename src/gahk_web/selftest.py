@@ -7,7 +7,8 @@ bundle. It needs no database, no config file and no network: it imports every mo
 checks that the packages are the ones installed for this python and that their compiled parts work
 (MarkupSafe's speedups, psycopg's libpq, Pillow's WebP and JPEG codecs and colour management, nh3),
 makes the variants of a sample picture, renders a sample snapshot with the release's templates into
-memory, and checks the static files the pages link to.
+memory, checks the static files the pages link to, and sends the Flask app two requests the way
+Apache hands them over.
 """
 
 import importlib
@@ -19,14 +20,17 @@ import tempfile
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import gahk_web
+
+if TYPE_CHECKING:
+    from .config import Config
 
 MIN_PYTHON = (3, 13)
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # The runtime dependencies, by import name (pyproject.toml's [project] dependencies).
-DEPENDENCIES = ("jinja2", "markupsafe", "nh3", "PIL", "psycopg", "psycopg_binary")
+DEPENDENCIES = ("flask", "werkzeug", "jinja2", "markupsafe", "nh3", "PIL", "psycopg", "psycopg_binary")
 
 
 def sample_snapshot() -> dict[str, Any]:
@@ -146,21 +150,26 @@ def check_sanitizer() -> None:
         raise AssertionError(f"the sanitiser left {cleaned!r}")
 
 
-def check_render() -> dict[str, tuple[str, str | None]]:
+def sample_config(scratch: Path) -> "Config":
     from .config import Config, DatabaseConfig
+
+    return Config(
+        database=DatabaseConfig("localhost", 5432, "selftest", "selftest", "", sslmode="disable"),
+        sync_key="k" * 40,
+        stats_secret="s" * 40,
+        public_html=scratch,
+        state_dir=scratch,
+    )
+
+
+def check_render() -> dict[str, tuple[str, str | None]]:
     from .images import Picture
     from .render import Site
     from .snapshot import validate
 
     snapshot = validate(sample_snapshot())
     with tempfile.TemporaryDirectory() as scratch:
-        cfg = Config(
-            database=DatabaseConfig("localhost", 5432, "selftest", "selftest", "", sslmode="disable"),
-            sync_key="k" * 40,
-            stats_secret="s" * 40,
-            public_html=Path(scratch),
-            state_dir=Path(scratch),
-        )
+        cfg = sample_config(Path(scratch))
         url = snapshot["images"][0]["url"]
         variants = tuple((width, f"/billeder/0123456789abcdef/_{width}w.webp") for width in (480, 960))
         pictures = {url: Picture(url, 960, 640, variants)}
@@ -171,6 +180,23 @@ def check_render() -> dict[str, tuple[str, str | None]]:
     if 'srcset="/billeder/0123456789abcdef/_480w.webp 480w' not in kokken:
         raise AssertionError("the pages do not link the picture variants")
     return files
+
+
+def check_app() -> None:
+    """Two requests through the whole Flask stack, rewritten to the stub as .htaccess does, that need
+    no database: an old intranet address (redirect) and an unsigned API call (refused)."""
+    from .app import create_app
+
+    with tempfile.TemporaryDirectory() as scratch:
+        client = create_app(sample_config(Path(scratch))).test_client()
+        stub = {"SCRIPT_NAME": "/cgi-bin/gahk.fcgi", "REQUEST_URI": "/intern/den-hurtige/?side=2"}
+        moved = client.get("/den-hurtige/", environ_overrides=stub)
+        location = "https://intern.gahk.dk/den-hurtige/?side=2"
+        if moved.status_code != 308 or moved.headers.get("Location") != location:
+            raise AssertionError(f"/intern/den-hurtige/ answered {moved.status} {moved.headers}")
+        refused = client.get("/api/status")
+        if refused.status_code != 401 or refused.get_json() != {"error": "missing signature"}:
+            raise AssertionError(f"an unsigned /api/status answered {refused.status} {refused.data!r}")
 
 
 def check_static(release: Path | None, files: dict[str, tuple[str, str | None]]) -> None:
@@ -225,6 +251,7 @@ def main(release: Path | None = None, vendor: Path | None = None) -> int:
         ("migrations", check_migrations),
         ("render", render),
         ("static files", lambda: check_static(release, rendered)),
+        ("app", check_app),
     ]
     failed = 0
     for name, check in checks:

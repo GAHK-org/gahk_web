@@ -26,7 +26,6 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 from . import db
 from .clock import now_utc
-from .wsgi import BodyTooLarge
 
 if TYPE_CHECKING:
     from http.client import HTTPResponse
@@ -49,6 +48,10 @@ TURNSTILE_FAILED = "Captcha-verifikation fejlede. Prøv igen."
 WRONG_ORIGIN = "Formularen skal sendes fra kollegiets hjemmeside. Gå tilbage til siden, og prøv igen."
 RATE_LIMITED = "Du har sendt mange henvendelser på kort tid. Prøv igen om en time."
 NON_FIELD = "__all__"
+
+
+class TooManyFields(ValueError):
+    """A post with more than MAX_FORM_FIELDS fields: answered like one that is too large."""
 
 
 def too_long(limit: int, length: int) -> str:
@@ -177,7 +180,7 @@ def valid_email(value: str) -> bool:
 def parse_body(body: bytes) -> dict[str, str]:
     """application/x-www-form-urlencoded → the first value of each field.
 
-    Raises BodyTooLarge for more than MAX_FORM_FIELDS fields."""
+    Raises TooManyFields for more than MAX_FORM_FIELDS fields."""
     try:
         text = body.decode("utf-8")
     except UnicodeDecodeError:
@@ -185,7 +188,7 @@ def parse_body(body: bytes) -> dict[str, str]:
     try:
         parsed = parse_qs(text, keep_blank_values=True, max_num_fields=MAX_FORM_FIELDS)
     except ValueError as exc:  # "Max number of fields exceeded"
-        raise BodyTooLarge(str(exc)) from exc
+        raise TooManyFields(str(exc)) from exc
     return {name: values[0] for name, values in parsed.items()}
 
 
@@ -236,8 +239,8 @@ def rate_limited(con: db.Connection, client: str) -> bool:
 
 
 def urlopen(url: str, data: bytes, timeout: float) -> "HTTPResponse":
-    """urllib's urlopen, imported on first use: few requests verify a captcha, and urllib is slow to
-    import for a process that lives one request."""
+    """urllib's urlopen, imported on first use: few requests verify a captcha (and the CGI fallback
+    starts a process per request)."""
     from urllib.request import urlopen as open_url
 
     response: HTTPResponse = open_url(url, data=data, timeout=timeout)  # noqa: S310 - fixed https URL

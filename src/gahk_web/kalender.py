@@ -13,7 +13,9 @@ from http.client import HTTPResponse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .wsgi import Response, text
+from flask import Response
+
+from .web import response, text
 
 FEED_RE = re.compile(r"^/kalender/([A-Za-z0-9_-]{1,128})\.ics$")
 TIMEOUT = 20
@@ -55,5 +57,5 @@ def pass_through(intern_url: str, feed_token: str, method: str) -> Response:
     content_type = upstream.headers.get("Content-Type") or "text/calendar; charset=utf-8"
     if method == "HEAD":
         upstream.close()
-        return Response(status, b"", content_type, headers)
-    return Response(status, _stream(upstream), content_type, headers)
+        return response(status, b"", content_type, *headers)
+    return response(status, _stream(upstream), content_type, *headers)

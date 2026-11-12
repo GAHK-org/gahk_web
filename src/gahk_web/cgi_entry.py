@@ -3,11 +3,18 @@ main(). Apache starts one Python process per request; the app reads its config o
 
 from wsgiref.handlers import CGIHandler
 
-from .app import make_app
+from .app import config_error_app, create_app
+from .config import ConfigError, load_config
+from .web import WsgiApp
 
 
 def main() -> None:
-    CGIHandler().run(make_app())
+    app: WsgiApp
+    try:
+        app = create_app(load_config(), runner="cgi")
+    except ConfigError as exc:
+        app = config_error_app(str(exc))
+    CGIHandler().run(app)
 
 
 if __name__ == "__main__":

@@ -1,25 +1,29 @@
 """Development server: python -m gahk_web.devserver --port 8810 --public-html <dir>
 
-It emulates public_html/.htaccess (routing.py): the redirects to intern, existing files and
-<path>/index.html are served as files, and everything else goes to the CGI app. Site assets come
-from the package's static/ folder when public_html has no static/ of its own (in production the
-release installs them there). Development only: single-threaded, no TLS, no hardening.
+Werkzeug's development server with its reloader (the app restarts when a .py file changes), in front
+of a layer that emulates public_html/.htaccess (routing.py): the redirects to intern, existing files
+and <path>/index.html are served as files, scripts and dot-files are refused, and everything else
+goes to the Flask app. Site assets come from the package's static/ folder when public_html has no
+static/ of its own (in production the release installs them there). Development only: no TLS, no
+hardening.
 """
 
 import argparse
 import dataclasses
 import mimetypes
-import sys
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
-from wsgiref.simple_server import make_server
+
+from flask import Response
+from werkzeug.serving import is_running_from_reloader, run_simple
+from werkzeug.wrappers import Request
 
 from . import db, housekeeping, routing
-from .app import StartResponse, WsgiApp, make_app
+from .app import create_app
 from .config import Config, load_config
 from .render import STATIC_DIR, quote_path
-from .wsgi import Request, Response, redirect, text
+from .web import StartResponse, WsgiApp, redirect, response, text, use_browser_path
 
 
 def _package_static(path: str) -> Path | None:
@@ -33,44 +37,56 @@ def _package_static(path: str) -> Path | None:
     return None
 
 
-def _file_response(path: Path, method: str) -> Response:
+def _file_response(path: Path) -> Response:
     content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     if content_type.startswith("text/") or content_type in ("application/javascript", "application/xml"):
         content_type += "; charset=utf-8"
-    body = b"" if method == "HEAD" else path.read_bytes()
-    return Response(200, body, content_type, [("Cache-Control", "no-cache")])
+    return response(200, path.read_bytes(), content_type, ("Cache-Control", "no-cache"))
 
 
-def static_response(cfg: Config, request: Request) -> Response | None:
-    """What Apache would answer before the CGI app, or None to let the app answer."""
-    path = request.path
-    if routing.is_hidden(path) or routing.is_script(path) or path.startswith("/cgi-bin/"):
+def static_response(cfg: Config, method: str, path: str, query: str) -> Response | None:
+    """What Apache would answer before the app, or None to let the app answer."""
+    if routing.is_hidden(path) or routing.is_script(path) or routing.is_stub(path):
         return text(403, "Forbidden")
     target = routing.intern_redirect(path)
     if target is not None:
-        return redirect(308, cfg.intern_url + quote_path(target), request.query)
+        return redirect(308, cfg.intern_url + quote_path(target), query)
     target = routing.public_image_redirect(path)
     if target is not None:
-        return redirect(301, quote_path(target), request.query)
-    if request.method in ("GET", "HEAD"):
+        return redirect(301, quote_path(target), query)
+    if method in ("GET", "HEAD"):
         file = routing.static_file(cfg.public_html, path) or _package_static(path)
         if file is not None:
-            return _file_response(file, request.method)
+            return _file_response(file)
     return None
 
 
 def make_dev_app(cfg: Config, app: WsgiApp | None = None) -> WsgiApp:
-    inner = app or make_app(cfg)
+    inner = app or create_app(cfg)
 
     def dev_app(environ: dict[str, Any], start_response: StartResponse) -> Iterable[bytes]:
-        request = Request.from_environ(environ)
-        response = static_response(cfg, request)
-        if response is None:
+        use_browser_path(environ)
+        request = Request(environ)
+        answer = static_response(cfg, request.method, request.path, request.query_string.decode("latin-1"))
+        if answer is None:
             return inner(environ, start_response)
-        start_response(response.status_line(), response.header_list())
-        return [response.body] if isinstance(response.body, bytes) else response.body
+        return answer(environ, start_response)
 
     return dev_app
+
+
+def prepare(cfg: Config) -> None:
+    """Create the folders, apply migrations, and re-render if the code or the day changed."""
+    cfg.public_html.mkdir(parents=True, exist_ok=True)
+    cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    con = db.connect(cfg.database)
+    try:
+        applied = db.migrate(con)
+        if applied:
+            print(f"Applied migrations: {', '.join(applied)}")
+        housekeeping.maybe_rebuild(con, cfg)
+    finally:
+        con.close()
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -83,29 +99,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--config", type=Path, help="config.ini (default: $GAHK_WEB_CONFIG or ~/gahk_web/config.ini)"
     )
+    parser.add_argument("--no-reload", action="store_true", help="do not restart when a .py file changes")
     args = parser.parse_args(argv)
 
     cfg = load_config(args.config)
     if args.public_html:
         cfg = dataclasses.replace(cfg, public_html=args.public_html.resolve())
-    cfg.public_html.mkdir(parents=True, exist_ok=True)
-    cfg.state_dir.mkdir(parents=True, exist_ok=True)
-    con = db.connect(cfg.database)
-    try:
-        applied = db.migrate(con)
-        if applied:
-            print(f"Applied migrations: {', '.join(applied)}")
-        housekeeping.maybe_rebuild(con, cfg)
-    finally:
-        con.close()
-
-    print("WARNING: development server only - never use it in production.", file=sys.stderr)
-    print(f"Serving {cfg.public_html} at http://{args.host}:{args.port}/ (base_url {cfg.base_url})")
-    with make_server(args.host, args.port, make_dev_app(cfg)) as server:
-        try:
-            server.serve_forever()
-        except KeyboardInterrupt:
-            pass
+    reload = not args.no_reload
+    if is_running_from_reloader() or not reload:  # the reloader's own process only watches files
+        prepare(cfg)
+        print(f"Serving {cfg.public_html} at http://{args.host}:{args.port}/ (base_url {cfg.base_url})")
+    run_simple(args.host, args.port, make_dev_app(cfg), use_reloader=reload)
 
 
 if __name__ == "__main__":

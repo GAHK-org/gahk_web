@@ -1,13 +1,20 @@
-"""The signed sync API that intern.gahk.dk calls: /api/*.
+"""The signed sync API that intern.gahk.dk calls: /api/*, a Flask blueprint.
 
 Every call but GET /api/health carries X-Gahk-Timestamp and X-Gahk-Signature (see signing.py). The
 contract (shapes, status codes) is shared with intern's cms.gahk_web client; change both together.
+
+Each endpoint takes every method and checks, in this order: the body's size (413; 400 for an image),
+the signature over the exact path and raw body (401), then the method (405). An unknown /api/
+address is 404 once signed. That order is the contract's, so @signed does all three.
 """
 
+import functools
 import json
 from collections.abc import Callable
 from datetime import date, datetime
 from typing import Any
+
+from flask import Blueprint, Response, current_app, request
 
 from . import db, images, outbox, signing
 from .clock import copenhagen_today
@@ -16,32 +23,64 @@ from .housekeeping import PUBLISH_VARIANT_BUDGET, REBUILD_VARIANT_BUDGET, fill_v
 from .render import load_snapshot, preview_html, render_site
 from .snapshot import HEX64_RE, MAX_IMAGE_BYTES, SnapshotError, validate, validate_preview
 from .version import code_version
-from .wsgi import BodyTooLarge, Request, Response, html, json_response
+from .web import ALL_METHODS, BodyTooLarge, database, header, html, json_response, read_body
 
 MAX_BODY = 1024 * 1024
 MAX_SNAPSHOT_BODY = 32 * 1024 * 1024
 MAX_MISSING_QUERY = 10000
-IMAGES_PREFIX = "/api/images/"
+# How the request reached the app ("fastcgi" or "cgi"), on GET /api/health only. Not part of the
+# contract with intern: the updater reads it to see that FastCGI runs the new release.
+RUNNER_HEADER = "X-Gahk-Runner"
+
+bp = Blueprint("api", __name__)
+
+type View = Callable[..., Response]
 
 
-class Api:
-    """One API request: the configuration and a database connection opened on first use."""
-
-    def __init__(self, cfg: Config, connect: Callable[[], db.Connection]) -> None:
-        self.cfg = cfg
-        self._connect = connect
-
-    @property
-    def con(self) -> db.Connection:
-        return self._connect()
-
-    @staticmethod
-    def today() -> date:
-        return copenhagen_today()
+def cfg() -> Config:
+    config: Config = current_app.config["GAHK"]
+    return config
 
 
-def _error(status: int, message: str, **extra: object) -> Response:
+def today() -> date:
+    return copenhagen_today()
+
+
+def error(status: int, message: str, **extra: object) -> Response:
     return json_response(status, {"error": message, **extra})
+
+
+def signed(*methods: str, limit: int = MAX_BODY, too_large: int = 413) -> Callable[[View], View]:
+    """Read the body (at most limit bytes), check intern's signature over the request's path and
+    that body, then the method (any, when none are named). The view gets the body as `body`."""
+
+    def decorate(view: View) -> View:
+        @functools.wraps(view)
+        def wrapper(**kwargs: Any) -> Response:  # noqa: ANN401 - URL values
+            try:
+                body = read_body(limit)
+            except BodyTooLarge:
+                return error(too_large, "the body is too large")
+            reason = signing.verify(
+                cfg().sync_key,
+                header("X-Gahk-Timestamp"),
+                header("X-Gahk-Signature"),
+                request.method,
+                request.path,
+                body,
+            )
+            if reason:
+                return error(401, reason)
+            if methods and request.method not in methods:
+                return error(405, "method not allowed")
+            try:
+                return view(body=body, **kwargs)
+            except SnapshotError as exc:
+                return error(400, str(exc))
+
+        return wrapper
+
+    return decorate
 
 
 def _json(body: bytes) -> Any:  # noqa: ANN401 - parsed JSON, validated by the caller
@@ -55,7 +94,7 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def update_state(cfg: Config) -> dict[str, Any]:
+def update_state(config: Config) -> dict[str, Any]:
     """What the self-updater last recorded in state_dir/update.json (it owns that file)."""
     state: dict[str, Any] = {
         "checked_at": None,
@@ -64,7 +103,7 @@ def update_state(cfg: Config) -> dict[str, Any]:
         "last_error": None,
     }
     try:
-        data = json.loads((cfg.state_dir / "update.json").read_text(encoding="utf-8"))
+        data = json.loads((config.state_dir / "update.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return state
     if isinstance(data, dict):
@@ -72,20 +111,30 @@ def update_state(cfg: Config) -> dict[str, Any]:
     return state
 
 
-def health(api: Api) -> Response:
+# --- endpoints ---
+
+
+@bp.route("/api/health", methods=ALL_METHODS)
+def health() -> Response:
+    if request.method not in ("GET", "HEAD"):
+        return error(405, "method not allowed")
     try:
-        row = db.query_one(api.con, "SELECT revision FROM site_state WHERE id = 1")
+        row = db.query_one(database(), "SELECT revision FROM site_state WHERE id = 1")
     except Exception:
-        return json_response(503, {"ok": False, "version": code_version(), "revision": None})
-    return json_response(
-        200, {"ok": True, "version": code_version(), "revision": row["revision"] if row else None}
-    )
+        result = json_response(503, {"ok": False, "version": code_version(), "revision": None})
+    else:
+        result = json_response(
+            200, {"ok": True, "version": code_version(), "revision": row["revision"] if row else None}
+        )
+    result.headers[RUNNER_HEADER] = current_app.config["GAHK_RUNNER"]
+    return result
 
 
-def status(api: Api) -> Response:
-    row = (
-        db.query_one(api.con, "SELECT revision, published_at, rendered_at FROM site_state WHERE id = 1") or {}
-    )
+@bp.route("/api/status", methods=ALL_METHODS)
+@signed("GET")
+def status(body: bytes) -> Response:
+    con = database()
+    row = db.query_one(con, "SELECT revision, published_at, rendered_at FROM site_state WHERE id = 1") or {}
     return json_response(
         200,
         {
@@ -93,13 +142,15 @@ def status(api: Api) -> Response:
             "revision": row.get("revision"),
             "published_at": _iso(row.get("published_at")),
             "rendered_at": _iso(row.get("rendered_at")),
-            "outbox": outbox.counts(api.con),
-            "update": update_state(api.cfg),
+            "outbox": outbox.counts(con),
+            "update": update_state(cfg()),
         },
     )
 
 
-def images_missing(api: Api, body: bytes) -> Response:
+@bp.route("/api/images/missing", methods=ALL_METHODS)
+@signed("POST")
+def images_missing(body: bytes) -> Response:
     data = _json(body)
     shas = data.get("sha256") if isinstance(data, dict) else None
     if (
@@ -107,141 +158,114 @@ def images_missing(api: Api, body: bytes) -> Response:
         or len(shas) > MAX_MISSING_QUERY
         or not all(isinstance(sha, str) and HEX64_RE.match(sha) for sha in shas)
     ):
-        return _error(400, 'expected {"sha256": ["<64 hex>", ...]}')
-    return json_response(200, {"missing": images.missing(api.cfg, shas)})
+        return error(400, 'expected {"sha256": ["<64 hex>", ...]}')
+    return json_response(200, {"missing": images.missing(cfg(), shas)})
 
 
-def image_put(api: Api, request: Request, sha256: str, body: bytes) -> Response:
+@bp.route("/api/images/<anypath:sha256>", methods=ALL_METHODS)
+@signed("PUT", limit=MAX_IMAGE_BYTES, too_large=400)
+def image_put(body: bytes, sha256: str) -> Response:
+    con = database()
     try:
-        images.store(api.con, api.cfg, sha256, body, request.header("Content-Type"))
+        images.store(con, cfg(), sha256, body, header("Content-Type"))
     except images.ImageError as exc:
-        return _error(400, str(exc))
+        return error(400, str(exc))
     # intern uploads one image per request, so making its variants now spreads the work out. An
     # earlier attempt that was killed is not repeated here (it would fail intern's request again).
-    images.ensure_variants(api.con, api.cfg, [sha256], retry=False)
-    return Response(204, b"", "text/plain")
+    images.ensure_variants(con, cfg(), [sha256], retry=False)
+    return Response(b"", status=204, content_type="text/plain")
 
 
-def publish(api: Api, body: bytes) -> Response:
+@bp.route("/api/publish", methods=ALL_METHODS)
+@signed("POST", limit=MAX_SNAPSHOT_BODY)
+def publish(body: bytes) -> Response:
     snapshot = validate(_json(body))
-    con = api.con
-    today = api.today()
-    missing = images.missing_for(api.cfg, snapshot)
+    con = database()
+    config = cfg()
+    day = today()
+    missing = images.missing_for(config, snapshot)
     if missing:
-        return _error(409, "missing images", missing=missing)
+        return error(409, "missing images", missing=missing)
     # Before the lock: variants are cache files, and making them may take a while. Whatever the
     # budget leaves is made by later requests (housekeeping), which then render again; so are images
     # whose earlier attempt was killed, so one of those cannot make publish after publish fail.
-    fill_variants(con, api.cfg, snapshot, PUBLISH_VARIANT_BUDGET, retry=False)
+    fill_variants(con, config, snapshot, PUBLISH_VARIANT_BUDGET, retry=False)
     with db.advisory_lock(con, db.LOCK_RENDER):
-        missing = images.missing_for(api.cfg, snapshot)
+        missing = images.missing_for(config, snapshot)
         if missing:
-            return _error(409, "missing images", missing=missing)
-        images.materialize(con, api.cfg, snapshot)
-        result = render_site(con, api.cfg, snapshot, today, store_snapshot=True)
-        images.collect_garbage(con, api.cfg, snapshot)
-        purge(con, today)
+            return error(409, "missing images", missing=missing)
+        images.materialize(con, config, snapshot)
+        result = render_site(con, config, snapshot, day, store_snapshot=True)
+        images.collect_garbage(con, config, snapshot)
+        purge(con, day)
     return json_response(200, {"revision": snapshot["revision"], "pages_written": result.pages_written})
 
 
-def preview(api: Api, body: bytes) -> Response:
-    request = validate_preview(_json(body))
-    snapshot = load_snapshot(api.con)
+@bp.route("/api/preview", methods=ALL_METHODS)
+@signed("POST", limit=MAX_SNAPSHOT_BODY)
+def preview(body: bytes) -> Response:
+    preview_request = validate_preview(_json(body))
+    con = database()
+    snapshot = load_snapshot(con)
     page = preview_html(
-        api.cfg,
+        cfg(),
         snapshot,
-        request["kind"],
-        request["item"],
-        request["media_base"],
-        images.pictures(api.con, snapshot) if snapshot else {},
+        preview_request["kind"],
+        preview_request["item"],
+        preview_request["media_base"],
+        images.pictures(con, snapshot) if snapshot else {},
     )
     return html(200, page, ("X-Robots-Tag", "noindex"))
 
 
-def outbox_ack(api: Api, body: bytes) -> Response:
+@bp.route("/api/outbox", methods=ALL_METHODS)
+@signed("GET")
+def outbox_pending(body: bytes) -> Response:
+    return json_response(200, outbox.pending(database()))
+
+
+@bp.route("/api/outbox/ack", methods=ALL_METHODS)
+@signed("POST")
+def outbox_ack(body: bytes) -> Response:
     try:
         ids, through = outbox.parse_ack(_json(body))
     except outbox.AckError as exc:
-        return _error(400, str(exc))
-    return json_response(200, outbox.ack(api.con, ids, through, api.today()))
+        return error(400, str(exc))
+    return json_response(200, outbox.ack(database(), ids, through, today()))
 
 
-def rebuild_now(api: Api) -> Response:
-    con = api.con
+@bp.route("/api/rebuild", methods=ALL_METHODS)
+@signed("POST")
+def rebuild_now(body: bytes) -> Response:
+    con = database()
     snapshot = load_snapshot(con)
     if snapshot is not None:
-        fill_variants(con, api.cfg, snapshot, REBUILD_VARIANT_BUDGET, retry=False)
+        fill_variants(con, cfg(), snapshot, REBUILD_VARIANT_BUDGET, retry=False)
     with db.advisory_lock(con, db.LOCK_RENDER):
-        written = rebuild(con, api.cfg, api.today())
+        written = rebuild(con, cfg(), today())
     if written is None:
-        return _error(409, "no snapshot has been published yet")
+        return error(409, "no snapshot has been published yet")
     return json_response(200, {"pages_written": written})
 
 
-def update(api: Api) -> Response:
+@bp.route("/api/update", methods=ALL_METHODS)
+@signed("POST")
+def update(body: bytes) -> Response:
     """Run the self-updater and report what it did.
 
-    On the webhost the cgi-bin stub answers POST /api/update itself, before any release is imported
-    (so it works with no release installed, or a broken one); this is the same call for a release
-    started some other way. A development checkout never replaces itself."""
+    On the webhost .htaccess sends /api/update to the cgi-bin stub gahk.cgi, which answers it
+    before any release is imported (so it works with no release installed, or a broken one); this
+    is the same call for a release reached some other way. A development checkout never replaces
+    itself."""
     if code_version() == "dev":
-        return _error(409, "a development checkout does not update itself", version="dev")
+        return error(409, "a development checkout does not update itself", version="dev")
     from . import updater  # rarely needed here, and it imports much of the standard library
 
     return json_response(200, updater.nudge(home_dir()))
 
 
-Handler = Callable[[Api, Request, bytes], Response]
-ROUTES: dict[tuple[str, str], Handler] = {
-    ("POST", "/api/images/missing"): lambda api, _req, body: images_missing(api, body),
-    ("GET", "/api/status"): lambda api, _req, _body: status(api),
-    ("POST", "/api/publish"): lambda api, _req, body: publish(api, body),
-    ("POST", "/api/preview"): lambda api, _req, body: preview(api, body),
-    ("GET", "/api/outbox"): lambda api, _req, _body: json_response(200, outbox.pending(api.con)),
-    ("POST", "/api/outbox/ack"): lambda api, _req, body: outbox_ack(api, body),
-    ("POST", "/api/rebuild"): lambda api, _req, _body: rebuild_now(api),
-    ("POST", "/api/update"): lambda api, _req, _body: update(api),
-}
-
-
-def handle(request: Request, cfg: Config, connect: Callable[[], db.Connection]) -> Response:
-    api = Api(cfg, connect)
-    path = request.path
-    if path == "/api/health":
-        return health(api) if request.method in ("GET", "HEAD") else _error(405, "method not allowed")
-
-    is_image_put = path.startswith(IMAGES_PREFIX) and path != "/api/images/missing"
-    if is_image_put:
-        limit = MAX_IMAGE_BYTES
-    elif path in ("/api/publish", "/api/preview"):
-        limit = MAX_SNAPSHOT_BODY
-    else:
-        limit = MAX_BODY
-    try:
-        body = request.body(limit)
-    except BodyTooLarge:
-        return _error(400 if is_image_put else 413, "the body is too large")
-
-    reason = signing.verify(
-        cfg.sync_key,
-        request.header("X-Gahk-Timestamp"),
-        request.header("X-Gahk-Signature"),
-        request.method,
-        path,
-        body,
-    )
-    if reason:
-        return _error(401, reason)
-
-    try:
-        if is_image_put:
-            if request.method != "PUT":
-                return _error(405, "method not allowed")
-            return image_put(api, request, path[len(IMAGES_PREFIX) :], body)
-        route = ROUTES.get((request.method, path))
-        if route is None:
-            known = any(route_path == path for _method, route_path in ROUTES)
-            return _error(405, "method not allowed") if known else _error(404, "no such endpoint")
-        return route(api, request, body)
-    except SnapshotError as exc:
-        return _error(400, str(exc))
+@bp.route("/api", methods=ALL_METHODS)
+@bp.route("/api/<anypath:rest>", methods=ALL_METHODS)
+@signed()
+def unknown(body: bytes, rest: str = "") -> Response:
+    return error(404, "no such endpoint")

@@ -1,7 +1,6 @@
 """Shared fixtures: a real PostgreSQL (GAHK_WEB_TEST_DATABASE), a temporary public_html, a WSGI client."""
 
 import hashlib
-import io
 import json
 import os
 from collections.abc import Iterator
@@ -10,9 +9,9 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
-from wsgiref.util import setup_testing_defaults
 
 import pytest
+from werkzeug.test import Client as WerkzeugClient
 
 from gahk_web import db, signing
 from gahk_web.clock import copenhagen_today
@@ -129,34 +128,18 @@ class Client:
         signed: bool = False,
         query: str = "",
     ) -> Result:
-        environ: dict[str, Any] = {}
-        setup_testing_defaults(environ)
-        environ.update(
-            {
-                "REQUEST_METHOD": method,
-                "PATH_INFO": path.encode("utf-8").decode("latin-1"),
-                "QUERY_STRING": query,
-                "CONTENT_LENGTH": str(len(body)),
-                "wsgi.input": io.BytesIO(body),
-                "wsgi.errors": io.StringIO(),
-                "REMOTE_ADDR": self.remote_addr,
-            }
-        )
         all_headers = {**self.default_headers, **(headers or {})}
         if signed:
             all_headers.update(signing.signed_headers(self.key, method, path, body))
-        for name, value in all_headers.items():
-            key = name.upper().replace("-", "_")
-            environ[key if key == "CONTENT_TYPE" else "HTTP_" + key] = value
-        captured: dict[str, Any] = {}
-
-        def start_response(status: str, response_headers: list[tuple[str, str]]) -> None:
-            captured["status"] = int(status.split(" ", 1)[0])
-            captured["headers"] = dict(response_headers)
-
-        chunks = self.app(environ, start_response)
-        data = b"".join(chunks)
-        return Result(captured["status"], captured["headers"], data)
+        response = WerkzeugClient(self.app).open(
+            path,
+            method=method,
+            data=body,
+            headers=all_headers,
+            query_string=query,
+            environ_base={"REMOTE_ADDR": self.remote_addr},
+        )
+        return Result(response.status_code, dict(response.headers), response.get_data())
 
     def get(self, path: str, **kwargs: object) -> Result:
         return self.request("GET", path, **kwargs)
@@ -173,9 +156,9 @@ class Client:
 
 @pytest.fixture
 def client(cfg: Config, con: db.Connection) -> Client:
-    from gahk_web.app import make_app
+    from gahk_web.app import create_app
 
-    return Client(make_app(cfg))
+    return Client(create_app(cfg))
 
 
 # --- snapshot builders ---

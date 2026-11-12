@@ -46,6 +46,11 @@ def is_hidden(path: str) -> bool:
     return any(segment.startswith(".") for segment in segments) and not path.startswith("/.well-known/")
 
 
+def is_stub(path: str) -> bool:
+    """The cgi-bin folder: its stubs run only through the rewrites, never when asked for directly."""
+    return path == "/cgi-bin" or path.startswith("/cgi-bin/")
+
+
 def is_script(path: str) -> bool:
     """A CGI or FastCGI script outside cgi-bin/: Apache would run it, so it is refused."""
     return path.endswith((".cgi", ".fcgi"))
