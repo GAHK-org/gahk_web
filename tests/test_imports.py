@@ -22,4 +22,4 @@ def test_starting_the_app_imports_only_what_every_request_needs() -> None:
     loaded = set(json.loads(done.stdout))
 
     assert not loaded & set(HEAVY)
-    assert "psycopg" not in loaded  # imported on the first database connection
+    assert "psycopg" not in loaded  # imported when an app makes its database engine

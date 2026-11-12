@@ -41,6 +41,7 @@ DEPENDENCIES = (
     "psycopg",
     "psycopg_binary",
     "sqlalchemy",
+    "flask_sqlalchemy",
     "alembic",
     "mako",
 )

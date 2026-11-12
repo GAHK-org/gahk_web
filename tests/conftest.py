@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 import pytest
 from sqlalchemy import Engine, text
+from sqlalchemy.orm import Session
 from werkzeug.test import Client as WerkzeugClient
 
 from gahk_web import db, signing
@@ -44,13 +45,37 @@ def database_config() -> DatabaseConfig:
     )
 
 
+# Raw SQL for the tests' own checks and set-ups. Each call commits, so the app's requests (on
+# connections of their own) see what a test wrote.
+
+
+def query(session: Session, sql: str, **params: object) -> list[dict[str, Any]]:
+    rows = [dict(row) for row in session.execute(text(sql), params).mappings()]
+    session.commit()
+    return rows
+
+
+def query_one(session: Session, sql: str, **params: object) -> dict[str, Any] | None:
+    rows = query(session, sql, **params)
+    return rows[0] if rows else None
+
+
+def execute(session: Session, sql: str, **params: object) -> None:
+    session.execute(text(sql), params)
+    session.commit()
+
+
+def reset_schema(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(text("DROP SCHEMA public CASCADE"))
+        connection.execute(text("CREATE SCHEMA public"))
+
+
 @pytest.fixture(scope="session")
 def engine() -> Iterator[Engine]:
     """The test database, its schema made afresh by the Alembic migrations (as the updater does)."""
     test_engine = db.make_engine(database_config())
-    with test_engine.begin() as connection:
-        connection.execute(text("DROP SCHEMA public CASCADE"))
-        connection.execute(text("CREATE SCHEMA public"))
+    reset_schema(test_engine)
     db.migrate(test_engine)
     yield test_engine
     test_engine.dispose()
@@ -62,16 +87,16 @@ def db_config(engine: Engine) -> DatabaseConfig:
 
 
 @pytest.fixture
-def con(db_config: DatabaseConfig) -> Iterator[db.Connection]:
-    connection = db.connect(db_config)
-    db.execute(connection, f"TRUNCATE {', '.join(TABLES)}")
-    db.execute(
-        connection,
-        "UPDATE site_state SET snapshot = NULL, revision = NULL, published_at = NULL, received_at = NULL,"
-        " rendered_at = NULL, rendered_on = NULL, rendered_version = NULL",
-    )
-    yield connection
-    connection.close()
+def con(engine: Engine) -> Iterator[Session]:
+    """A session of the test's own, on the emptied tables."""
+    with db.session_for(engine) as session:
+        execute(session, f"TRUNCATE {', '.join(TABLES)}")
+        execute(
+            session,
+            "UPDATE site_state SET snapshot = NULL, revision = NULL, published_at = NULL, received_at = NULL,"
+            " rendered_at = NULL, rendered_on = NULL, rendered_version = NULL",
+        )
+        yield session
 
 
 @pytest.fixture(scope="session")
@@ -162,7 +187,7 @@ class Client:
 
 
 @pytest.fixture
-def client(cfg: Config, con: db.Connection) -> Client:
+def client(cfg: Config, con: Session) -> Client:
     from gahk_web.app import create_app
 
     return Client(create_app(cfg))

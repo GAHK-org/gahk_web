@@ -1,9 +1,9 @@
 from datetime import timedelta
 from typing import Any
 
-from conftest import Client, publish
+from conftest import Client, execute, publish, query
+from sqlalchemy.orm import Session
 
-from gahk_web import db
 from gahk_web.clock import copenhagen_today
 
 BROWSER = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1"}
@@ -13,11 +13,11 @@ def beacon(client: Client, path: str, headers: dict[str, str] | None = None) -> 
     return client.post("/s", path.encode(), headers=BROWSER if headers is None else headers).status
 
 
-def visits(con: db.Connection) -> dict[str, tuple[int, int]]:
-    return {row["path"]: (row["views"], row["visitors"]) for row in db.query(con, "SELECT * FROM visits")}
+def visits(con: Session) -> dict[str, tuple[int, int]]:
+    return {row["path"]: (row["views"], row["visitors"]) for row in query(con, "SELECT * FROM visits")}
 
 
-def test_beacon_counts_views_and_unique_visitors(client: Client, con: db.Connection) -> None:
+def test_beacon_counts_views_and_unique_visitors(client: Client, con: Session) -> None:
     publish(client)
     other = Client(client.app, remote_addr="198.51.100.7")
     assert beacon(client, "/") == 204
@@ -26,11 +26,11 @@ def test_beacon_counts_views_and_unique_visitors(client: Client, con: db.Connect
     assert beacon(other, "/faciliteter/") == 204
     assert beacon(client, "/optagelse/") == 204
     assert visits(con) == {"": (2, 1), "faciliteter": (2, 2), "optagelse": (1, 1), "*": (5, 2)}
-    seen = db.query(con, "SELECT visitor FROM visit_seen")
+    seen = query(con, "SELECT visitor FROM visit_seen")
     assert all("198.51" not in row["visitor"] for row in seen)
 
 
-def test_beacon_ignores_bots_and_unknown_paths(client: Client, con: db.Connection) -> None:
+def test_beacon_ignores_bots_and_unknown_paths(client: Client, con: Session) -> None:
     publish(client)
     assert beacon(client, "/", {"User-Agent": "Googlebot/2.1"}) == 204
     assert beacon(client, "/", {}) == 204
@@ -41,17 +41,17 @@ def test_beacon_ignores_bots_and_unknown_paths(client: Client, con: db.Connectio
     assert client.get("/s").status == 405
 
 
-def test_outbox_lists_and_acks(client: Client, con: db.Connection) -> None:
+def test_outbox_lists_and_acks(client: Client, con: Session) -> None:
     publish(client)
     today = copenhagen_today()
     yesterday = today - timedelta(days=1)
-    db.execute(
+    execute(
         con,
         "INSERT INTO visits (day, path, views, visitors) VALUES (:d, '*', 7, 3), (:d, 'kontakt', 2, 1)",
         d=yesterday,
     )
     beacon(client, "/kontakt")
-    db.execute(
+    execute(
         con,
         "INSERT INTO applications (id, kind, fields, submitted_at) VALUES"
         " ('11111111-1111-4111-8111-111111111111', 'fremleje', '{\"full_name\": \"A\"}', now()),"

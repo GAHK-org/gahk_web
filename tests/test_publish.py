@@ -2,9 +2,21 @@ import hashlib
 import json
 from pathlib import Path
 
-from conftest import GANG, IMAGE_BYTES, KOKKEN, Client, image, jpeg, page, publish, snapshot, upload_images
+from conftest import (
+    GANG,
+    IMAGE_BYTES,
+    KOKKEN,
+    Client,
+    execute,
+    image,
+    jpeg,
+    page,
+    publish,
+    snapshot,
+    upload_images,
+)
+from sqlalchemy.orm import Session
 
-from gahk_web import db
 from gahk_web.config import Config
 
 
@@ -176,7 +188,7 @@ def test_republish_removes_stale_pages_only(client: Client, cfg: Config) -> None
     assert (cfg.public_html / "keep/index.html").is_file()
 
 
-def test_unused_images_are_collected_after_publish(client: Client, cfg: Config, con: db.Connection) -> None:
+def test_unused_images_are_collected_after_publish(client: Client, cfg: Config, con: Session) -> None:
     publish(client)
     kokken = image("kokken.jpg", KOKKEN)
     data = snapshot(revision="c" * 64)
@@ -188,7 +200,7 @@ def test_unused_images_are_collected_after_publish(client: Client, cfg: Config, 
     assert not (cfg.public_html / kokken["url"].lstrip("/")).parent.exists()
     # The blob stays for an hour (a publish in flight may still need it).
     assert (cfg.state_dir / "images" / kokken["sha256"]).is_file()
-    db.execute(con, "UPDATE images SET stored_at = now() - interval '2 hours'")
+    execute(con, "UPDATE images SET stored_at = now() - interval '2 hours'")
     again = snapshot(revision="d" * 64) | {"images": data["images"], "pages": data["pages"]}
     assert client.api("POST", "/api/publish", again).status == 200
     assert not (cfg.state_dir / "images" / kokken["sha256"]).exists()

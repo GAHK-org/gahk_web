@@ -11,7 +11,8 @@ from urllib.request import Request
 
 import jinja2
 import pytest
-from conftest import SYNC_KEY, Client, page, publish, snapshot, upload_images
+from conftest import SYNC_KEY, Client, execute, page, publish, query, query_one, snapshot, upload_images
+from sqlalchemy.orm import Session
 
 from gahk_web import db, kalender, render, updater
 from gahk_web.clock import copenhagen_today
@@ -182,7 +183,7 @@ def test_calendar_errors_pass_through(client: Client, monkeypatch: pytest.Monkey
 # --- housekeeping: the day changes, nobody runs cron ---
 
 
-def test_lazy_rebuild_when_the_day_changed(client: Client, cfg: Config, con: db.Connection) -> None:
+def test_lazy_rebuild_when_the_day_changed(client: Client, cfg: Config, con: Session) -> None:
     today = copenhagen_today()
     yesterday = today - timedelta(days=1)
     data = snapshot()
@@ -194,7 +195,7 @@ def test_lazy_rebuild_when_the_day_changed(client: Client, cfg: Config, con: db.
         snap = validate(data)
         images.materialize(con, cfg, snap)
         render.render_site(con, cfg, snap, yesterday, store_snapshot=True)
-    db.execute(
+    execute(
         con,
         "INSERT INTO visit_seen (day, path, visitor) VALUES (:d, '*', 'old')",
         d=today - timedelta(days=3),
@@ -204,9 +205,9 @@ def test_lazy_rebuild_when_the_day_changed(client: Client, cfg: Config, con: db.
     client.post("/s", b"/", headers={"User-Agent": "Mozilla/5.0"})  # any request that reaches the app
 
     assert "Igaar-fest" not in (cfg.public_html / "index.html").read_text()
-    state = db.query_one(con, "SELECT rendered_on FROM site_state")
+    state = query_one(con, "SELECT rendered_on FROM site_state")
     assert state is not None and state["rendered_on"] == today
-    assert db.query(con, "SELECT * FROM visit_seen WHERE visitor = 'old'") == []
+    assert query(con, "SELECT * FROM visit_seen WHERE visitor = 'old'") == []
 
 
 def test_no_rebuild_on_the_same_day(client: Client, cfg: Config) -> None:
@@ -232,7 +233,7 @@ def test_cgi_stub_without_a_release_answers_503(tmp_path: Path) -> None:
     assert output.startswith("Status: 503")
 
 
-def test_cgi_stub_runs_the_current_release(tmp_path: Path, cfg: Config, con: db.Connection) -> None:
+def test_cgi_stub_runs_the_current_release(tmp_path: Path, cfg: Config, con: Session) -> None:
     release = tmp_path / "gahk_web" / "releases" / "abc1234"
     release.mkdir(parents=True)
     (release / "src").symlink_to(REPO / "src")

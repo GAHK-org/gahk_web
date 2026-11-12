@@ -4,9 +4,10 @@ from typing import Any
 from urllib.parse import urlencode
 
 import pytest
-from conftest import Client, Result, publish
+from conftest import Client, Result, execute, publish, query
+from sqlalchemy.orm import Session
 
-from gahk_web import db, forms
+from gahk_web import forms
 from gahk_web.app import create_app
 from gahk_web.config import Config
 
@@ -30,8 +31,8 @@ def post(client: Client, path: str, data: dict[str, str], headers: dict[str, str
     return client.post(path, urlencode(data).encode(), headers=ORIGIN if headers is None else headers)
 
 
-def applications(con: db.Connection) -> list[dict[str, Any]]:
-    return db.query(con, "SELECT kind, fields FROM applications ORDER BY submitted_at")
+def applications(con: Session) -> list[dict[str, Any]]:
+    return query(con, "SELECT kind, fields FROM applications ORDER BY submitted_at")
 
 
 def test_form_pages_render_the_fields(client: Client, cfg: Config) -> None:
@@ -50,7 +51,7 @@ def test_form_pages_render_the_fields(client: Client, cfg: Config) -> None:
     assert 'name="motivation" id="id_motivation" rows="5">' in fremleje  # no length cap
 
 
-def test_valid_submission_is_queued_and_redirects(client: Client, con: db.Connection) -> None:
+def test_valid_submission_is_queued_and_redirects(client: Client, con: Session) -> None:
     publish(client)
     result = post(client, "/optagelse/ansoeg", VALID)
     assert result.status == 303
@@ -62,7 +63,7 @@ def test_valid_submission_is_queued_and_redirects(client: Client, con: db.Connec
     assert "website" not in rows[0]["fields"]
 
 
-def test_legacy_post_addresses_still_work(client: Client, con: db.Connection) -> None:
+def test_legacy_post_addresses_still_work(client: Client, con: Session) -> None:
     publish(client)
     fremleje = {
         k: v for k, v in VALID.items() if k not in ("study_year", "year_left", "university", "field_of_study")
@@ -72,7 +73,7 @@ def test_legacy_post_addresses_still_work(client: Client, con: db.Connection) ->
     assert [row["kind"] for row in applications(con)] == ["fremleje", "rundvisning"]
 
 
-def test_missing_and_invalid_fields_rerender_with_values(client: Client, con: db.Connection) -> None:
+def test_missing_and_invalid_fields_rerender_with_values(client: Client, con: Session) -> None:
     publish(client)
     data = VALID | {
         "full_name": "  ",
@@ -98,7 +99,7 @@ def test_motivation_of_exactly_500_is_fine() -> None:
     assert errors == {}
 
 
-def test_honeypot(client: Client, con: db.Connection) -> None:
+def test_honeypot(client: Client, con: Session) -> None:
     publish(client)
     result = post(client, "/optagelse/ansoeg", VALID | {"website": "http://spam.example"})
     assert result.status == 400
@@ -106,7 +107,7 @@ def test_honeypot(client: Client, con: db.Connection) -> None:
     assert applications(con) == []
 
 
-def test_too_many_fields_answers_with_the_form(client: Client, con: db.Connection) -> None:
+def test_too_many_fields_answers_with_the_form(client: Client, con: Session) -> None:
     publish(client)
     junk = {f"x{number}": "1" for number in range(120)}
     result = post(client, "/optagelse/ansoeg", VALID | junk)
@@ -125,14 +126,14 @@ def test_too_many_fields_answers_with_the_form(client: Client, con: db.Connectio
         {},
     ],
 )
-def test_origin_must_be_the_site(client: Client, con: db.Connection, headers: dict[str, str]) -> None:
+def test_origin_must_be_the_site(client: Client, con: Session, headers: dict[str, str]) -> None:
     publish(client)
     result = post(client, "/optagelse/ansoeg", VALID, headers=headers)
     assert result.status == 403
     assert applications(con) == []
 
 
-def test_referer_alone_is_enough(client: Client, con: db.Connection) -> None:
+def test_referer_alone_is_enough(client: Client, con: Session) -> None:
     publish(client)
     assert (
         post(
@@ -142,7 +143,7 @@ def test_referer_alone_is_enough(client: Client, con: db.Connection) -> None:
     )
 
 
-def test_rate_limit_five_per_hour(client: Client, con: db.Connection) -> None:
+def test_rate_limit_five_per_hour(client: Client, con: Session) -> None:
     publish(client)
     for _ in range(5):
         assert post(client, "/optagelse/ansoeg", VALID).status == 303
@@ -151,9 +152,9 @@ def test_rate_limit_five_per_hour(client: Client, con: db.Connection) -> None:
     assert forms.RATE_LIMITED in result.text
     other = Client(client.app, remote_addr="192.0.2.99")
     assert post(other, "/optagelse/ansoeg", VALID).status == 303
-    stored = db.query(con, "SELECT client FROM form_rate_limit")
+    stored = query(con, "SELECT client FROM form_rate_limit")
     assert all("192.0.2" not in row["client"] for row in stored)
-    db.execute(con, "UPDATE form_rate_limit SET at = at - interval '61 minutes'")
+    execute(con, "UPDATE form_rate_limit SET at = at - interval '61 minutes'")
     assert post(client, "/optagelse/ansoeg", VALID).status == 303
 
 
@@ -170,15 +171,13 @@ class FakeResponse(io.BytesIO):
 
 
 @pytest.fixture
-def turnstile_client(cfg: Config, con: db.Connection) -> Client:
+def turnstile_client(cfg: Config, con: Session) -> Client:
     from dataclasses import replace
 
     return Client(create_app(replace(cfg, turnstile_site_key="site-key", turnstile_secret_key="secret")))
 
 
-def test_turnstile_success(
-    turnstile_client: Client, con: db.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_turnstile_success(turnstile_client: Client, con: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     publish(turnstile_client)
     calls: list[bytes] = []
 
@@ -193,7 +192,7 @@ def test_turnstile_success(
 
 
 def test_turnstile_fails_closed(
-    turnstile_client: Client, con: db.Connection, monkeypatch: pytest.MonkeyPatch, cfg: Config
+    turnstile_client: Client, con: Session, monkeypatch: pytest.MonkeyPatch, cfg: Config
 ) -> None:
     publish(turnstile_client)
     assert (

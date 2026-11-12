@@ -24,8 +24,11 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlencode, urlsplit
 
-from . import db
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
 from .clock import now_utc
+from .models import Application, FormRateLimit
 
 if TYPE_CHECKING:
     from http.client import HTTPResponse
@@ -228,14 +231,13 @@ def client_key(secret: str, ip: str) -> str:
     return hmac.new(secret.encode("utf-8"), f"form|{ip}".encode(), hashlib.sha256).hexdigest()
 
 
-def rate_limited(con: db.Connection, client: str) -> bool:
-    row = db.query_one(
-        con,
-        "SELECT count(*) AS n FROM form_rate_limit WHERE client = :client AND at > :since",
-        client=client,
-        since=now_utc() - RATE_WINDOW,
+def rate_limited(session: Session, client: str) -> bool:
+    recent = session.scalar(
+        select(func.count())
+        .select_from(FormRateLimit)
+        .where(FormRateLimit.client == client, FormRateLimit.at > now_utc() - RATE_WINDOW)
     )
-    return bool(row and row["n"] >= RATE_LIMIT)
+    return (recent or 0) >= RATE_LIMIT
 
 
 def urlopen(url: str, data: bytes, timeout: float) -> "HTTPResponse":
@@ -262,21 +264,12 @@ def verify_turnstile(secret: str, token: str, ip: str) -> bool:
         return False
 
 
-def store(con: db.Connection, spec: FormSpec, cleaned: Mapping[str, str], client: str) -> str:
-    """Queue the application for intern and count it against the client's hourly limit."""
-    application_id = str(uuid.uuid4())
+def store(session: Session, spec: FormSpec, cleaned: Mapping[str, str], client: str) -> str:
+    """Queue the application for intern and count it against the client's hourly limit (one
+    transaction)."""
+    application_id = uuid.uuid4()
     now = now_utc()
-    with db.transaction(con):
-        db.execute(
-            con,
-            "INSERT INTO applications (id, kind, fields, submitted_at)"
-            " VALUES (CAST(:id AS uuid), :kind, CAST(:fields AS jsonb), :at)",
-            id=application_id,
-            kind=spec.kind,
-            fields=json.dumps(dict(cleaned), ensure_ascii=False),
-            at=now,
-        )
-        db.execute(
-            con, "INSERT INTO form_rate_limit (client, at) VALUES (:client, :at)", client=client, at=now
-        )
-    return application_id
+    session.add(Application(id=application_id, kind=spec.kind, fields=dict(cleaned), submitted_at=now))
+    session.add(FormRateLimit(client=client, at=now))
+    session.commit()
+    return str(application_id)

@@ -16,7 +16,11 @@ import re
 from datetime import date
 from urllib.parse import unquote
 
-from . import db
+from sqlalchemy import exists, select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
+
+from .models import GeneratedFile, Visit, VisitSeen
 
 SITE_PATH = "*"
 MAX_BEACON_BYTES = 1024
@@ -49,30 +53,26 @@ def visitor_hash(secret: str, day: date, ip: str, user_agent: str) -> str:
     return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
 
 
-def is_page(con: db.Connection, path: str) -> bool:
+def is_page(session: Session, path: str) -> bool:
     rel_path = f"{path}/index.html" if path else "index.html"
     return bool(
-        db.query(con, "SELECT 1 FROM generated_files WHERE rel_path = :rel AND url IS NOT NULL", rel=rel_path)
+        session.scalar(
+            select(exists().where(GeneratedFile.rel_path == rel_path, GeneratedFile.url.is_not(None)))
+        )
     )
 
 
-def record_view(con: db.Connection, secret: str, day: date, path: str, ip: str, user_agent: str) -> None:
+def record_view(session: Session, secret: str, day: date, path: str, ip: str, user_agent: str) -> None:
+    """Count the view, and the visitor when new today, for the page and for the site; one transaction."""
     visitor = visitor_hash(secret, day, ip, user_agent)
-    with db.transaction(con):
-        for counted in (path, SITE_PATH):
-            new = db.execute(
-                con,
-                "INSERT INTO visit_seen (day, path, visitor) VALUES (:day, :path, :visitor) ON CONFLICT DO NOTHING",
-                day=day,
-                path=counted,
-                visitor=visitor,
+    for counted in (path, SITE_PATH):
+        seen = insert(VisitSeen).values(day=day, path=counted, visitor=visitor)
+        new = session.scalar(seen.on_conflict_do_nothing().returning(VisitSeen.visitor)) is not None
+        view = insert(Visit).values(day=day, path=counted, views=1, visitors=1 if new else 0)
+        session.execute(
+            view.on_conflict_do_update(
+                index_elements=[Visit.day, Visit.path],
+                set_={Visit.views: Visit.views + 1, Visit.visitors: Visit.visitors + view.excluded.visitors},
             )
-            db.execute(
-                con,
-                "INSERT INTO visits (day, path, views, visitors) VALUES (:day, :path, 1, :new)"
-                " ON CONFLICT (day, path) DO UPDATE"
-                " SET views = visits.views + 1, visitors = visits.visitors + EXCLUDED.visitors",
-                day=day,
-                path=counted,
-                new=1 if new else 0,
-            )
+        )
+    session.commit()

@@ -21,9 +21,10 @@ dependencies = [
     "pillow>=11",
     # The binary extra ships libpq and the C implementation; the webhost has no libpq of its own.
     "psycopg[binary]>=3.2",
-    # The database layer: typed SQLAlchemy 2 models (models.py), and the schema's migrations with
-    # Alembic, which the updater runs on the webhost.
+    # The database layer: typed SQLAlchemy 2 models (models.py), the engine through Flask-SQLAlchemy,
+    # and the schema's migrations with Alembic, which the updater runs on the webhost.
     "sqlalchemy>=2.1",
+    "flask-sqlalchemy>=3.1.1",
     "alembic>=1.14",
 ]
 

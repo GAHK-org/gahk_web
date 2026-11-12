@@ -16,9 +16,13 @@ variants for a few seconds, under a try-lock of its own, and renders the site ag
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from sqlalchemy import delete, exists, select
+from sqlalchemy.orm import Session
+
 from . import db, images
 from .clock import copenhagen_today, now_utc
 from .config import Config
+from .models import FormRateLimit, Image, ImageFile, SiteState, VisitSeen
 from .render import load_snapshot, render_site
 from .snapshot import Snapshot
 from .version import code_version
@@ -34,69 +38,71 @@ COMMAND_VARIANT_BUDGET = 200.0
 
 
 @dataclass(frozen=True)
-class SiteState:
+class State:
+    """What the site_state row says about the need to render again."""
+
     has_snapshot: bool
     rendered_on: date | None
     rendered_version: str | None
     variants_pending: bool = False
 
 
-def site_state(con: db.Connection) -> SiteState:
-    row = db.query_one(
-        con,
-        "SELECT snapshot IS NOT NULL AS has_snapshot, rendered_on, rendered_version,"
-        # Whether a published image still waits for its variants.
-        " EXISTS (SELECT 1 FROM images WHERE variant_widths IS NULL AND variant_attempts < :attempts"
-        " AND sha256 IN (SELECT sha256 FROM image_files)) AS variants_pending"
-        " FROM site_state WHERE id = 1",
-        attempts=images.MAX_VARIANT_ATTEMPTS,
+def site_state(session: Session) -> State:
+    # Whether a published image still waits for its variants.
+    variants_pending = exists().where(
+        Image.variant_widths.is_(None),
+        Image.variant_attempts < images.MAX_VARIANT_ATTEMPTS,
+        Image.sha256.in_(select(ImageFile.sha256)),
     )
+    row = session.execute(
+        select(
+            SiteState.snapshot.is_not(None),
+            SiteState.rendered_on,
+            SiteState.rendered_version,
+            variants_pending,
+        )
+    ).first()
     if row is None:
-        return SiteState(False, None, None)
-    return SiteState(
-        bool(row["has_snapshot"]),
-        row["rendered_on"],
-        row["rendered_version"],
-        bool(row["variants_pending"]),
-    )
+        return State(False, None, None)
+    has_snapshot, rendered_on, rendered_version, pending = row
+    return State(bool(has_snapshot), rendered_on, rendered_version, bool(pending))
 
 
-def is_stale(state: SiteState, today: date) -> bool:
+def is_stale(state: State, today: date) -> bool:
     return state.has_snapshot and (
         state.rendered_on is None or state.rendered_on < today or state.rendered_version != code_version()
     )
 
 
-def purge(con: db.Connection, today: date) -> None:
-    db.execute(con, "DELETE FROM form_rate_limit WHERE at < :cutoff", cutoff=now_utc() - RATE_LIMIT_KEEP)
-    db.execute(
-        con, "DELETE FROM visit_seen WHERE day <= :cutoff", cutoff=today - timedelta(days=SEEN_KEEP_DAYS)
-    )
+def purge(session: Session, today: date) -> None:
+    session.execute(delete(FormRateLimit).where(FormRateLimit.at < now_utc() - RATE_LIMIT_KEEP))
+    session.execute(delete(VisitSeen).where(VisitSeen.day <= today - timedelta(days=SEEN_KEEP_DAYS)))
+    session.commit()
 
 
-def rebuild(con: db.Connection, cfg: Config, today: date) -> int | None:
+def rebuild(session: Session, cfg: Config, today: date) -> int | None:
     """Re-render from the cached snapshot (caller holds the render lock). None: no snapshot yet."""
-    snapshot = load_snapshot(con)
+    snapshot = load_snapshot(session)
     if snapshot is None:
         return None
-    result = render_site(con, cfg, snapshot, today)
-    purge(con, today)
+    result = render_site(session, cfg, snapshot, today)
+    purge(session, today)
     return result.pages_written
 
 
 def fill_variants(
-    con: db.Connection, cfg: Config, snapshot: Snapshot, budget: float, *, retry: bool = True
+    session: Session, cfg: Config, snapshot: Snapshot, budget: float, *, retry: bool = True
 ) -> int:
     """Make the variants the snapshot's images lack, for at most about `budget` seconds. Returns how
     many images' links changed (the site needs rendering again when that is not 0). retry=False
     leaves images whose earlier attempt never finished to housekeeping (images.ensure_variants)."""
-    return images.ensure_variants(con, cfg, images.snapshot_shas(snapshot), budget, retry=retry).changed
+    return images.ensure_variants(session, cfg, images.snapshot_shas(snapshot), budget, retry=retry).changed
 
 
 def maybe_rebuild(
-    con: db.Connection,
+    session: Session,
     cfg: Config,
-    state: SiteState | None = None,
+    state: State | None = None,
     today: date | None = None,
     *,
     make_variants: bool = False,
@@ -104,18 +110,18 @@ def maybe_rebuild(
     """Re-render when the day (or the code) changed since the last render, or (with make_variants)
     after making variants that were still missing. Never waits for a lock."""
     today = today or copenhagen_today()
-    state = state or site_state(con)
+    state = state or site_state(session)
     stale = is_stale(state, today)
     changed = 0
     if make_variants and state.has_snapshot and state.variants_pending:
-        with db.try_advisory_lock(con, db.LOCK_VARIANTS) as got:
-            snapshot = load_snapshot(con) if got else None
+        with db.try_advisory_lock(session, db.LOCK_VARIANTS) as got:
+            snapshot = load_snapshot(session) if got else None
             if snapshot is not None:
-                changed = fill_variants(con, cfg, snapshot, HOUSEKEEPING_VARIANT_BUDGET)
+                changed = fill_variants(session, cfg, snapshot, HOUSEKEEPING_VARIANT_BUDGET)
     if not stale and not changed:
         return False
-    with db.try_advisory_lock(con, db.LOCK_RENDER) as got:
+    with db.try_advisory_lock(session, db.LOCK_RENDER) as got:
         # Another request may have rendered while this one waited for its turn to ask.
-        if not got or not (changed or is_stale(site_state(con), today)):
+        if not got or not (changed or is_stale(site_state(session), today)):
             return False
-        return rebuild(con, cfg, today) is not None
+        return rebuild(session, cfg, today) is not None

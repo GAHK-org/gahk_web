@@ -6,10 +6,14 @@ pull and acknowledges the day once it is over.
 """
 
 import re
+import uuid
 from datetime import date
 from typing import Any
 
-from . import db
+from sqlalchemy import delete, distinct, func, select
+from sqlalchemy.orm import Session
+
+from .models import Application, Visit
 
 MAX_APPLICATIONS_PER_PULL = 500
 MAX_ACK_IDS = 5000
@@ -20,32 +24,31 @@ class AckError(ValueError):
     pass
 
 
-def pending(con: db.Connection) -> dict[str, list[dict[str, Any]]]:
-    applications = db.query(
-        con,
-        "SELECT id::text AS id, kind, submitted_at, fields FROM applications"
-        " ORDER BY submitted_at, id LIMIT :limit",
-        limit=MAX_APPLICATIONS_PER_PULL,
-    )
-    visits = db.query(con, "SELECT day, path, views, visitors FROM visits ORDER BY day, path")
+def pending(session: Session) -> dict[str, list[dict[str, Any]]]:
+    applications = session.scalars(
+        select(Application)
+        .order_by(Application.submitted_at, Application.id)
+        .limit(MAX_APPLICATIONS_PER_PULL)
+    ).all()
+    visits = session.scalars(select(Visit).order_by(Visit.day, Visit.path)).all()
     return {
         "applications": [
             {
-                "id": row["id"],
-                "kind": row["kind"],
-                "submitted_at": row["submitted_at"].isoformat(),
-                "fields": row["fields"],
+                "id": str(application.id),
+                "kind": application.kind,
+                "submitted_at": application.submitted_at.isoformat(),
+                "fields": application.fields,
             }
-            for row in applications
+            for application in applications
         ],
         "visits": [
             {
-                "day": row["day"].isoformat(),
-                "path": row["path"],
-                "views": row["views"],
-                "visitors": row["visitors"],
+                "day": visit.day.isoformat(),
+                "path": visit.path,
+                "views": visit.views,
+                "visitors": visit.visitors,
             }
-            for row in visits
+            for visit in visits
         ],
     }
 
@@ -70,29 +73,30 @@ def parse_ack(body: object) -> tuple[list[str], date | None]:
         raise AckError("visits_through: not a date") from exc
 
 
-def ack(con: db.Connection, ids: list[str], visits_through: date | None, today: date) -> dict[str, int]:
-    with db.transaction(con):
-        deleted_applications = (
-            db.execute(con, "DELETE FROM applications WHERE id = ANY(CAST(:ids AS uuid[]))", ids=ids)
-            if ids
-            else 0
-        )
-        deleted_visit_days = 0
-        if visits_through is not None:
-            rows = db.query(
-                con,
-                "DELETE FROM visits WHERE day <= :through AND day < :today RETURNING day",
-                through=visits_through,
-                today=today,
-            )
-            deleted_visit_days = len({row["day"] for row in rows})
+def ack(session: Session, ids: list[str], visits_through: date | None, today: date) -> dict[str, int]:
+    """Delete what intern has stored, in one transaction."""
+    deleted_applications = deleted_visit_days = 0
+    if ids:
+        deleted = session.scalars(
+            delete(Application)
+            .where(Application.id.in_([uuid.UUID(value) for value in ids]))
+            .returning(Application.id)
+        ).all()
+        deleted_applications = len(deleted)
+    if visits_through is not None:
+        days = session.scalars(
+            delete(Visit).where(Visit.day <= visits_through, Visit.day < today).returning(Visit.day)
+        ).all()
+        deleted_visit_days = len(set(days))
+    session.commit()
     return {"deleted_applications": deleted_applications, "deleted_visit_days": deleted_visit_days}
 
 
-def counts(con: db.Connection) -> dict[str, int]:
-    row = db.query_one(
-        con,
-        "SELECT (SELECT count(*) FROM applications) AS applications,"
-        " (SELECT count(DISTINCT day) FROM visits) AS visit_days",
-    )
-    return {"applications": int(row["applications"]), "visit_days": int(row["visit_days"])} if row else {}
+def counts(session: Session) -> dict[str, int]:
+    applications, visit_days = session.execute(
+        select(
+            select(func.count()).select_from(Application).scalar_subquery(),
+            select(func.count(distinct(Visit.day))).scalar_subquery(),
+        )
+    ).one()
+    return {"applications": applications, "visit_days": visit_days}

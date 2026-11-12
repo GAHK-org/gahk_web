@@ -15,11 +15,13 @@ from datetime import date, datetime
 from typing import Any
 
 from flask import Blueprint, Response, current_app, request
+from sqlalchemy import select
 
 from . import db, images, outbox, signing
 from .clock import copenhagen_today
 from .config import Config, home_dir
 from .housekeeping import PUBLISH_VARIANT_BUDGET, REBUILD_VARIANT_BUDGET, fill_variants, purge, rebuild
+from .models import SiteState
 from .render import load_snapshot, preview_html, render_site
 from .snapshot import HEX64_RE, MAX_IMAGE_BYTES, SnapshotError, validate, validate_preview
 from .version import code_version
@@ -119,13 +121,11 @@ def health() -> Response:
     if request.method not in ("GET", "HEAD"):
         return error(405, "method not allowed")
     try:
-        row = db.query_one(database(), "SELECT revision FROM site_state WHERE id = 1")
+        revision = database().scalar(select(SiteState.revision))
     except Exception:
         result = json_response(503, {"ok": False, "version": code_version(), "revision": None})
     else:
-        result = json_response(
-            200, {"ok": True, "version": code_version(), "revision": row["revision"] if row else None}
-        )
+        result = json_response(200, {"ok": True, "version": code_version(), "revision": revision})
     result.headers[RUNNER_HEADER] = current_app.config["GAHK_RUNNER"]
     return result
 
@@ -133,16 +133,16 @@ def health() -> Response:
 @bp.route("/api/status", methods=ALL_METHODS)
 @signed("GET")
 def status(body: bytes) -> Response:
-    con = database()
-    row = db.query_one(con, "SELECT revision, published_at, rendered_at FROM site_state WHERE id = 1") or {}
+    session = database()
+    row = session.execute(select(SiteState.revision, SiteState.published_at, SiteState.rendered_at)).first()
     return json_response(
         200,
         {
             "version": code_version(),
-            "revision": row.get("revision"),
-            "published_at": _iso(row.get("published_at")),
-            "rendered_at": _iso(row.get("rendered_at")),
-            "outbox": outbox.counts(con),
+            "revision": row.revision if row else None,
+            "published_at": _iso(row.published_at if row else None),
+            "rendered_at": _iso(row.rendered_at if row else None),
+            "outbox": outbox.counts(session),
             "update": update_state(cfg()),
         },
     )
@@ -165,14 +165,14 @@ def images_missing(body: bytes) -> Response:
 @bp.route("/api/images/<anypath:sha256>", methods=ALL_METHODS)
 @signed("PUT", limit=MAX_IMAGE_BYTES, too_large=400)
 def image_put(body: bytes, sha256: str) -> Response:
-    con = database()
+    session = database()
     try:
-        images.store(con, cfg(), sha256, body, header("Content-Type"))
+        images.store(session, cfg(), sha256, body, header("Content-Type"))
     except images.ImageError as exc:
         return error(400, str(exc))
     # intern uploads one image per request, so making its variants now spreads the work out. An
     # earlier attempt that was killed is not repeated here (it would fail intern's request again).
-    images.ensure_variants(con, cfg(), [sha256], retry=False)
+    images.ensure_variants(session, cfg(), [sha256], retry=False)
     return Response(b"", status=204, content_type="text/plain")
 
 
@@ -180,7 +180,7 @@ def image_put(body: bytes, sha256: str) -> Response:
 @signed("POST", limit=MAX_SNAPSHOT_BODY)
 def publish(body: bytes) -> Response:
     snapshot = validate(_json(body))
-    con = database()
+    session = database()
     config = cfg()
     day = today()
     missing = images.missing_for(config, snapshot)
@@ -189,15 +189,15 @@ def publish(body: bytes) -> Response:
     # Before the lock: variants are cache files, and making them may take a while. Whatever the
     # budget leaves is made by later requests (housekeeping), which then render again; so are images
     # whose earlier attempt was killed, so one of those cannot make publish after publish fail.
-    fill_variants(con, config, snapshot, PUBLISH_VARIANT_BUDGET, retry=False)
-    with db.advisory_lock(con, db.LOCK_RENDER):
+    fill_variants(session, config, snapshot, PUBLISH_VARIANT_BUDGET, retry=False)
+    with db.advisory_lock(session, db.LOCK_RENDER):
         missing = images.missing_for(config, snapshot)
         if missing:
             return error(409, "missing images", missing=missing)
-        images.materialize(con, config, snapshot)
-        result = render_site(con, config, snapshot, day, store_snapshot=True)
-        images.collect_garbage(con, config, snapshot)
-        purge(con, day)
+        images.materialize(session, config, snapshot)
+        result = render_site(session, config, snapshot, day, store_snapshot=True)
+        images.collect_garbage(session, config, snapshot)
+        purge(session, day)
     return json_response(200, {"revision": snapshot["revision"], "pages_written": result.pages_written})
 
 
@@ -205,15 +205,15 @@ def publish(body: bytes) -> Response:
 @signed("POST", limit=MAX_SNAPSHOT_BODY)
 def preview(body: bytes) -> Response:
     preview_request = validate_preview(_json(body))
-    con = database()
-    snapshot = load_snapshot(con)
+    session = database()
+    snapshot = load_snapshot(session)
     page = preview_html(
         cfg(),
         snapshot,
         preview_request["kind"],
         preview_request["item"],
         preview_request["media_base"],
-        images.pictures(con, snapshot) if snapshot else {},
+        images.pictures(session, snapshot) if snapshot else {},
     )
     return html(200, page, ("X-Robots-Tag", "noindex"))
 
@@ -237,12 +237,12 @@ def outbox_ack(body: bytes) -> Response:
 @bp.route("/api/rebuild", methods=ALL_METHODS)
 @signed("POST")
 def rebuild_now(body: bytes) -> Response:
-    con = database()
-    snapshot = load_snapshot(con)
+    session = database()
+    snapshot = load_snapshot(session)
     if snapshot is not None:
-        fill_variants(con, cfg(), snapshot, REBUILD_VARIANT_BUDGET, retry=False)
-    with db.advisory_lock(con, db.LOCK_RENDER):
-        written = rebuild(con, cfg(), today())
+        fill_variants(session, cfg(), snapshot, REBUILD_VARIANT_BUDGET, retry=False)
+    with db.advisory_lock(session, db.LOCK_RENDER):
+        written = rebuild(session, cfg(), today())
     if written is None:
         return error(409, "no snapshot has been published yet")
     return json_response(200, {"pages_written": written})

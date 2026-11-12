@@ -5,8 +5,9 @@ from pathlib import Path
 
 import pytest
 from conftest import GANG, Client, image, publish
+from sqlalchemy.orm import Session
 
-from gahk_web import db, routing
+from gahk_web import routing
 from gahk_web.config import Config
 from gahk_web.devserver import make_dev_app
 
@@ -274,7 +275,7 @@ def test_devserver_matches_production_routing(client: Client, dev: Client) -> No
     assert dev.post("/optagelse/ansoeg").status == 403  # no Origin: refused by the app, not served as a file
 
 
-def test_devserver_answers_as_the_stub_would(cfg: Config, con: db.Connection) -> None:
+def test_devserver_answers_as_the_stub_would(cfg: Config, con: Session) -> None:
     dev = Client(make_dev_app(cfg))
     assert dev.get("/api/health").headers["X-Gahk-Runner"] == "fastcgi"
     big = dev.request("GET", "/api/health", b"x" * 100_000)

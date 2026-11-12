@@ -24,25 +24,22 @@ def main(argv: list[str]) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     cfg = load_config()
-    if command == "migrate":
-        engine = db.make_engine(cfg.database)
-        try:
-            applied = db.migrate(engine)
-        finally:
-            engine.dispose()
-        print("applied: " + (", ".join(applied) or "nothing"))
-        return 0
-    con = db.connect(cfg.database)
+    engine = db.make_engine(cfg.database)
     try:
-        snapshot = load_snapshot(con)
-        if snapshot is not None:
-            fill_variants(con, cfg, snapshot, COMMAND_VARIANT_BUDGET)
-        with db.advisory_lock(con, db.LOCK_RENDER):
-            written = rebuild(con, cfg, copenhagen_today())
+        if command == "migrate":
+            applied = db.migrate(engine)
+            print("applied: " + (", ".join(applied) or "nothing"))
+            return 0
+        with db.session_for(engine) as session:
+            snapshot = load_snapshot(session)
+            if snapshot is not None:
+                fill_variants(session, cfg, snapshot, COMMAND_VARIANT_BUDGET)
+            with db.advisory_lock(session, db.LOCK_RENDER):
+                written = rebuild(session, cfg, copenhagen_today())
         print("no snapshot yet" if written is None else f"files written: {written}")
         return 0
     finally:
-        con.close()
+        engine.dispose()
 
 
 if __name__ == "__main__":

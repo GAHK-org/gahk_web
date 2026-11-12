@@ -35,11 +35,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
-from . import db
+from sqlalchemy import delete, insert, select, update
+from sqlalchemy.orm import Session
+
 from .clock import copenhagen_today, now_utc, to_copenhagen
 from .config import Config
 from .forms import SPECS, SUCCESS_PATH, FormSpec
 from .images import Picture, pictures
+from .models import GeneratedFile, SiteState
 from .snapshot import Event, NewsItem, Page, Snapshot
 from .version import code_version
 
@@ -505,7 +508,7 @@ class RenderResult:
 
 
 def render_site(
-    con: db.Connection,
+    session: Session,
     cfg: Config,
     snapshot: Snapshot,
     today: date | None = None,
@@ -514,52 +517,41 @@ def render_site(
 ) -> RenderResult:
     """Write the whole site into public_html and record it. With store_snapshot, the snapshot becomes
     the cached one in the same transaction that records the render."""
-    site = Site(cfg, snapshot, today or copenhagen_today(), pictures=pictures(con, snapshot))
+    site = Site(cfg, snapshot, today or copenhagen_today(), pictures=pictures(session, snapshot))
     files = site.files()
     written = sum(
         write_if_changed(cfg.public_html / rel, content.encode("utf-8"))
         for rel, (content, _url) in files.items()
     )
-    previous = {row["rel_path"] for row in db.query(con, "SELECT rel_path FROM generated_files")}
+    previous = set(session.scalars(select(GeneratedFile.rel_path)))
     _remove(cfg.public_html, sorted(previous - files.keys()))
 
+    # The list of files, the render's day and version and (store_snapshot) the snapshot: one transaction.
     now = now_utc()
-    with db.transaction(con):
-        db.execute(con, "DELETE FROM generated_files")
-        db.execute(
-            con,
-            "INSERT INTO generated_files (rel_path, url, rendered_at)"
-            " SELECT rel_path, url, :at FROM unnest(CAST(:paths AS text[]), CAST(:urls AS text[])) AS f(rel_path, url)",
-            paths=list(files),
-            urls=[url for _content, url in files.values()],
-            at=now,
+    session.execute(delete(GeneratedFile))
+    if files:
+        session.execute(
+            insert(GeneratedFile),
+            [{"rel_path": rel, "url": url, "rendered_at": now} for rel, (_content, url) in files.items()],
         )
-        db.execute(
-            con,
-            "UPDATE site_state SET rendered_at = :at, rendered_on = :day, rendered_version = :version",
-            at=now,
-            day=site.today,
-            version=code_version(),
-        )
-        if store_snapshot:
-            db.execute(
-                con,
-                "UPDATE site_state SET snapshot = CAST(:snapshot AS jsonb), revision = :revision,"
-                " published_at = CAST(:published_at AS timestamptz), received_at = :at",
-                snapshot=json.dumps(snapshot, ensure_ascii=False),
+    session.execute(
+        update(SiteState).values(rendered_at=now, rendered_on=site.today, rendered_version=code_version())
+    )
+    if store_snapshot:
+        session.execute(
+            update(SiteState).values(
+                snapshot=snapshot,
                 revision=snapshot["revision"],
-                published_at=snapshot["published_at"],
-                at=now,
+                published_at=datetime.fromisoformat(snapshot["published_at"]),
+                received_at=now,
             )
+        )
+    session.commit()
     return RenderResult(pages_written=written, generated=len(files))
 
 
-def load_snapshot(con: db.Connection) -> Snapshot | None:
-    row = db.query_one(con, "SELECT snapshot FROM site_state WHERE id = 1")
-    snapshot = row["snapshot"] if row else None
-    if isinstance(snapshot, str):  # a driver that hands jsonb back as text
-        snapshot = json.loads(snapshot)
-    return cast(Snapshot | None, snapshot)
+def load_snapshot(session: Session) -> Snapshot | None:
+    return cast(Snapshot | None, session.scalar(select(SiteState.snapshot)))
 
 
 def preview_html(

@@ -1,12 +1,14 @@
 """The Flask app's plumbing: the browser's path under the stub, errors that never show a traceback,
 and the database connection a persistent process reuses from request to request."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
-from conftest import Client, publish
+from conftest import Client, execute, publish, query
 from flask import Flask
+from sqlalchemy import Engine, func, select, text
+from sqlalchemy.orm import Session
 
 from gahk_web import db
 from gahk_web.app import create_app
@@ -22,20 +24,44 @@ class FakeClock:
         return self.now
 
 
-def persistent_app(
-    cfg: Config, clock: Callable[[], float] | None = None
-) -> tuple[Flask, db.SharedConnection]:
-    app = create_app(cfg, persistent=True, runner="fastcgi")
-    shared = db.SharedConnection(cfg.database, keep=True, clock=clock or FakeClock())
-    app.extensions["gahk_db"] = shared
-    return app, shared
+def backend_pid() -> str:
+    return str(database().scalar(select(func.pg_backend_pid())))
 
 
-def backend_pid(shared: db.SharedConnection) -> int:
-    assert shared.connection is not None
-    row = db.query_one(shared.connection, "SELECT pg_backend_pid() AS pid")
-    assert row is not None
-    return int(row["pid"])
+type PersistentApp = Callable[..., tuple[Flask, db.Database]]
+
+
+@pytest.fixture
+def persistent_app(cfg: Config) -> Iterator[PersistentApp]:
+    """Makes the app as the FastCGI process runs it, with a route that tells its connection's
+    backend; its pooled connection is closed after the test (with any lock a failing test leaked)."""
+    made: list[db.Database] = []
+
+    def make(clock: Callable[[], float] | None = None) -> tuple[Flask, db.Database]:
+        app = create_app(cfg, persistent=True, runner="fastcgi")
+        app.add_url_rule("/test/pid", "pid", backend_pid)
+        process: db.Database = app.extensions["gahk_db"]
+        process.clock = clock or FakeClock()
+        made.append(process)
+        return app, process
+
+    yield make
+    for process in made:
+        process.close()
+
+
+def lock_is_free(con: Session, key: int = db.LOCK_RENDER) -> bool:
+    with db.try_advisory_lock(con, key) as got:
+        return got
+
+
+def transactions_left_open(con: Session) -> list[dict[str, Any]]:
+    """The app's connections (not this test's own) that sit in a transaction."""
+    return query(
+        con,
+        "SELECT pid, state FROM pg_stat_activity WHERE application_name = 'gahk_web'"
+        " AND pid <> pg_backend_pid() AND state LIKE 'idle in transaction%'",
+    )
 
 
 # --- the request as the browser sent it ---
@@ -99,7 +125,7 @@ def test_responses_are_not_cached_unless_they_say_so(client: Client) -> None:
 # --- errors ---
 
 
-def test_an_exception_answers_500_without_a_traceback(cfg: Config, con: db.Connection) -> None:
+def test_an_exception_answers_500_without_a_traceback(cfg: Config, con: Session) -> None:
     app = create_app(cfg)
 
     def broken() -> str:
@@ -112,7 +138,7 @@ def test_an_exception_answers_500_without_a_traceback(cfg: Config, con: db.Conne
     assert result.headers["Cache-Control"] == "no-store"
 
 
-def test_an_unreachable_database_is_503(cfg: Config, con: db.Connection) -> None:
+def test_an_unreachable_database_is_503(cfg: Config, con: Session) -> None:
     from dataclasses import replace
 
     app = create_app(replace(cfg, database=replace(cfg.database, port=1)))
@@ -129,107 +155,137 @@ def test_an_unreachable_database_is_503(cfg: Config, con: db.Connection) -> None
 
 def test_a_cgi_request_closes_its_connection(client: Client) -> None:
     publish(client)
-    shared: db.SharedConnection = client.app.extensions["gahk_db"]
+    process: db.Database = client.app.extensions["gahk_db"]
     assert client.get("/findes-ikke").status == 404
-    assert shared.connection is None
+    assert process.connects > 0
+    assert process.open_connections == 0
 
 
-def test_a_persistent_process_reuses_one_connection(cfg: Config, con: db.Connection) -> None:
-    app, shared = persistent_app(cfg)
+def test_a_persistent_process_reuses_one_connection(con: Session, persistent_app: PersistentApp) -> None:
+    app, process = persistent_app()
     client = Client(app)
     publish(client)
-    pid = backend_pid(shared)
+    pid = client.get("/test/pid").text
     for _ in range(3):
         assert client.get("/findes-ikke").status == 404
-    assert shared.connects == 1
-    assert backend_pid(shared) == pid
+    assert client.get("/test/pid").text == pid
+    assert (process.connects, process.open_connections) == (1, 1)
     health = client.get("/api/health")
     assert health.headers["X-Gahk-Runner"] == "fastcgi"
 
 
-def test_a_dropped_connection_is_replaced(cfg: Config, con: db.Connection) -> None:
-    clock = FakeClock()
-    app, shared = persistent_app(cfg, clock)
+def test_a_dropped_connection_is_replaced(con: Session, persistent_app: PersistentApp) -> None:
+    app, process = persistent_app()
     client = Client(app)
     publish(client)
-    db.execute(con, "SELECT pg_terminate_backend(:pid)", pid=backend_pid(shared))
-
-    # Idle for a while: the connection is asked first, and replaced when it does not answer.
-    clock.now += db.PING_AFTER + 1
-    assert client.get("/findes-ikke").status == 404
-    assert shared.connects == 2
-
-    # Dropped between two quick requests: that request fails, the next gets a new connection.
-    db.execute(con, "SELECT pg_terminate_backend(:pid)", pid=backend_pid(shared))
-    assert client.get("/findes-ikke").status == 500
-    assert client.get("/findes-ikke").status == 404
-    assert shared.connects == 3
+    # Each request's connection is pinged first, and replaced when it does not answer: whether it
+    # was dropped while the process was idle or between two quick requests.
+    for connects in (2, 3):
+        execute(con, "SELECT pg_terminate_backend(:pid)", pid=int(client.get("/test/pid").text))
+        assert client.get("/findes-ikke").status == 404
+        assert (process.connects, process.open_connections) == (connects, 1)
 
 
-def test_an_idle_connection_is_closed_and_reopened(cfg: Config, con: db.Connection) -> None:
+def test_an_idle_connection_is_closed_and_reopened(con: Session, persistent_app: PersistentApp) -> None:
     clock = FakeClock()
-    app, shared = persistent_app(cfg, clock)
+    app, process = persistent_app(clock)
     client = Client(app)
     publish(client)
-    shared.close_if_idle()
-    assert shared.connection is not None
+    process.close_if_idle()
+    assert process.open_connections == 1
     clock.now += db.IDLE_CLOSE + 1
-    shared.close_if_idle()
-    assert shared.connection is None
+    process.close_if_idle()
+    assert process.open_connections == 0
     assert client.get("/findes-ikke").status == 404
-    assert shared.connects == 2
+    assert (process.connects, process.open_connections) == (2, 1)
 
 
-def test_a_transaction_left_open_is_rolled_back(cfg: Config, con: db.Connection) -> None:
-    app, shared = persistent_app(cfg)
+def test_a_transaction_left_open_is_rolled_back(con: Session, persistent_app: PersistentApp) -> None:
+    app, _process = persistent_app()
 
     def leaky() -> str:
-        connection = database()
-        connection.execute("BEGIN")
-        connection.execute("INSERT INTO form_rate_limit (client, at) VALUES ('leak', now())")
-        return "done"
+        database().execute(text("INSERT INTO form_rate_limit (client, at) VALUES ('leak', now())"))
+        return "done"  # and no commit
 
     app.add_url_rule("/test/leaky", "leaky", leaky)
     client = Client(app)
     assert client.get("/test/leaky").status == 200
-    assert shared.connection is not None
-    from psycopg import pq
-
-    assert shared.connection.info.transaction_status == pq.TransactionStatus.IDLE
-    assert db.query(con, "SELECT 1 FROM form_rate_limit WHERE client = 'leak'") == []
+    assert transactions_left_open(con) == []
+    assert query(con, "SELECT 1 FROM form_rate_limit WHERE client = 'leak'") == []
 
 
-def test_a_failed_request_leaves_no_advisory_lock_behind(cfg: Config, con: db.Connection) -> None:
-    app, shared = persistent_app(cfg)
+def test_a_failed_request_leaves_no_advisory_lock_behind(con: Session, persistent_app: PersistentApp) -> None:
+    app, process = persistent_app()
 
     def crashes_holding_a_lock() -> str:
-        db.execute(database(), "SELECT pg_advisory_lock(:key)", key=db.LOCK_RENDER)
+        database().execute(select(func.pg_advisory_lock(db.LOCK_RENDER)))
         raise RuntimeError("crash while holding the render lock")
 
+    def fails_in_a_transaction_under_the_lock() -> str:
+        with db.advisory_lock(database(), db.LOCK_RENDER):
+            database().execute(text("SELECT 1/0"))  # the transaction now refuses every statement
+        return "unreachable"
+
+    def forgets_its_lock() -> str:
+        database().execute(select(func.pg_advisory_lock(db.LOCK_RENDER)))
+        return "done"
+
     app.add_url_rule("/test/crash", "crash", crashes_holding_a_lock)
-    assert Client(app).get("/test/crash").status == 500
-    assert shared.connection is not None  # still open for the next request
-    with db.try_advisory_lock(con, db.LOCK_RENDER) as got:
-        assert got
+    app.add_url_rule("/test/fails", "fails", fails_in_a_transaction_under_the_lock)
+    app.add_url_rule("/test/forgets", "forgets", forgets_its_lock)
+    client = Client(app)
+    pid = client.get("/test/pid").text
+    for path, status in (("/test/crash", 500), ("/test/fails", 500), ("/test/forgets", 200)):
+        assert client.get(path).status == status
+        assert lock_is_free(con), path
+    # The same connection all along: the pool released the locks, it did not close the connection.
+    assert client.get("/test/pid").text == pid
+    assert (process.connects, process.open_connections) == (1, 1)
+
+
+def test_the_pool_releases_advisory_locks_whatever_returns_the_connection(cfg: Config, con: Session) -> None:
+    from sqlalchemy import create_engine
+
+    engine = create_engine(db.URL, **db.engine_options(cfg.database, persistent=True))
+    db.release_locks_on_return(engine)
+    try:
+        with engine.connect() as connection:
+            connection.execute(select(func.pg_advisory_lock(db.LOCK_VARIANTS)))
+            assert not lock_is_free(con, db.LOCK_VARIANTS)
+        assert lock_is_free(con, db.LOCK_VARIANTS)
+        assert engine.pool.checkedin() == 1  # kept for the next request, without the lock
+    finally:
+        engine.dispose()
+
+
+def test_the_lock_helpers_release_their_lock_when_the_work_fails(engine: Engine, con: Session) -> None:
+    with db.session_for(engine) as session:
+        with pytest.raises(ZeroDivisionError):
+            with db.advisory_lock(session, db.LOCK_RENDER):
+                assert not lock_is_free(con)
+                raise ZeroDivisionError
+        assert lock_is_free(con)
+        with pytest.raises(Exception, match="division by zero"):
+            with db.try_advisory_lock(session, db.LOCK_RENDER) as got:
+                assert got
+                session.execute(text("SELECT 1/0"))
+        assert lock_is_free(con)
+        with db.try_advisory_lock(session, db.LOCK_RENDER) as got:
+            assert got
+            assert not lock_is_free(con)
+        assert lock_is_free(con)
 
 
 @pytest.mark.parametrize("persistent", [True, False])
-def test_every_request_ends_without_an_open_transaction(
-    cfg: Config, con: db.Connection, persistent: bool
-) -> None:
+def test_every_request_ends_without_an_open_transaction(cfg: Config, con: Session, persistent: bool) -> None:
     app = create_app(cfg, persistent=persistent)
     client = Client(app)
     publish(client)
+    process: db.Database = app.extensions["gahk_db"]
     for path in ("/findes-ikke", "/gammel-side", "/faciliteter/"):
         client.get(path)
-        shared: db.SharedConnection = app.extensions["gahk_db"]
-        if persistent:
-            assert shared.connection is not None
-            from psycopg import pq
-
-            assert shared.connection.info.transaction_status == pq.TransactionStatus.IDLE
-        else:
-            assert shared.connection is None
+        assert transactions_left_open(con) == []
+        assert process.open_connections == (1 if persistent else 0)
 
 
 def test_cgi_reads_what_the_app_left_of_the_body_and_no_more() -> None:

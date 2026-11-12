@@ -1,48 +1,49 @@
-"""PostgreSQL access over psycopg 3 (its binary wheel, which brings libpq along).
+"""PostgreSQL through SQLAlchemy 2 (psycopg 3's binary wheel, which brings libpq along).
 
 The webhost's database is a cache and an outbox, never the source of truth: the cached snapshot,
 the image index, the list of generated files, and form submissions plus visit counts until intern
 pulls them. Losing it costs at most the not-yet-pulled outbox.
 
-The SQL in this package names its parameters :name, and query()/execute() take them as keyword
-arguments; rows come back as dicts. A connection is in autocommit mode: every statement commits on
-its own unless it runs inside transaction(). psycopg is imported on the first connect(), so requests
-that need no database do not pay for it.
+The tables are the typed models in models.py, and the code queries them with SQLAlchemy's ORM and
+Core statements. The schema is made and changed by the Alembic revisions in gahk_web/migrations;
+migrate() applies them, from the updater (`python -m gahk_web migrate`), the devserver and the tests.
+A revision runs before its release goes live, while the previous release still serves the site: it
+must leave a schema the previous release's code still works with.
 
-The web app gets its connection from a SharedConnection: in the persistent FastCGI process one
-connection serves request after request, checked before use and closed when idle; under CGI (and in
-tests) each request gets its own.
+Sessions. A piece of work (a request, a command) gets a Session bound to ONE connection, which it
+keeps until the work is done. Flask-SQLAlchemy's db.session would hand its connection back to the
+pool at every commit, and the advisory locks below belong to the connection: they would leave with
+it. Code commits after each write, as the autocommit of the hand-written layer before did, so no
+write waits in an open transaction while a request renders or makes image variants.
 
-The tables are described as typed SQLAlchemy models in models.py, and the schema is made and changed
-by the Alembic revisions in gahk_web/migrations; migrate() applies them, from the updater (`python
--m gahk_web migrate`), the devserver and the tests. A revision runs before its release goes live,
-while the previous release still serves the site: it must leave a schema the previous release's
-code still works with.
+Connections. In the persistent FastCGI process the web app's engine (made by Flask-SQLAlchemy from
+engine_options()) keeps one connection for request after request: it is pinged before each request
+gets it and replaced when it no longer answers, never older than RECYCLE, and closed once idle for
+IDLE_CLOSE (Database.close_if_idle, from the FastCGI loop), so an idle process holds no slot of
+Hetzner's PostgreSQL. libpq's keepalives and tcp_user_timeout notice a connection the network dropped
+silently. Whenever the connection goes back to the pool, an open transaction is rolled back and every
+advisory lock still held is released (pg_advisory_unlock_all), so a failed request can never leave a
+lock behind for the process's later requests. Under CGI, on the command line and in the tests
+(NullPool) each piece of work opens its own connection and closes it at the end.
 """
 
-import contextlib
-import logging
-import re
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from functools import cache
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Engine, create_engine, func, select
+from sqlalchemy import Engine, create_engine, event, func, select
+from sqlalchemy.engine import Connection
+from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from .config import DatabaseConfig
 
 if TYPE_CHECKING:
-    import psycopg
     from alembic.config import Config as AlembicConfig
 
-type Row = dict[str, Any]
-type Connection = psycopg.Connection[Row]
-
-# SQLAlchemy's driver; everything else comes from conninfo(), in connect_args.
+# The driver; everything else comes from conninfo(), in connect_args.
 URL = "postgresql+psycopg://"
 MIGRATIONS = Path(__file__).resolve().parent / "migrations"
 
@@ -52,19 +53,14 @@ LOCK_RENDER = 0x6761686B_0002
 LOCK_VARIANTS = 0x6761686B_0003  # housekeeping's making of image variants
 
 CONNECT_TIMEOUT = 10
-# A reused connection that has been idle this long is asked "SELECT 1" before a request gets it, and
-# one idle longer than IDLE_CLOSE is closed: Hetzner's PostgreSQL is across the network and may drop
-# idle connections, and every idle FastCGI process would otherwise hold one of its slots.
-PING_AFTER = 20.0
+# The persistent process closes its connection once no request used it for IDLE_CLOSE seconds:
+# Hetzner's PostgreSQL is across the network and may drop idle connections, and every idle FastCGI
+# process would otherwise hold one of its slots. No connection is used for longer than RECYCLE.
 IDLE_CLOSE = 120.0
+RECYCLE = 600
 # A migration waits at most this long for a table a request is using (requests queue behind a
 # waiting migration); then it fails, the old release keeps running and the next update tries again.
 MIGRATION_LOCK_TIMEOUT = "10s"
-
-log = logging.getLogger(__name__)
-
-# :name outside a ::cast, and every % (which psycopg's own placeholders would otherwise claim).
-_PARAM_RE = re.compile(r"(?<![:\w]):([A-Za-z_]\w*)|%")
 
 
 def conninfo(cfg: DatabaseConfig) -> dict[str, str | int]:
@@ -112,155 +108,156 @@ def _system_cafile() -> str:
     return "system"
 
 
-def connect(cfg: DatabaseConfig) -> Connection:
-    import psycopg
-    from psycopg.conninfo import make_conninfo
-    from psycopg.rows import dict_row
-
-    return psycopg.connect(make_conninfo("", **conninfo(cfg)), autocommit=True, row_factory=dict_row)
-
-
-class SharedConnection:
-    """The web app's database connection: opened on first use, then (keep=True) reused by the
-    process's later requests, one at a time.
-
-    Before a request gets a reused connection it is checked: a closed or broken one, or one idle for
-    more than IDLE_CLOSE, is replaced; after PING_AFTER idle seconds it must answer SELECT 1 first.
-    After the request, a transaction it left open is rolled back, and after a failed request its
-    advisory locks are released too, so nothing carries over to the next request. With keep=False
-    (CGI: one request per process; tests) the connection is closed after each request.
-    """
-
-    def __init__(
-        self,
-        cfg: DatabaseConfig,
-        *,
-        keep: bool,
-        connector: "Callable[[DatabaseConfig], Connection] | None" = None,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self.cfg = cfg
-        self.keep = keep
-        self._connect = connector or connect
-        self._clock = clock
-        self._con: Connection | None = None
-        self._last_used = 0.0
-        self.connects = 0  # how many connections this process opened (tests, diagnostics)
-
-    @property
-    def connection(self) -> "Connection | None":
-        return self._con
-
-    def acquire(self) -> Connection:
-        con = self._con
-        if con is not None:
-            idle = self._clock() - self._last_used
-            if con.closed or con.broken or idle > IDLE_CLOSE:
-                self.close()
-            elif idle > PING_AFTER and not _answers(con):
-                log.warning("gahk_web: the database connection stopped answering; reconnecting")
-                self.close()
-        if self._con is None:
-            self._con = self._connect(self.cfg)
-            self.connects += 1
-        return self._con
-
-    def release(self, *, failed: bool = False) -> None:
-        con = self._con
-        if con is None:
-            return
-        self._last_used = self._clock()
-        if not self.keep or con.closed or con.broken:
-            self.close()
-            return
-        try:
-            from psycopg import pq
-
-            if con.info.transaction_status != pq.TransactionStatus.IDLE:
-                log.warning("gahk_web: a request left a transaction open; rolled it back")
-                con.rollback()
-            if failed:
-                execute(con, "SELECT pg_advisory_unlock_all()")
-        except Exception:
-            log.exception("gahk_web: could not clean up the database connection; closing it")
-            self.close()
-
-    def close_if_idle(self) -> None:
-        """Close the connection when no request used it for IDLE_CLOSE seconds."""
-        if self._con is not None and self._clock() - self._last_used > IDLE_CLOSE:
-            self.close()
-
-    def close(self) -> None:
-        con, self._con = self._con, None
-        if con is not None:
-            with contextlib.suppress(Exception):  # it may be gone already
-                con.close()
-
-
-def _answers(con: Connection) -> bool:
-    try:
-        con.execute("SELECT 1").fetchall()
-    except Exception:
-        return False
-    return True
-
-
-@cache
-def _sql(sql: str) -> str:
-    """:name placeholders as psycopg's %(name)s."""
-    return _PARAM_RE.sub(lambda m: f"%({m.group(1)})s" if m.group(1) else "%%", sql)
-
-
-def _run(con: Connection, sql: str, params: dict[str, object]) -> "psycopg.Cursor[Row]":
-    return con.execute(_sql(sql), params) if params else con.execute(sql)
-
-
-def query(con: Connection, sql: str, **params: object) -> list[Row]:
-    return _run(con, sql, params).fetchall()
-
-
-def query_one(con: Connection, sql: str, **params: object) -> Row | None:
-    rows = query(con, sql, **params)
-    return rows[0] if rows else None
-
-
-def execute(con: Connection, sql: str, **params: object) -> int:
-    """Run a statement and return the affected row count."""
-    return max(_run(con, sql, params).rowcount, 0)
-
-
-@contextmanager
-def transaction(con: Connection) -> Iterator[Connection]:
-    """Commits on exit, rolls back on an exception."""
-    with con.transaction():
-        yield con
-
-
-@contextmanager
-def advisory_lock(con: Connection, key: int) -> Iterator[None]:
-    """Session-level lock; waits for it. Released on exit (and by Postgres if the process dies)."""
-    execute(con, "SELECT pg_advisory_lock(:key)", key=key)
-    try:
-        yield
-    finally:
-        execute(con, "SELECT pg_advisory_unlock(:key)", key=key)
-
-
-@contextmanager
-def try_advisory_lock(con: Connection, key: int) -> Iterator[bool]:
-    """Yields whether the lock was taken; never waits."""
-    row = query_one(con, "SELECT pg_try_advisory_lock(:key) AS got", key=key)
-    got = bool(row and row["got"])
-    try:
-        yield got
-    finally:
-        if got:
-            execute(con, "SELECT pg_advisory_unlock(:key)", key=key)
+def engine_options(cfg: DatabaseConfig, *, persistent: bool) -> dict[str, Any]:
+    """create_engine()'s options (Flask-SQLAlchemy's SQLALCHEMY_ENGINE_OPTIONS). persistent: one
+    pooled connection for the FastCGI process (single-threaded, one request at a time); otherwise
+    none is kept (CGI, commands, tests)."""
+    options: dict[str, Any] = {"connect_args": conninfo(cfg)}
+    if persistent:
+        options.update(
+            pool_size=1,
+            max_overflow=0,
+            # Only a bug could ask for a second connection in this single-threaded process: fail
+            # soon rather than wait the default 30 s for the one in use.
+            pool_timeout=5,
+            pool_pre_ping=True,
+            pool_recycle=RECYCLE,
+        )
+    else:
+        options["poolclass"] = NullPool
+    return options
 
 
 def make_engine(cfg: DatabaseConfig) -> Engine:
-    """A SQLAlchemy engine that keeps no connection, for migrations."""
-    return create_engine(URL, poolclass=NullPool, connect_args=conninfo(cfg))
+    """An engine that keeps no connection, for the command line and the tests."""
+    return create_engine(URL, **engine_options(cfg, persistent=False))
+
+
+def release_locks_on_return(engine: Engine) -> None:
+    """Whenever a pooled connection goes back to the pool: roll back what is open and release every
+    advisory lock it still holds, so nothing a request left carries over to the next one."""
+
+    def reset(dbapi_connection: Any, record: Any, state: Any) -> None:  # noqa: ANN401 - DBAPI objects
+        dbapi_connection.rollback()  # a failed transaction would refuse the next statement
+        if state.terminate_only:
+            return  # being closed: the server releases the locks itself
+        # One round trip, outside a transaction. Should it fail, the pool discards the connection.
+        dbapi_connection.autocommit = True
+        try:
+            with dbapi_connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_unlock_all()")
+        finally:
+            dbapi_connection.autocommit = False
+
+    event.listen(engine, "reset", reset)
+
+
+class Database:
+    """The web app's database: its engine, and a Session (on a connection of its own) per request.
+
+    persistent=True is the FastCGI process: the pooled connection is reused from request to request
+    (see the module's docstring). Otherwise each request's connection is closed at its end."""
+
+    def __init__(
+        self, engine: Engine, *, persistent: bool, clock: Callable[[], float] = time.monotonic
+    ) -> None:
+        self.engine = engine
+        self.persistent = persistent
+        self.clock = clock
+        self.connects = 0  # connections this process opened (tests, diagnostics)
+        self.open_connections = 0
+        self._last_used = clock()
+        if persistent:
+            release_locks_on_return(engine)
+        event.listen(engine, "connect", self._opened)
+        event.listen(engine, "close", self._closed)
+        event.listen(engine, "close_detached", self._closed_detached)
+
+    def _opened(self, dbapi_connection: Any, record: Any) -> None:  # noqa: ANN401 - DBAPI objects
+        self.connects += 1
+        self.open_connections += 1
+
+    def _closed(self, dbapi_connection: Any, record: Any) -> None:  # noqa: ANN401 - DBAPI objects
+        self.open_connections -= 1
+
+    def _closed_detached(self, dbapi_connection: Any) -> None:  # noqa: ANN401 - DBAPI object
+        self.open_connections -= 1
+
+    def open_session(self) -> Session:
+        """A Session on a connection of its own; end it with close_session()."""
+        return Session(bind=self.engine.connect())
+
+    def close_session(self, session: Session) -> None:
+        """Roll back whatever the session left open and give its connection back: closed, or (when
+        persistent) to the pool, which releases its advisory locks."""
+        connection = session.bind
+        try:
+            session.close()
+        finally:
+            if isinstance(connection, Connection):
+                connection.close()
+            self._last_used = self.clock()
+
+    def close_if_idle(self) -> None:
+        """Close the pooled connection when no request used it for IDLE_CLOSE seconds."""
+        if self.open_connections and self.clock() - self._last_used > IDLE_CLOSE:
+            self.close()
+
+    def close(self) -> None:
+        self.engine.dispose()
+
+
+@contextmanager
+def session_for(engine: Engine) -> Iterator[Session]:
+    """A Session on a connection of its own, for a piece of work outside a request (a command)."""
+    connection = engine.connect()
+    session = Session(bind=connection)
+    try:
+        yield session
+    finally:
+        session.close()
+        connection.close()
+
+
+# --- advisory locks (session-level: they belong to the connection, not to a transaction) ---
+
+
+@contextmanager
+def advisory_lock(session: Session, key: int) -> Iterator[None]:
+    """Waits for the lock. Released on exit, also when the work under it fails."""
+    session.execute(select(func.pg_advisory_lock(key)))
+    try:
+        yield
+    except BaseException:
+        _unlock_after_failure(session, key)
+        raise
+    session.execute(select(func.pg_advisory_unlock(key)))
+
+
+@contextmanager
+def try_advisory_lock(session: Session, key: int) -> Iterator[bool]:
+    """Yields whether the lock was taken; never waits."""
+    got = bool(session.scalar(select(func.pg_try_advisory_lock(key))))
+    try:
+        yield got
+    except BaseException:
+        if got:
+            _unlock_after_failure(session, key)
+        raise
+    if got:
+        session.execute(select(func.pg_advisory_unlock(key)))
+
+
+def _unlock_after_failure(session: Session, key: int) -> None:
+    """The work under the lock failed, and its transaction may refuse further statements: roll it
+    back first. Should even that fail (the connection broke), the pool's reset releases the lock, or
+    the server does when the connection ends."""
+    with suppress(Exception):
+        session.rollback()
+        session.execute(select(func.pg_advisory_unlock(key)))
+
+
+# --- migrations ---
 
 
 def alembic_config() -> "AlembicConfig":

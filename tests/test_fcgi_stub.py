@@ -14,8 +14,9 @@ from pathlib import Path
 import pytest
 from conftest import STATS_SECRET, SYNC_KEY
 from fastcgi_client import Answer, FastCGIProcess, base_env
+from sqlalchemy.orm import Session
 
-from gahk_web import db, signing, updater
+from gahk_web import signing, updater
 from gahk_web.config import DatabaseConfig
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +37,7 @@ def release_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture
-def home(tmp_path: Path, release_template: Path, db_config: DatabaseConfig, con: db.Connection) -> Path:
+def home(tmp_path: Path, release_template: Path, db_config: DatabaseConfig, con: Session) -> Path:
     """A webhost home: config.ini, CURRENT, the release (its packages: this interpreter's), the stubs,
     and an empty test database."""
     home = tmp_path / "home"

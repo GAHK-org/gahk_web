@@ -68,8 +68,25 @@ def test_conninfo_passes_the_certificate_only_where_it_is_checked() -> None:
     assert "password" not in db.conninfo(DatabaseConfig("h", 5432, "n", "u", ""))
 
 
-def test_named_parameters_become_psycopg_placeholders() -> None:
-    sql = "SELECT id::text, :a FROM t WHERE x LIKE '5%' AND y = :b_2 AND z = CAST(:a AS jsonb)"
-    assert db._sql(sql) == (
-        "SELECT id::text, %(a)s FROM t WHERE x LIKE '5%%' AND y = %(b_2)s AND z = CAST(%(a)s AS jsonb)"
-    )
+def test_the_engines_connect_with_these_parameters() -> None:
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.pool import NullPool, QueuePool
+
+    cfg = DatabaseConfig("db.example", 5433, "gahk", "gahk", "pw")
+    for engine in (db.make_engine(cfg), create_engine(db.URL, **db.engine_options(cfg, persistent=True))):
+        seen: dict[str, object] = {}
+
+        @event.listens_for(engine, "do_connect")
+        def capture(dialect: object, record: object, cargs: object, cparams: dict[str, object]) -> None:
+            seen.update(cparams)
+            raise RuntimeError("no connection needed")
+
+        with pytest.raises(RuntimeError, match="no connection needed"):
+            engine.connect()
+        seen.pop("context")  # SQLAlchemy's own (psycopg's type adapters)
+        assert seen == db.conninfo(cfg)
+        assert seen["sslmode"] == "require"
+    # The FastCGI process keeps one connection, checked before each use; CGI and commands keep none.
+    persistent = create_engine(db.URL, **db.engine_options(cfg, persistent=True)).pool
+    assert isinstance(persistent, QueuePool) and persistent.size() == 1 and persistent._pre_ping
+    assert isinstance(db.make_engine(cfg).pool, NullPool)

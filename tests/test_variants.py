@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import GANG, Client, image, page, publish, snapshot
+from conftest import GANG, Client, execute, image, page, publish, query_one, snapshot
 from PIL import Image, ImageCms
+from sqlalchemy.orm import Session
 
-from gahk_web import api, db, images, variants
+from gahk_web import api, images, variants
 from gahk_web.config import Config
 
 GPS = 0x8825
@@ -201,8 +202,8 @@ def variant_files(cfg: Config, sha: str) -> list[str]:
     return sorted(entry.name for entry in folder.glob("_*")) if folder.is_dir() else []
 
 
-def image_row(con: db.Connection, sha: str) -> dict[str, Any]:
-    row = db.query_one(
+def image_row(con: Session, sha: str) -> dict[str, Any]:
+    row = query_one(
         con,
         "SELECT width, height, variant_widths, variant_note, variant_attempts FROM images WHERE sha256 = :sha",
         sha=sha,
@@ -232,7 +233,7 @@ def photo_snapshot(**overrides: object) -> dict[str, Any]:
     return data
 
 
-def test_a_put_makes_the_variants(client: Client, cfg: Config, con: db.Connection) -> None:
+def test_a_put_makes_the_variants(client: Client, cfg: Config, con: Session) -> None:
     put(client, PHOTO)
 
     assert variant_files(cfg, PHOTO_SHA) == ["_1600w.webp", "_2000w.webp", "_480w.webp", "_960w.webp"]
@@ -243,7 +244,7 @@ def test_a_put_makes_the_variants(client: Client, cfg: Config, con: db.Connectio
         assert_bare_webp(data, Image.open(io.BytesIO(data)).size)
 
 
-def test_a_broken_image_is_kept_without_variants(client: Client, cfg: Config, con: db.Connection) -> None:
+def test_a_broken_image_is_kept_without_variants(client: Client, cfg: Config, con: Session) -> None:
     put(client, BROKEN)
     assert variant_files(cfg, BROKEN_SHA) == []
     row = image_row(con, BROKEN_SHA)
@@ -300,7 +301,7 @@ def test_a_phone_gets_a_narrower_background(client: Client, cfg: Config) -> None
     )
 
 
-def test_missing_variant_files_are_made_again(client: Client, cfg: Config, con: db.Connection) -> None:
+def test_missing_variant_files_are_made_again(client: Client, cfg: Config, con: Session) -> None:
     put(client, PHOTO)
     put(client, BROKEN)
     (cfg.public_html / "billeder" / PHOTO_SHA[:16] / "_960w.webp").unlink()
@@ -310,13 +311,13 @@ def test_missing_variant_files_are_made_again(client: Client, cfg: Config, con: 
 
 
 def test_variants_a_publish_had_no_time_for_come_with_housekeeping(
-    client: Client, cfg: Config, con: db.Connection, monkeypatch: pytest.MonkeyPatch
+    client: Client, cfg: Config, con: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     put(client, PHOTO)
     put(client, BROKEN)
     for name in variant_files(cfg, PHOTO_SHA):  # as if stored by a release without variants
         (cfg.public_html / "billeder" / PHOTO_SHA[:16] / name).unlink()
-    db.execute(con, "UPDATE images SET variant_widths = NULL, variant_attempts = 0")
+    execute(con, "UPDATE images SET variant_widths = NULL, variant_attempts = 0")
     monkeypatch.setattr(api, "PUBLISH_VARIANT_BUDGET", 0.0)
 
     publish(client, photo_snapshot())
@@ -332,16 +333,16 @@ def test_variants_a_publish_had_no_time_for_come_with_housekeeping(
     assert "srcset" in page_file.read_text()  # and the site was rendered again
 
 
-def test_an_image_that_keeps_dying_is_given_up(client: Client, cfg: Config, con: db.Connection) -> None:
+def test_an_image_that_keeps_dying_is_given_up(client: Client, cfg: Config, con: Session) -> None:
     put(client, PHOTO)
-    db.execute(con, "UPDATE images SET variant_widths = NULL, variant_attempts = 3")
+    execute(con, "UPDATE images SET variant_widths = NULL, variant_attempts = 3")
     assert images.ensure_variants(con, cfg, [PHOTO_SHA]) == images.VariantProgress(0, 0)
     row = image_row(con, PHOTO_SHA)
     assert row["variant_widths"] == []
     assert "given up" in row["variant_note"]
 
 
-def test_variants_go_with_their_image(client: Client, cfg: Config, con: db.Connection) -> None:
+def test_variants_go_with_their_image(client: Client, cfg: Config, con: Session) -> None:
     put(client, PHOTO)
     put(client, BROKEN)
     publish(client, photo_snapshot())
@@ -359,21 +360,21 @@ def test_variants_go_with_their_image(client: Client, cfg: Config, con: db.Conne
     assert variant_files(cfg, PHOTO_SHA) == ["_1600w.webp", "_2000w.webp", "_480w.webp", "_960w.webp"]
     assert "srcset" in (cfg.public_html / "galleri/index.html").read_text()
 
-    db.execute(con, "UPDATE images SET stored_at = now() - interval '2 hours'")
+    execute(con, "UPDATE images SET stored_at = now() - interval '2 hours'")
     publish(client, snapshot(revision="d" * 64))
     assert not folder.exists()
     assert not images.blob_path(cfg, PHOTO_SHA).exists()
 
 
 def test_variants_of_an_image_collected_meanwhile_are_removed(
-    cfg: Config, con: db.Connection, monkeypatch: pytest.MonkeyPatch
+    cfg: Config, con: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     images.store(con, cfg, PHOTO_SHA, PHOTO, "image/jpeg")
     make = variants.make
 
     def collected_while_making(data: bytes) -> variants.Variants:
         made = make(data)
-        db.execute(con, "DELETE FROM images WHERE sha256 = :sha", sha=PHOTO_SHA)  # a publish's GC
+        execute(con, "DELETE FROM images WHERE sha256 = :sha", sha=PHOTO_SHA)  # a publish's GC
         return made
 
     monkeypatch.setattr(variants, "make", collected_while_making)
@@ -382,7 +383,7 @@ def test_variants_of_an_image_collected_meanwhile_are_removed(
 
 
 def test_a_full_disk_does_not_count_toward_giving_up(
-    cfg: Config, con: db.Connection, monkeypatch: pytest.MonkeyPatch
+    cfg: Config, con: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     images.store(con, cfg, PHOTO_SHA, PHOTO, "image/jpeg")
     writes = 0
@@ -408,14 +409,14 @@ def test_a_full_disk_does_not_count_toward_giving_up(
 
 
 def test_requests_intern_waits_for_leave_a_killed_attempt_to_housekeeping(
-    client: Client, cfg: Config, con: db.Connection
+    client: Client, cfg: Config, con: Session
 ) -> None:
     put(client, PHOTO)
     put(client, BROKEN)
     for name in variant_files(cfg, PHOTO_SHA):
         (cfg.public_html / "billeder" / PHOTO_SHA[:16] / name).unlink()
     # As if the process making them had been killed once (for its memory, say).
-    db.execute(
+    execute(
         con,
         "UPDATE images SET variant_widths = NULL, variant_attempts = 1 WHERE sha256 = :sha",
         sha=PHOTO_SHA,

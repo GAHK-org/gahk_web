@@ -1,5 +1,5 @@
 """HTTP helpers shared by the Flask app's views: the request as the browser sent it, bodies with
-limits, responses with the site's headers, and the request's database connection."""
+limits, responses with the site's headers, and the request's database session."""
 
 import json
 from collections.abc import Callable, Iterable
@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import unquote_to_bytes
 
 from flask import Response, current_app, g, request
+from sqlalchemy.orm import Session
 from werkzeug.routing import BaseConverter
 
 from . import db
@@ -127,22 +128,24 @@ def method_not_allowed(allowed: str) -> Response:
 # --- the database ---
 
 
-def database() -> db.Connection:
-    """The request's database connection, opened on first use. In a persistent process it is the
-    process's one connection, reused from request to request (db.SharedConnection)."""
-    con: db.Connection | None = g.get("gahk_con")
-    if con is None:
-        shared: db.SharedConnection = current_app.extensions["gahk_db"]
+def database() -> Session:
+    """The request's database session, on a connection opened on first use. In the persistent
+    process that is the pooled connection, reused from request to request (db.Database)."""
+    session: Session | None = g.get("gahk_session")
+    if session is None:
+        database: db.Database = current_app.extensions["gahk_db"]
         try:
-            con = shared.acquire()
+            session = database.open_session()
         except Exception as exc:
             raise DatabaseUnavailable(str(exc)) from exc
-        g.gahk_con = con
-    return con
+        g.gahk_session = session
+    return session
 
 
-def release_database(failed: bool) -> None:
-    """End of the request: no transaction stays open, and a per-request connection is closed."""
-    if g.pop("gahk_con", None) is not None:
-        shared: db.SharedConnection = current_app.extensions["gahk_db"]
-        shared.release(failed=failed)
+def release_database() -> None:
+    """End of the request, also a failed one: whatever it left open is rolled back, and its
+    connection goes back (closed, or to the pool, which releases any advisory lock it still holds)."""
+    session: Session | None = g.pop("gahk_session", None)
+    if session is not None:
+        database: db.Database = current_app.extensions["gahk_db"]
+        database.close_session(session)

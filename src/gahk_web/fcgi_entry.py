@@ -3,7 +3,7 @@ calls serve().
 
 Apache's mod_fcgid starts the process on demand (more of them when requests overlap) and hands it
 requests over the listening socket on fd 0, one at a time. flup's single-threaded server answers
-them with the Flask app, which keeps one database connection for request after request.
+them with the Flask app, which keeps one database connection for request after request (db.py).
 
 After each response the process checks, with one stat() of each, whether ~/gahk_web/CURRENT or
 config.ini changed since it started, and counts its requests and its age. When CURRENT or the
@@ -34,7 +34,7 @@ from flup.server import fcgi_base, fcgi_single
 from . import config as config_module
 from .app import config_error_app, create_app
 from .config import ConfigError, load_config
-from .db import SharedConnection
+from .db import Database
 from .version import code_version
 from .web import StartResponse, WsgiApp
 
@@ -116,13 +116,13 @@ class Server(fcgi_single.WSGIServer):  # type: ignore[misc]  # flup has no type 
         self,
         app: WsgiApp,
         policy: RestartPolicy,
-        shared: SharedConnection | None = None,
+        database: Database | None = None,
         bind_address: str | None = None,
     ) -> None:
         super().__init__(self._counting(app), bindAddress=bind_address, debug=False)
         self._jobClass = _Connection
         self.policy = policy
-        self.shared = shared
+        self.database = database
         self.served = 0
         self._checked = 0
         self.exit_reason = ""
@@ -141,8 +141,8 @@ class Server(fcgi_single.WSGIServer):  # type: ignore[misc]  # flup has no type 
             reason = self.policy.after_request(self.served)
         else:
             reason = self.policy.when_idle()
-            if self.shared is not None:
-                self.shared.close_if_idle()
+            if self.database is not None:
+                self.database.close_if_idle()
         if reason and not self.exit_reason:
             self.exit_reason = reason
             self._exit()  # flup's: the main loop ends after this pass
@@ -179,22 +179,22 @@ def serve(bind_address: str | None = None) -> str:
         active = ""
     if active and code_version() not in ("dev", active):
         policy.stale = f"CURRENT is {active}, this is {code_version()}"
-    shared: SharedConnection | None = None
+    database: Database | None = None
     app: WsgiApp
     try:
         flask_app = create_app(load_config(), persistent=True, runner="fastcgi")
     except ConfigError as exc:
         app = config_error_app(str(exc))
     else:
-        shared = flask_app.extensions["gahk_db"]
+        database = flask_app.extensions["gahk_db"]
         app = flask_app
-    server = Server(app, policy, shared, bind_address)
+    server = Server(app, policy, database, bind_address)
     try:
         server.run()
     except Exception as exc:  # the process served a while; mod_fcgid starts a new one
         log.exception("gahk_web: the FastCGI server failed")
         return f"the server failed: {exc!r}"
     finally:
-        if shared is not None:
-            shared.close()
+        if database is not None:
+            database.close()
     return server.exit_reason or "stopped by a signal"

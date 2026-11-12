@@ -89,15 +89,12 @@ def prepare(cfg: Config) -> None:
     engine = db.make_engine(cfg.database)
     try:
         applied = db.migrate(engine)
+        if applied:
+            print(f"Applied migrations: {', '.join(applied)}")
+        with db.session_for(engine) as session:
+            housekeeping.maybe_rebuild(session, cfg)
     finally:
         engine.dispose()
-    if applied:
-        print(f"Applied migrations: {', '.join(applied)}")
-    con = db.connect(cfg.database)
-    try:
-        housekeeping.maybe_rebuild(con, cfg)
-    finally:
-        con.close()
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -34,9 +34,13 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
-from . import db
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
+
 from .clock import now_utc
 from .config import Config
+from .models import Image, ImageFile
 from .snapshot import BILLEDER_RE, HEX64_RE, IMAGE_TYPES, MAX_IMAGE_BYTES, Snapshot
 
 BLOB_GRACE = timedelta(hours=1)
@@ -82,7 +86,7 @@ def write_atomically(target: Path, data: bytes) -> None:
         raise
 
 
-def store(con: db.Connection, cfg: Config, sha256: str, body: bytes, content_type: str) -> None:
+def store(session: Session, cfg: Config, sha256: str, body: bytes, content_type: str) -> None:
     """Keep the bytes of one image. Raises ImageError for anything but a matching, allowed image."""
     content_type = content_type.split(";", 1)[0].strip().lower()
     if not HEX64_RE.match(sha256):
@@ -97,16 +101,21 @@ def store(con: db.Connection, cfg: Config, sha256: str, body: bytes, content_typ
         raise ImageError(f"the bytes are not {content_type}")
     write_atomically(blob_path(cfg, sha256), body)
     # intern only sends an image the webhost lacks, so its variants are made afresh as well.
-    db.execute(
-        con,
-        "INSERT INTO images (sha256, content_type, size) VALUES (:sha, :type, :size)"
-        " ON CONFLICT (sha256) DO UPDATE SET content_type = EXCLUDED.content_type,"
-        " size = EXCLUDED.size, stored_at = now(), variant_widths = NULL, variant_note = NULL,"
-        " variant_attempts = 0",
-        sha=sha256,
-        type=content_type,
-        size=len(body),
+    row = insert(Image).values(sha256=sha256, content_type=content_type, size=len(body))
+    session.execute(
+        row.on_conflict_do_update(
+            index_elements=[Image.sha256],
+            set_={
+                Image.content_type: row.excluded.content_type,
+                Image.size: row.excluded.size,
+                Image.stored_at: func.now(),
+                Image.variant_widths: None,
+                Image.variant_note: None,
+                Image.variant_attempts: 0,
+            },
+        )
     )
+    session.commit()
 
 
 def missing(cfg: Config, shas: list[str]) -> list[str]:
@@ -137,10 +146,10 @@ def _publish_copy(source: Path, target: Path) -> None:
         raise
 
 
-def materialize(con: db.Connection, cfg: Config, snapshot: Snapshot) -> None:
+def materialize(session: Session, cfg: Config, snapshot: Snapshot) -> None:
     """Make every image URL of the snapshot exist in public_html. Call after missing_for() is empty."""
     known = {
-        row["rel_path"]: row["sha256"] for row in db.query(con, "SELECT rel_path, sha256 FROM image_files")
+        row.rel_path: row.sha256 for row in session.execute(select(ImageFile.rel_path, ImageFile.sha256))
     }
     for image in snapshot["images"]:
         rel_path = image["url"].lstrip("/")
@@ -148,13 +157,13 @@ def materialize(con: db.Connection, cfg: Config, snapshot: Snapshot) -> None:
         if known.get(rel_path) == image["sha256"] and target.is_file():
             continue
         _publish_copy(blob_path(cfg, image["sha256"]), target)
-        db.execute(
-            con,
-            "INSERT INTO image_files (rel_path, sha256) VALUES (:path, :sha)"
-            " ON CONFLICT (rel_path) DO UPDATE SET sha256 = EXCLUDED.sha256",
-            path=rel_path,
-            sha=image["sha256"],
+        row = insert(ImageFile).values(rel_path=rel_path, sha256=image["sha256"])
+        session.execute(
+            row.on_conflict_do_update(
+                index_elements=[ImageFile.rel_path], set_={ImageFile.sha256: row.excluded.sha256}
+            )
         )
+        session.commit()
 
 
 # --- responsive variants ---
@@ -186,29 +195,31 @@ class Picture:
         return next((url for variant_width, url in self.variants if variant_width >= width), self.src)
 
 
-def pictures(con: db.Connection, snapshot: Snapshot) -> dict[str, Picture]:
+def pictures(session: Session, snapshot: Snapshot) -> dict[str, Picture]:
     """The snapshot's images that have variants, by their original URL."""
     shas = sorted({image["sha256"] for image in snapshot["images"]})
     if not shas:
         return {}
     rows = {
-        row["sha256"]: row
-        for row in db.query(
-            con,
-            "SELECT sha256, width, height, variant_widths FROM images WHERE sha256 = ANY(:shas)"
-            " AND width IS NOT NULL AND height IS NOT NULL AND cardinality(variant_widths) > 0",
-            shas=shas,
+        sha: (width, height, widths)
+        for sha, width, height, widths in session.execute(
+            select(Image.sha256, Image.width, Image.height, Image.variant_widths).where(
+                Image.sha256.in_(shas),
+                Image.width.is_not(None),
+                Image.height.is_not(None),
+                func.cardinality(Image.variant_widths) > 0,
+            )
         )
+        if width is not None and height is not None and widths  # what the query asked for
     }
     out: dict[str, Picture] = {}
     for image in snapshot["images"]:
         row = rows.get(image["sha256"])
         if row is None:
             continue
-        variants = tuple(
-            (width, "/" + variant_rel_path(image["sha256"], width)) for width in sorted(row["variant_widths"])
-        )
-        out[image["url"]] = Picture(image["url"], row["width"], row["height"], variants)
+        width, height, widths = row
+        variants = tuple((w, "/" + variant_rel_path(image["sha256"], w)) for w in sorted(widths))
+        out[image["url"]] = Picture(image["url"], width, height, variants)
     return out
 
 
@@ -241,29 +252,31 @@ def _remove_files(paths: Iterable[Path]) -> None:
             folder.rmdir()  # only when nothing else is left in it
 
 
-def _uncount_attempt(con: db.Connection, sha256: str) -> None:
+def _uncount_attempt(session: Session, sha256: str) -> None:
     """Take back an attempt that ended without an outcome for a reason that is not the image's (a
     missing blob, a full disk). Only a process that died making them counts toward giving up."""
-    db.execute(
-        con,
-        "UPDATE images SET variant_attempts = GREATEST(variant_attempts - 1, 0) WHERE sha256 = :sha",
-        sha=sha256,
+    session.execute(
+        update(Image)
+        .where(Image.sha256 == sha256)
+        .values(variant_attempts=func.greatest(Image.variant_attempts - 1, 0))
     )
+    session.commit()
 
 
-def make_variants(con: db.Connection, cfg: Config, sha256: str) -> bool:
+def make_variants(session: Session, cfg: Config, sha256: str) -> bool:
     """Make (or remake) one image's variants and record them. True when it now has some. Never
     raises for a bad image: that image just gets none."""
     from . import variants
 
-    # Counted before the work, so a process killed while making them (memory) still counts.
-    db.execute(
-        con, "UPDATE images SET variant_attempts = variant_attempts + 1 WHERE sha256 = :sha", sha=sha256
+    # Counted (and committed) before the work, so a process killed while making them (memory) still counts.
+    session.execute(
+        update(Image).where(Image.sha256 == sha256).values(variant_attempts=Image.variant_attempts + 1)
     )
+    session.commit()
     try:
         made = variants.make(blob_path(cfg, sha256).read_bytes())
     except FileNotFoundError:
-        _uncount_attempt(con, sha256)
+        _uncount_attempt(session, sha256)
         return False  # intern PUTs it again when it asks what is missing
     except variants.NoVariants as exc:
         note = str(exc)
@@ -278,29 +291,29 @@ def make_variants(con: db.Connection, cfg: Config, sha256: str) -> bool:
                 written.append(target)
         except OSError:  # a full disk or quota: not the image's fault, so try again later
             _remove_files(written)
-            _uncount_attempt(con, sha256)
+            _uncount_attempt(session, sha256)
             return False
-        recorded = db.execute(
-            con,
-            "UPDATE images SET width = :width, height = :height, variant_widths = CAST(:widths AS integer[]),"
-            " variant_note = NULL, variant_attempts = 0 WHERE sha256 = :sha",
-            width=made.width,
-            height=made.height,
-            widths=[width for width, _data in made.files],
-            sha=sha256,
+        recorded = session.scalar(
+            update(Image)
+            .where(Image.sha256 == sha256)
+            .values(
+                width=made.width,
+                height=made.height,
+                variant_widths=[width for width, _data in made.files],
+                variant_note=None,
+                variant_attempts=0,
+            )
+            .returning(Image.sha256)
         )
-        if not recorded:
+        session.commit()
+        if recorded is None:
             # A publish collected the image while these were made (this runs outside the render
             # lock): no row is left that could ever delete them, so they go now.
             _remove_files(written)
             return False
         return True
-    db.execute(
-        con,
-        "UPDATE images SET variant_widths = '{}', variant_note = :note WHERE sha256 = :sha",
-        note=note,
-        sha=sha256,
-    )
+    session.execute(update(Image).where(Image.sha256 == sha256).values(variant_widths=[], variant_note=note))
+    session.commit()
     return False
 
 
@@ -320,7 +333,7 @@ def snapshot_shas(snapshot: Snapshot) -> list[str]:
 
 
 def ensure_variants(
-    con: db.Connection,
+    session: Session,
     cfg: Config,
     shas: Iterable[str],
     budget: float | None = None,
@@ -339,11 +352,9 @@ def ensure_variants(
     if not shas:
         return VariantProgress(0, 0)
     rows = {
-        row["sha256"]: row
-        for row in db.query(
-            con,
-            "SELECT sha256, variant_widths, variant_attempts FROM images WHERE sha256 = ANY(:shas)",
-            shas=shas,
+        sha: (widths, attempts)
+        for sha, widths, attempts in session.execute(
+            select(Image.sha256, Image.variant_widths, Image.variant_attempts).where(Image.sha256.in_(shas))
         )
     }
     deadline = None if budget is None else time.monotonic() + budget
@@ -352,38 +363,36 @@ def ensure_variants(
         row = rows.get(sha)
         if row is None:
             continue
-        widths = row["variant_widths"]
+        widths, attempts = row
         if widths is not None:
             if _variant_files_exist(cfg, sha, widths):
                 continue
-            db.execute(con, "UPDATE images SET variant_widths = NULL WHERE sha256 = :sha", sha=sha)
+            session.execute(update(Image).where(Image.sha256 == sha).values(variant_widths=None))
+            session.commit()
             changed += 1
-        if row["variant_attempts"] >= MAX_VARIANT_ATTEMPTS:
-            db.execute(
-                con,
-                "UPDATE images SET variant_widths = '{}', variant_note = :note WHERE sha256 = :sha",
-                note=f"given up after {row['variant_attempts']} unfinished attempts",
-                sha=sha,
+        if attempts >= MAX_VARIANT_ATTEMPTS:
+            session.execute(
+                update(Image)
+                .where(Image.sha256 == sha)
+                .values(variant_widths=[], variant_note=f"given up after {attempts} unfinished attempts")
             )
+            session.commit()
             continue
-        if (not retry and row["variant_attempts"] > 0) or (
-            deadline is not None and time.monotonic() >= deadline
-        ):
+        if (not retry and attempts > 0) or (deadline is not None and time.monotonic() >= deadline):
             pending += 1
             continue
-        if make_variants(con, cfg, sha):
+        if make_variants(session, cfg, sha):
             changed += 1
     return VariantProgress(changed, pending)
 
 
-def collect_garbage(con: db.Connection, cfg: Config, snapshot: Snapshot) -> int:
+def collect_garbage(session: Session, cfg: Config, snapshot: Snapshot) -> int:
     """Delete public copies and blobs the snapshot does not use. Returns the number of files removed."""
     used_paths = {image["url"].lstrip("/") for image in snapshot["images"]}
     used_shas = {image["sha256"] for image in snapshot["images"]}
     used_folders = {sha[:16] for sha in used_shas}
     removed = 0
-    for row in db.query(con, "SELECT rel_path FROM image_files"):
-        rel_path = row["rel_path"]
+    for rel_path in session.scalars(select(ImageFile.rel_path)).all():
         if rel_path in used_paths or not BILLEDER_RE.match("/" + rel_path):
             continue
         target = cfg.public_html / rel_path
@@ -392,11 +401,12 @@ def collect_garbage(con: db.Connection, cfg: Config, snapshot: Snapshot) -> int:
             removed += 1
         with contextlib.suppress(OSError):
             target.parent.rmdir()  # only succeeds when the <sha16> folder is now empty
-        db.execute(con, "DELETE FROM image_files WHERE rel_path = :path", path=rel_path)
+        session.execute(delete(ImageFile).where(ImageFile.rel_path == rel_path))
+        session.commit()
 
     cutoff = now_utc() - BLOB_GRACE
-    for row in db.query(con, "SELECT sha256, stored_at, variant_widths FROM images"):
-        sha = row["sha256"]
+    stored = session.execute(select(Image.sha256, Image.stored_at, Image.variant_widths)).all()
+    for sha, stored_at, widths in stored:
         if sha in used_shas:
             continue
         # An image taken down loses its public variants at once, like its public copies above. Only
@@ -405,17 +415,18 @@ def collect_garbage(con: db.Connection, cfg: Config, snapshot: Snapshot) -> int:
         # the original, and the next pass makes the variants again.
         if sha[:16] not in used_folders:
             removed += _remove_variant_files(cfg, sha)
-        if row["stored_at"] > cutoff:
-            if row["variant_widths"] is not None:
-                db.execute(
-                    con,
-                    "UPDATE images SET variant_widths = NULL, variant_note = NULL, variant_attempts = 0"
-                    " WHERE sha256 = :sha",
-                    sha=sha,
+        if stored_at > cutoff:
+            if widths is not None:
+                session.execute(
+                    update(Image)
+                    .where(Image.sha256 == sha)
+                    .values(variant_widths=None, variant_note=None, variant_attempts=0)
                 )
+                session.commit()
             continue
         with contextlib.suppress(FileNotFoundError):
             blob_path(cfg, sha).unlink()
             removed += 1
-        db.execute(con, "DELETE FROM images WHERE sha256 = :sha", sha=sha)
+        session.execute(delete(Image).where(Image.sha256 == sha))
+        session.commit()
     return removed

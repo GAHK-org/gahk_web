@@ -313,6 +313,19 @@ wheels = [
 ]
 
 [[package]]
+name = "flask-sqlalchemy"
+version = "3.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "flask" },
+    { name = "sqlalchemy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/91/53/b0a9fcc1b1297f51e68b69ed3b7c3c40d8c45be1391d77ae198712914392/flask_sqlalchemy-3.1.1.tar.gz", hash = "sha256:e4b68bb881802dda1a7d878b2fc84c06d1ee57fb40b874d3dc97dabfa36b8312", size = 81899, upload-time = "2023-09-11T21:42:36.147Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1d/6a/89963a5c6ecf166e8be29e0d1bf6806051ee8fe6c82e232842e3aeac9204/flask_sqlalchemy-3.1.1-py3-none-any.whl", hash = "sha256:4ba4be7f419dc72f4efd8802d69974803c37259dd42f3913b0dcf75c9447e0a0", size = 25125, upload-time = "2023-09-11T21:42:34.514Z" },
+]
+
+[[package]]
 name = "flup"
 version = "1.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -328,6 +341,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
     { name = "flask" },
+    { name = "flask-sqlalchemy" },
     { name = "flup" },
     { name = "jinja2" },
     { name = "markupsafe" },
@@ -351,6 +365,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.14" },
     { name = "flask", specifier = ">=3.1" },
+    { name = "flask-sqlalchemy", specifier = ">=3.1.1" },
     { name = "flup", specifier = ">=1.0.3" },
     { name = "jinja2", specifier = ">=3.1.4" },
     { name = "markupsafe", specifier = ">=2.1" },
