@@ -7,6 +7,7 @@ import shutil
 import site
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -222,6 +223,51 @@ def test_without_a_release_every_request_answers_503(spawn: Spawn, home: Path) -
     assert answer.status == 503 and "ved at blive installeret" in answer.text
     big = process.request("POST", "/s", b"x" * 300_000)  # a body is read to its end
     assert big.status == 503
+    assert process.alive()
+
+
+def test_the_stand_in_gives_way_once_the_first_install_has_finished(spawn: Spawn, home: Path) -> None:
+    """Found on the fake webhost: the stand-in kept answering "being installed" for up to 30 s
+    after the first install, so the operator's check right after it failed."""
+    current = home / "gahk_web" / "CURRENT"
+    current.rename(current.with_name("CURRENT.later"))
+    process = spawn(GAHK_WEB_FCGI_STANDIN="60")
+    assert process.request("GET", "/faciliteter").status == 503
+    time.sleep(0.5)  # it looks again right after each response
+    assert process.alive()
+    current.with_name("CURRENT.later").rename(current)  # the updater switched to the new release
+    assert health(process).status == 503  # answered by the stand-in, which then gives way
+    assert process.wait(timeout=10) == 0
+    assert "exiting (the release changed)" in process.output()
+    assert health(spawn()).status == 200  # mod_fcgid's next process runs the release
+
+
+def test_the_stand_in_gives_way_once_the_packages_are_reinstalled(spawn: Spawn, home: Path) -> None:
+    abi = home / "gahk_web" / "releases" / SHA / "vendor" / ".abi"
+    fitting = abi.read_text()
+    abi.unlink()
+    abi.write_text("cpython-399 .cpython-399-elsewhere.so elsewhere\n")
+    process = spawn(GAHK_WEB_FCGI_STANDIN="60")
+    for _ in range(2):
+        assert health(process).status == 503
+    time.sleep(0.5)  # it looks again right after each response
+    assert process.alive()  # nothing changed: it stays
+    abi.write_text(fitting)  # POST /api/update reinstalled them for this python
+    assert health(process).status == 503
+    assert process.wait(timeout=10) == 0
+    assert "exiting (the release changed)" in process.output()
+
+
+def test_a_stand_in_for_a_release_that_cannot_import_waits_for_a_new_one(spawn: Spawn, home: Path) -> None:
+    """Retrying the import on every request would be the crash loop the stand-in avoids."""
+    release = home / "gahk_web" / "releases" / SHA
+    (release / "src").unlink()
+    (release / "src" / "gahk_web").mkdir(parents=True)
+    (release / "src" / "gahk_web" / "__init__.py").write_text("raise RuntimeError('broken release')\n")
+    process = spawn(GAHK_WEB_FCGI_STANDIN="60")
+    for _ in range(3):
+        assert health(process).status == 503
+    time.sleep(0.5)
     assert process.alive()
 
 

@@ -19,7 +19,9 @@ When it cannot (no release yet, packages for another python, an import failure),
 exit: mod_fcgid would start it again for every request and soon throttle it as crashing. Instead a
 minimal FastCGI responder below answers every request the way gahk.cgi would (the 503 page, health's
 503 JSON, the signed status, even POST /api/update) for STANDIN_SECONDS, then exits so that the next
-request starts a process that looks at the release again.
+request starts a process that looks at the release again. It exits sooner, after the response in
+which it sees that an install or a reinstall of the packages has finished, so the site comes up at
+once rather than up to STANDIN_SECONDS later.
 """
 
 import importlib.machinery
@@ -144,8 +146,11 @@ def respond(conn: socket.socket, stub: Any, install: Any) -> None:  # noqa: ANN4
     write_record(conn, END_REQUEST, request_id, struct.pack("!IB3x", 0, 0))
 
 
-def stand_in(stub: Any, install: Any) -> None:  # noqa: ANN401
-    """Answer requests on mod_fcgid's socket for STANDIN_SECONDS, then return."""
+def stand_in(stub: Any, install: Any, located: Any = None) -> None:  # noqa: ANN401
+    """Answer requests on mod_fcgid's socket for STANDIN_SECONDS, then return; return sooner, after
+    the response, once the release it stands in for has changed (`located`, what gahk.cgi's locate()
+    found at the start): an install or a reinstall of the packages has finished, and the next
+    request should get a process that runs it."""
     try:
         seconds = float(os.environ.get(STANDIN_ENV) or STANDIN_SECONDS)
     except ValueError:
@@ -166,14 +171,27 @@ def stand_in(stub: Any, install: Any) -> None:  # noqa: ANN401
                     respond(conn, stub, install)
                 except (OSError, EOFError, ValueError, struct.error) as exc:
                     print(f"{NAME}: a request failed: {exc!r}", file=sys.stderr)
+            if located is not None and release_changed(stub, located):
+                print(f"{NAME}[{os.getpid()}]: exiting (the release changed)", file=sys.stderr)
+                break
     finally:
         listener.close()
+
+
+def release_changed(stub: Any, located: Any) -> bool:  # noqa: ANN401
+    """Whether the active release, or whether its packages fit this python, is no longer what the
+    process found at its start (a few small file reads; only while standing in)."""
+    try:
+        now = stub.locate()
+    except Exception:
+        return False
+    return bool((now.sha, now.problem) != (located.sha, located.problem))
 
 
 def main() -> None:
     try:
         stub = load_stub()
-        install = stub.locate()
+        located = install = stub.locate()
     except Exception:  # gahk.cgi is missing or broken: still no crash loop
         traceback.print_exc(file=sys.stderr)
         stand_in(None, None)
@@ -190,7 +208,7 @@ def main() -> None:
             print(f"{NAME}[{os.getpid()}]: exiting ({reason})", file=sys.stderr)
             return
     print(f"{NAME}[{os.getpid()}]: answering 503 for a while: {install.problem}", file=sys.stderr)
-    stand_in(stub, install)
+    stand_in(stub, install, located)
 
 
 if __name__ == "__main__":
