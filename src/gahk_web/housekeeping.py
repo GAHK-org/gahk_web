@@ -8,6 +8,10 @@ the others carry on. intern also sends POST /api/rebuild every night, so the sit
 day nobody visits it. The same pass purges rate-limit rows older than a day and visitor hashes older
 than two days.
 
+Only the active release renders: a process of an older one (a FastCGI process with a request in
+flight when an update switched CURRENT) sees its code version differ from ~/gahk_web/CURRENT and
+leaves the site alone, or it would render the pages again with its old templates and static names.
+
 Responsive image variants a publish had no time for (images.py) are made the same way, by the visit
 beacon (nobody waits for its answer): a beacon that finds a published image still waiting makes
 variants for a few seconds, under a try-lock of its own, and renders the site again when it made any.
@@ -19,6 +23,7 @@ from datetime import date, timedelta
 from sqlalchemy import delete, exists, select
 from sqlalchemy.orm import Session
 
+from . import config as config_module
 from . import db, images
 from .clock import copenhagen_today, now_utc
 from .config import Config
@@ -74,14 +79,35 @@ def is_stale(state: State, today: date) -> bool:
     )
 
 
+def superseded() -> str:
+    """The active release (~/gahk_web/CURRENT) when this process runs another one, else "". A
+    development checkout ("dev") and a home without CURRENT are never superseded."""
+    version = code_version()
+    if version == "dev":
+        return ""
+    try:
+        active = (config_module.home_dir() / "gahk_web" / "CURRENT").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return active if active and active != version else ""
+
+
 def purge(session: Session, today: date) -> None:
     session.execute(delete(FormRateLimit).where(FormRateLimit.at < now_utc() - RATE_LIMIT_KEEP))
     session.execute(delete(VisitSeen).where(VisitSeen.day <= today - timedelta(days=SEEN_KEEP_DAYS)))
     session.commit()
 
 
+class Superseded(Exception):
+    """This process runs a release that is no longer the active one: it must not render."""
+
+
 def rebuild(session: Session, cfg: Config, today: date) -> int | None:
-    """Re-render from the cached snapshot (caller holds the render lock). None: no snapshot yet."""
+    """Re-render from the cached snapshot (caller holds the render lock). None: no snapshot yet.
+    Superseded when another release is active."""
+    active = superseded()
+    if active:
+        raise Superseded(f"this is {code_version()}, the active release is {active}")
     snapshot = load_snapshot(session)
     if snapshot is None:
         return None
@@ -122,6 +148,6 @@ def maybe_rebuild(
         return False
     with db.try_advisory_lock(session, db.LOCK_RENDER) as got:
         # Another request may have rendered while this one waited for its turn to ask.
-        if not got or not (changed or is_stale(site_state(session), today)):
+        if not got or not (changed or is_stale(site_state(session), today)) or superseded():
             return False
         return rebuild(session, cfg, today) is not None

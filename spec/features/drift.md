@@ -37,7 +37,8 @@ The runbook is DEPLOY.md.
   running between requests, so they take milliseconds. The web server starts more of it when
   requests overlap.
 - It restarts by itself after an update, after a change to the webhost's configuration, after 500
-  requests and after an hour. The first request after an update may still get the previous version.
+  requests and after an hour. Only a request already under way during an update is answered by the
+  previous version, and that version never renders the site again once the new one is active.
 - Update requests and large uploads (pictures, publications) start a new program each time, so an
   update can always repair a broken version.
 - When the running version cannot start, those requests get *"Siden opdateres"*, and the program
@@ -95,8 +96,10 @@ The runbook is DEPLOY.md.
   FastCGI does not.
 - **Large uploads go through CGI.** The webhost's FastCGI module refuses request bodies over 128 KiB,
   and that limit cannot be raised from the site.
-- **A restart is a fresh process, never a reload inside one.** A process ends after a response that
-  saw a new version or configuration, so no code or setting of two versions ever mixes.
+- **A restart is a fresh process, never a reload inside one.** A process ends as soon as it sees a
+  new version or configuration (finishing a request it is answering), so no code or setting of two
+  versions ever mixes. It looks while idle too: the web server may never hand an old process another
+  request, and an old process must not render the site with old templates.
 - **Flask and flup.** With a program that keeps running, start-up time no longer argues for a
   hand-written web layer. flup is old but small, pure Python, and works on the webhost's Python and
   the next one; its one unsafe corner (an error page that shows tracebacks when debugging) is

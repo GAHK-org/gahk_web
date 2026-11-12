@@ -14,7 +14,7 @@ import pytest
 from conftest import SYNC_KEY, Client, execute, page, publish, query, query_one, snapshot, upload_images
 from sqlalchemy.orm import Session
 
-from gahk_web import db, kalender, render, updater
+from gahk_web import db, housekeeping, kalender, render, updater
 from gahk_web.clock import copenhagen_today
 from gahk_web.config import Config
 from gahk_web.snapshot import validate
@@ -215,6 +215,34 @@ def test_no_rebuild_on_the_same_day(client: Client, cfg: Config) -> None:
     (cfg.public_html / "kontakt/index.html").write_text("edited by hand")
     client.get("/findes-ikke")
     assert (cfg.public_html / "kontakt/index.html").read_text() == "edited by hand"
+
+
+def test_a_superseded_release_never_renders(
+    client: Client, cfg: Config, con: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A FastCGI process of the release before an update (a request in flight across the switch)
+    must not render the site again with its old templates."""
+    publish(client)
+    old, active = "a" * 40, "b" * 40
+    monkeypatch.setattr(housekeeping, "code_version", lambda: old)  # this process runs `old`
+    monkeypatch.setenv("GAHK_WEB_HOME", str(tmp_path / "home"))
+    (tmp_path / "home" / "gahk_web").mkdir(parents=True)
+    (tmp_path / "home" / "gahk_web" / "CURRENT").write_text(active + "\n")
+    execute(con, "UPDATE site_state SET rendered_on = rendered_on - 1")  # the day changed, too
+    (cfg.public_html / "kontakt/index.html").write_text("rendered by the active release")
+
+    client.post("/s", b"/", headers={"User-Agent": "Mozilla/5.0"})
+    client.get("/findes-ikke")
+    refused = client.api("POST", "/api/rebuild", {})
+    assert refused.status == 503 and active in refused.json()["error"]
+    refused = client.api("POST", "/api/publish", snapshot())
+    assert refused.status == 503 and active in refused.json()["error"]
+    assert (cfg.public_html / "kontakt/index.html").read_text() == "rendered by the active release"
+
+    # The process that runs the active release renders as before.
+    (tmp_path / "home" / "gahk_web" / "CURRENT").write_text(old + "\n")
+    assert client.api("POST", "/api/rebuild", {}).status == 200
+    assert "rendered by" not in (cfg.public_html / "kontakt/index.html").read_text()
 
 
 # --- the CGI stub, end to end ---

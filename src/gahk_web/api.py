@@ -20,7 +20,15 @@ from sqlalchemy import select
 from . import db, images, outbox, signing
 from .clock import copenhagen_today
 from .config import Config, home_dir
-from .housekeeping import PUBLISH_VARIANT_BUDGET, REBUILD_VARIANT_BUDGET, fill_variants, purge, rebuild
+from .housekeeping import (
+    PUBLISH_VARIANT_BUDGET,
+    REBUILD_VARIANT_BUDGET,
+    Superseded,
+    fill_variants,
+    purge,
+    rebuild,
+    superseded,
+)
 from .models import SiteState
 from .render import load_snapshot, preview_html, render_site
 from .snapshot import HEX64_RE, MAX_IMAGE_BYTES, SnapshotError, validate, validate_preview
@@ -191,6 +199,9 @@ def publish(body: bytes) -> Response:
     # whose earlier attempt was killed, so one of those cannot make publish after publish fail.
     fill_variants(session, config, snapshot, PUBLISH_VARIANT_BUDGET, retry=False)
     with db.advisory_lock(session, db.LOCK_RENDER):
+        active = superseded()
+        if active:  # an old release's process: its templates must not replace the new ones' pages
+            return error(503, f"this is {code_version()}, the active release is {active}; try again")
         missing = images.missing_for(config, snapshot)
         if missing:
             return error(409, "missing images", missing=missing)
@@ -241,8 +252,11 @@ def rebuild_now(body: bytes) -> Response:
     snapshot = load_snapshot(session)
     if snapshot is not None:
         fill_variants(session, cfg(), snapshot, REBUILD_VARIANT_BUDGET, retry=False)
-    with db.advisory_lock(session, db.LOCK_RENDER):
-        written = rebuild(session, cfg(), today())
+    try:
+        with db.advisory_lock(session, db.LOCK_RENDER):
+            written = rebuild(session, cfg(), today())
+    except Superseded as exc:
+        return error(503, f"{exc}; try again")
     if written is None:
         return error(409, "no snapshot has been published yet")
     return json_response(200, {"pages_written": written})

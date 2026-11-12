@@ -10,7 +10,7 @@ import sys
 from . import db
 from .clock import copenhagen_today
 from .config import load_config
-from .housekeeping import COMMAND_VARIANT_BUDGET, fill_variants, rebuild
+from .housekeeping import COMMAND_VARIANT_BUDGET, Superseded, fill_variants, rebuild
 from .render import load_snapshot
 from .version import code_version
 
@@ -34,8 +34,12 @@ def main(argv: list[str]) -> int:
             snapshot = load_snapshot(session)
             if snapshot is not None:
                 fill_variants(session, cfg, snapshot, COMMAND_VARIANT_BUDGET)
-            with db.advisory_lock(session, db.LOCK_RENDER):
-                written = rebuild(session, cfg, copenhagen_today())
+            try:
+                with db.advisory_lock(session, db.LOCK_RENDER):
+                    written = rebuild(session, cfg, copenhagen_today())
+            except Superseded as exc:
+                print(f"not rendered: {exc}", file=sys.stderr)
+                return 1
         print("no snapshot yet" if written is None else f"files written: {written}")
         return 0
     finally:

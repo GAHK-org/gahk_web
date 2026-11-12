@@ -51,7 +51,9 @@ POST
 Responses are JSON (`application/json`) unless noted. Errors look like `{"error": "<message>"}`,
 sometimes with more keys. Common statuses: `400` invalid body, `401` bad or missing signature,
 `404` unknown endpoint, `405` wrong method, `413` body too large, and `503` when gahk.dk's database
-is unreachable (`{"error": "database unavailable"}`).
+is unreachable (`{"error": "database unavailable"}`). `publish` and `rebuild` also answer `503` when
+the request reached a process of the release an update has just replaced (it never renders with
+the old templates); sending it again reaches the new release.
 
 Body limits: 15 MB for an image, 32 MB for `publish` and `preview`, 1 MB for everything else.
 

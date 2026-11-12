@@ -5,14 +5,18 @@ Apache's mod_fcgid starts the process on demand (more of them when requests over
 requests over the listening socket on fd 0, one at a time. flup's single-threaded server answers
 them with the Flask app, which keeps one database connection for request after request (db.py).
 
-After each response the process checks, with one stat() of each, whether ~/gahk_web/CURRENT or
-config.ini changed since it started, and counts its requests and its age. When CURRENT or the
-config changed, after MAX_REQUESTS requests or once older than MAX_AGE, it ends: the response has
-gone out, and mod_fcgid starts a fresh process (with the new release, or the new config) for the next
-request. So the first request after an update may still get the old release's answer; the next one
-gets the new release. While idle, the loop wakes every second: it closes a database connection idle
-for too long and ends the process once it is too old. SIGTERM (mod_fcgid ending an idle process)
-ends it after the current request.
+After each response, and every second while idle, the process checks with one stat() of each
+whether ~/gahk_web/CURRENT or config.ini changed since it started; it also counts its requests and
+its age. When CURRENT or the config changed, after MAX_REQUESTS requests or once older than MAX_AGE,
+it ends (after the response it is giving, if any), and mod_fcgid starts a fresh process (with the
+new release, or the new config) for the next request. So an idle process of the old release is gone
+within about a second of an update; only a request already in flight when CURRENT switched is
+answered by the old release. While idle, the loop also closes a database connection idle for too
+long. SIGTERM (mod_fcgid ending an idle process) ends it after the current request.
+
+The updater rewrites gahk.fcgi with every install (a new inode), and mod_fcgid may key its process
+classes on the script's inode, in which case an old process would never get another request; that
+is why it must not wait for one to notice the switch.
 
 flup is old (its last release is from 2018), but its FastCGI server is small, pure Python and works
 on Python 3.13 and 3.14 (checked: it imports and compiles without warnings and needs none of the
@@ -83,14 +87,25 @@ class RestartPolicy:
         """Why the process should end after this response, or ""."""
         if self.stale:
             return self.stale
+        reason = self.changed()
+        if reason:
+            return reason
+        if served >= self.max_requests:
+            return f"answered {served} requests"
+        return self.too_old()
+
+    def when_idle(self) -> str:
+        """Why the process should end now, while it waits for a request, or ""."""
+        return self.changed() or self.too_old()
+
+    def changed(self) -> str:
+        """Which watched file (CURRENT, config.ini) changed since the process started, or ""."""
         for path, before in zip(self.watched, self.stamps, strict=True):
             if stamp(path) != before:
                 return f"{path.name} changed"
-        if served >= self.max_requests:
-            return f"answered {served} requests"
-        return self.when_idle()
+        return ""
 
-    def when_idle(self) -> str:
+    def too_old(self) -> str:
         age = self.clock() - self.started
         return f"running for {age:.0f} s" if age >= self.max_age else ""
 

@@ -104,10 +104,12 @@ stubs in `~/public_html/cgi-bin/`, both from the release:
 - **`gahk.fcgi`**, a FastCGI process that mod_fcgid starts on the first such request and keeps:
   later requests skip Python's start-up and reuse its database connection (a few milliseconds
   instead of a few hundred). mod_fcgid starts more when requests overlap, and ends idle ones. A
-  process ends by itself after the response in which it sees `~/gahk_web/CURRENT` or `config.ini`
-  changed, after 500 requests, or once an hour old; the next request gets a fresh one. So after an
-  update or a change to `config.ini`, each running process answers once more with what it had, and
-  then gives way.
+  process ends by itself within about a second of seeing `~/gahk_web/CURRENT` or `config.ini`
+  changed (it looks after every response and every second while idle; a request it is answering
+  is finished first), after 500 requests, or once an hour old; the next request gets a fresh one.
+  So after an update or a change to `config.ini`, only a request already in flight is answered
+  with what the old process had. Should such a request ask for the site to be rendered again, the
+  old release leaves that to the new one (it never renders once `CURRENT` names another release).
 - **`gahk.cgi`**, a new process per request, for three cases: `/api/update`, whose updater must work
   however broken the release or FastCGI is; request bodies of 100 000 bytes and more (image
   uploads, publishes), which mod_fcgid refuses; and everything, while the **CGI-only switch** is on
@@ -415,7 +417,8 @@ release. The webhost installs it on intern's next nudge (at most 15 minutes) or 
    retried by the next nudge);
 6. installs the new static files, `cgi-bin/gahk.cgi`, `cgi-bin/gahk.fcgi` and `.htaccess`;
 7. switches `CURRENT`. Up to this point the old release kept running untouched. Each running
-   FastCGI process answers one more request with the old release and then ends;
+   FastCGI process of the old release ends within about a second (after the request it is
+   answering, if any);
 8. asks `{base_url}/api/health` until the new release answers through FastCGI (through CGI with the
    CGI-only switch on); the header `X-Gahk-Runner` says which. A few answers from old processes are
    expected. If the new release does not answer within a few seconds, it puts the previous
@@ -537,7 +540,7 @@ them.
 | The whole site, `/api/update` included, answers 500 right after an update | The new `.htaccess` breaks the site and the check did not catch it (it could not reach the site). Upload the previous release's `htaccess` asset to `~/public_html/.htaccess` by SFTP, then fix it in the repo. |
 | `gahk.cgi` or `gahk.fcgi` is shown as text, or 500 with "Premature end of script headers" | Their mode or permissions (section 4), or no `/usr/bin/python3` (both stubs name it). |
 | Every page answers *"gahk.dk er ved at blive installeret"* although a release is installed | The stub looks in the wrong home. `gahk.fcgi` takes the account's home or the folder above `public_html`; `gahk.cgi` also takes `SetEnv GAHK_WEB_HOME /usr/home/<login>` between the `# BEGIN LOCAL` and `# END LOCAL` lines of `~/public_html/.htaccess`, but only without suEXEC (section 13 item 14; mod_fcgid never passes it on). If only FastCGI looks in the wrong place, the CGI-only switch (below) works around it; report it, the stub needs a fix. |
-| After an update, or a change to `config.ini`, a form or the API still behaves as before | A FastCGI process that has been idle since: it answers one more request with what it had, then ends, and the next request gets a fresh process. To end them all at once, change `~/gahk_web/config.ini`'s modification time (open it in the file manager and save it, or upload it again): every process ends after its next request. |
+| After an update, or a change to `config.ini`, a form or the API still behaves as before | Not a FastCGI process of the old release: those end within about a second of the change. Look for a browser or proxy cache, and check `GET /api/health`'s `version`. To restart every process anyway, change `~/gahk_web/config.ini`'s modification time (open it in the file manager and save it, or upload it again): each ends within about a second. |
 | `/api/health` answers 503 `the release cannot start: …` with `X-Gahk-Runner: gahk.fcgi` | The release fails to import in the FastCGI process; the error log has the traceback. `gahk.fcgi` answers 503 for 30 seconds at a time, then tries again (at once after an update). If CGI works (`/api/update` answers), the CGI-only switch keeps the site up while the release is fixed. |
 | Error log: `mod_fcgid: can't apply process slot`, `… exceeds MaxRequestLen`, or `read data timeout` | One of mod_fcgid's limits: more processes at once than Webhosting S allows (not known), a body under 100 000 bytes still over Hetzner's `FcgidMaxRequestLen` (larger ones already go to CGI), or a request running longer than mod_fcgid waits (`FcgidIOTimeout`, 40 s by default; see section 13 item 12). The CGI-only switch avoids all three. |
 | Error log: `gahk.fcgi[<pid>]: exiting (…)` | Normal: a FastCGI process ended after a change, 500 requests or an hour. |
@@ -551,7 +554,7 @@ nothing else changes. Put the `# ` back to return to FastCGI. Processes still ru
 mod_fcgid ends idle ones.
 
 **Stuck or old processes.** Without SSH no process can be killed by hand, and none needs to be: a
-FastCGI process ends after the response in which it sees `CURRENT` or `config.ini` changed, after
+FastCGI process ends within about a second of seeing `CURRENT` or `config.ini` changed, after
 500 requests, after an hour, or when mod_fcgid ends it for being idle (the timeout on Webhosting S
 is not known; one lived at least 7 minutes). Changing `config.ini`'s modification time, as above,
 restarts them all.

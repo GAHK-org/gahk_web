@@ -16,7 +16,7 @@ from conftest import STATS_SECRET, SYNC_KEY
 from fastcgi_client import Answer, FastCGIProcess, base_env
 from sqlalchemy.orm import Session
 
-from gahk_web import signing, updater
+from gahk_web import fcgi_entry, signing, updater
 from gahk_web.config import DatabaseConfig
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -127,25 +127,35 @@ def test_one_process_answers_request_after_request(spawn: Spawn, home: Path) -> 
     assert process.alive()
 
 
-def test_the_process_ends_after_current_changes(spawn: Spawn, home: Path) -> None:
+def test_an_idle_process_ends_soon_after_current_changes(spawn: Spawn, home: Path) -> None:
+    """mod_fcgid may never send an old process another request (the updater rewrote gahk.fcgi, a
+    new inode), and one that did answer would render with the old templates: it ends by itself."""
     process = spawn()
     assert health(process).status == 200
     rewrite(home / "gahk_web" / "CURRENT")
-    assert process.alive()  # nothing happens while it is idle
-    assert health(process).status == 200  # this request is still answered, by the old process
-    assert process.wait() == 0
+    assert process.wait(timeout=10) == 0  # without another request
     assert "exiting (CURRENT changed)" in process.output()
 
 
-def test_the_process_ends_after_config_ini_changes(spawn: Spawn, home: Path) -> None:
+def test_an_idle_process_ends_soon_after_config_ini_changes(spawn: Spawn, home: Path) -> None:
     process = spawn()
     assert health(process).status == 200
     config = home / "gahk_web" / "config.ini"
     stat = config.stat()
     os.utime(config, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))  # touch config.ini
-    assert health(process).status == 200
-    assert process.wait() == 0
+    assert process.wait(timeout=10) == 0
     assert "exiting (config.ini changed)" in process.output()
+
+
+def test_the_policy_sees_a_switch_while_idle_and_after_a_request(tmp_path: Path) -> None:
+    """A request in flight when CURRENT switched is still answered; the process ends after it."""
+    current = tmp_path / "CURRENT"
+    current.write_text(SHA + "\n")
+    policy = fcgi_entry.RestartPolicy((current,))
+    assert policy.when_idle() == "" and policy.after_request(1) == ""
+    rewrite(current)
+    assert policy.when_idle() == "CURRENT changed"
+    assert policy.after_request(2) == "CURRENT changed"
 
 
 def test_the_process_ends_after_enough_requests(spawn: Spawn) -> None:

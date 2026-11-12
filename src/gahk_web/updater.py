@@ -35,9 +35,9 @@ run(), holding an exclusive lock:
         (keeping the installed file's LOCAL block)
      9. switch CURRENT (written atomically)          <- the release goes live here
     10. ask the site's own GET /api/health until the new release answers, through FastCGI (CGI when
-        the LOCAL block switches to CGI only); FastCGI processes of the old release answer once more
-        and end. If it never does and the previous .htaccess, stubs and release cure the site, put
-        them back and fail
+        the LOCAL block switches to CGI only); FastCGI processes of the old release end within about
+        a second (after a request in flight). If it never does and the previous .htaccess, stubs
+        and release cure the site, put them back and fail
     11. take the release's bin/updater.py if it passes its own --selftest
     12. re-render the site with the new templates
     13. delete hashed static files neither this nor the previous release uses; keep 3 releases
@@ -814,8 +814,8 @@ def site_health(layout: Layout) -> Health:
 
 def wait_for_site(layout: Layout, version: str, runner: str | None) -> Health:
     """Ask the site until the given release answers (through the given runner, unless None), or give
-    up. An old FastCGI process answers one more request after CURRENT changed and then ends, and
-    mod_fcgid may have several, so a few old answers are expected."""
+    up. An old FastCGI process ends within about a second of the switch (after a request it was
+    answering), and mod_fcgid may have several, so a few old answers are expected."""
     health = site_health(layout)
     for _ in range(SITE_CHECK_ATTEMPTS - 1):
         if health.status is None or (health.version == version and runner in (None, health.runner)):
