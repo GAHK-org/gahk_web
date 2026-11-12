@@ -1,0 +1,33 @@
+version: 2
+# Version updates go to dev and ship with the next release, like any other change. Security updates
+# ignore target-branch and always open against main (the default branch); they are hotfixes, and
+# sync-main-to-dev.yml carries them back to dev.
+updates:
+  # Python dependencies (pyproject.toml + uv.lock). The runtime ones are vendored into the bundle
+  # and must stay pure Python: the bundle job fails on one that will not import without its
+  # compiled extension.
+  - package-ecosystem: "uv"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels: ["dependencies"]
+    # Batch routine bumps into one PR each to cut review noise; security fixes
+    # still come as their own PRs regardless of grouping.
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]
+      python-major:
+        update-types: ["major"]
+
+  # GitHub Actions used by the workflows in .github/workflows/.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "ci"]
+    groups:
+      actions:
+        patterns: ["*"]
