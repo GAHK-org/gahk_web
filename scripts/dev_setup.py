@@ -34,6 +34,8 @@ port = {url.port or 5432}
 name = {database}
 user = {url.username or ""}
 password = {url.password or ""}
+# The local dev PostgreSQL has no TLS; the webhost's config must not say this.
+sslmode = disable
 
 [sync]
 # Put the same value in gahk_intern's app/.env as GAHK_WEB_KEY, with GAHK_WEB_URL=http://127.0.0.1:{DEV_PORT}

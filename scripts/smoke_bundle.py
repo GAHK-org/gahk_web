@@ -88,6 +88,7 @@ port = {url.port or 5432}
 name = {url.path.lstrip("/")}
 user = {url.username or ""}
 password = {url.password or ""}
+sslmode = disable
 
 [sync]
 key = {key}

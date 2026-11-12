@@ -40,6 +40,7 @@ def database_config() -> DatabaseConfig:
         name=url.path.lstrip("/"),
         user=url.username or "",
         password=url.password or "",
+        sslmode="disable",  # the local test PostgreSQL has no TLS
     )
 
 

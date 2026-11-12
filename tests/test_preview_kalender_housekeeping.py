@@ -225,7 +225,7 @@ def test_cgi_stub_runs_the_current_release(tmp_path: Path, cfg: Config, con: db.
     database = cfg.database
     (tmp_path / "gahk_web" / "config.ini").write_text(
         f"[database]\nhost = {database.host}\nport = {database.port}\nname = {database.name}\n"
-        f"user = {database.user}\npassword = {database.password}\n"
+        f"user = {database.user}\npassword = {database.password}\nsslmode = disable\n"
         f"[sync]\nkey = {SYNC_KEY}\n[stats]\nsecret = {'s' * 40}\n"
         f"[paths]\npublic_html = {cfg.public_html}\nstate_dir = {cfg.state_dir}\n"
     )

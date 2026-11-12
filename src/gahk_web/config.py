@@ -9,8 +9,9 @@ cgi-bin stub sets it from its own location) or the user's home directory.
     name = ...
     user = ...
     password = ...
-    sslmode = require     ; optional: disable | require | verify-full
-    sslrootcert = ...     ; optional, for verify-full (Hetzner's sqlca.pem)
+    sslmode = verify-full ; require | verify-full | disable. Default: verify-full with sslrootcert,
+                          ; else require. disable (no encryption) is for a local database only.
+    sslrootcert = ...     ; for verify-full (Hetzner's sqlca.pem)
 
     [sync]
     key = ...             ; = GAHK_WEB_KEY on intern; signs every /api/* call
@@ -51,7 +52,7 @@ class DatabaseConfig:
     name: str
     user: str
     password: str
-    sslmode: str = ""
+    sslmode: str = "require"  # encrypted unless a config says "disable"
     sslrootcert: str = ""
 
 
@@ -103,9 +104,10 @@ def load_config(path: Path | None = None) -> Config:
     def get(section: str, key: str, default: str = "") -> str:
         return parser.get(section, key, fallback=default).strip()
 
-    sslmode = get("database", "sslmode")
-    if sslmode not in ("", "disable", "require", "verify-full"):
-        raise ConfigError(f"[database] sslmode must be disable, require or verify-full, got {sslmode!r}")
+    # The database is reached over the network, so the connection is encrypted unless disabled.
+    sslmode = get("database", "sslmode") or ("verify-full" if get("database", "sslrootcert") else "require")
+    if sslmode not in ("disable", "require", "verify-full"):
+        raise ConfigError(f"[database] sslmode must be require, verify-full or disable, got {sslmode!r}")
     try:
         port = int(get("database", "port", "5432"))
     except ValueError as exc:

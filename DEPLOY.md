@@ -81,7 +81,8 @@ until intern pulls them, which it does every 2 minutes.
    certificate `sqlca.pem` from the same page. Upload it to `~/gahk_web/sqlca.pem` and use
    `sslmode = verify-full` with `sslrootcert` in config.ini (section 3). Without Require SSL, use
    `sslmode = require`. That encrypts the connection but does not check the certificate, the same as
-   libpq's `require`.
+   libpq's `require`. Without an `sslmode` line gahk.dk uses `require` (`verify-full` when
+   `sslrootcert` is set); `disable` is for a local development database only.
 
 The updater creates the tables (migrations) on the first install. Nothing else is needed.
 

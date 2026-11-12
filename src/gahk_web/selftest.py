@@ -104,7 +104,7 @@ def check_render() -> dict[str, tuple[str, str | None]]:
     snapshot = validate(sample_snapshot())
     with tempfile.TemporaryDirectory() as scratch:
         cfg = Config(
-            database=DatabaseConfig("localhost", 5432, "selftest", "selftest", ""),
+            database=DatabaseConfig("localhost", 5432, "selftest", "selftest", "", sslmode="disable"),
             sync_key="k" * 40,
             stats_secret="s" * 40,
             public_html=Path(scratch),

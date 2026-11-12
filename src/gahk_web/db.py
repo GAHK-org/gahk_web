@@ -29,7 +29,7 @@ CONNECT_TIMEOUT = 10
 
 
 def _ssl_context(cfg: DatabaseConfig) -> ssl.SSLContext | None:
-    if cfg.sslmode in ("", "disable"):
+    if cfg.sslmode == "disable":
         return None
     if cfg.sslmode == "verify-full":
         return ssl.create_default_context(cafile=cfg.sslrootcert or None)
