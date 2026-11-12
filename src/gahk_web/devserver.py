@@ -86,11 +86,15 @@ def prepare(cfg: Config) -> None:
     """Create the folders, apply migrations, and re-render if the code or the day changed."""
     cfg.public_html.mkdir(parents=True, exist_ok=True)
     cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    engine = db.make_engine(cfg.database)
+    try:
+        applied = db.migrate(engine)
+    finally:
+        engine.dispose()
+    if applied:
+        print(f"Applied migrations: {', '.join(applied)}")
     con = db.connect(cfg.database)
     try:
-        applied = db.migrate(con)
-        if applied:
-            print(f"Applied migrations: {', '.join(applied)}")
         housekeeping.maybe_rebuild(con, cfg)
     finally:
         con.close()

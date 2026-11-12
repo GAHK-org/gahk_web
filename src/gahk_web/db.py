@@ -13,8 +13,11 @@ The web app gets its connection from a SharedConnection: in the persistent FastC
 connection serves request after request, checked before use and closed when idle; under CGI (and in
 tests) each request gets its own.
 
-Schema changes are plain SQL files in gahk_web/migrations/NNNN_name.sql, applied in name order by
-migrate() and recorded in schema_migrations. Each file runs in its own transaction.
+The tables are described as typed SQLAlchemy models in models.py, and the schema is made and changed
+by the Alembic revisions in gahk_web/migrations; migrate() applies them, from the updater (`python
+-m gahk_web migrate`), the devserver and the tests. A revision runs before its release goes live,
+while the previous release still serves the site: it must leave a schema the previous release's
+code still works with.
 """
 
 import contextlib
@@ -24,15 +27,24 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from functools import cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from sqlalchemy import Engine, create_engine, func, select
+from sqlalchemy.pool import NullPool
 
 from .config import DatabaseConfig
 
 if TYPE_CHECKING:
     import psycopg
+    from alembic.config import Config as AlembicConfig
 
 type Row = dict[str, Any]
 type Connection = psycopg.Connection[Row]
+
+# SQLAlchemy's driver; everything else comes from conninfo(), in connect_args.
+URL = "postgresql+psycopg://"
+MIGRATIONS = Path(__file__).resolve().parent / "migrations"
 
 # Advisory lock keys (pg_advisory_lock takes a bigint). "gahk" in hex, then a purpose.
 LOCK_MIGRATE = 0x6761686B_0001
@@ -45,6 +57,9 @@ CONNECT_TIMEOUT = 10
 # idle connections, and every idle FastCGI process would otherwise hold one of its slots.
 PING_AFTER = 20.0
 IDLE_CLOSE = 120.0
+# A migration waits at most this long for a table a request is using (requests queue behind a
+# waiting migration); then it fails, the old release keeps running and the next update tries again.
+MIGRATION_LOCK_TIMEOUT = "10s"
 
 log = logging.getLogger(__name__)
 
@@ -89,7 +104,6 @@ def _system_cafile() -> str:
     """The CA bundle Python's ssl module trusts. libpq's own "system" means the OpenSSL compiled
     into the psycopg wheel, whose default folders need not exist on this host."""
     import ssl
-    from pathlib import Path
 
     paths = ssl.get_default_verify_paths()
     for candidate in (paths.cafile, paths.openssl_cafile):
@@ -244,31 +258,36 @@ def try_advisory_lock(con: Connection, key: int) -> Iterator[bool]:
             execute(con, "SELECT pg_advisory_unlock(:key)", key=key)
 
 
-def migration_files() -> list[tuple[str, str]]:
-    from importlib import resources
-
-    folder = resources.files("gahk_web") / "migrations"
-    files = sorted(entry.name for entry in folder.iterdir() if entry.name.endswith(".sql"))
-    return [(name.removesuffix(".sql"), (folder / name).read_text(encoding="utf-8")) for name in files]
+def make_engine(cfg: DatabaseConfig) -> Engine:
+    """A SQLAlchemy engine that keeps no connection, for migrations."""
+    return create_engine(URL, poolclass=NullPool, connect_args=conninfo(cfg))
 
 
-def migrate(con: Connection) -> list[str]:
-    """Apply pending migrations; returns the names applied. Safe to run concurrently and repeatedly."""
-    applied_now: list[str] = []
-    with advisory_lock(con, LOCK_MIGRATE):
-        execute(
-            con,
-            "CREATE TABLE IF NOT EXISTS schema_migrations ("
-            " name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())",
-        )
-        done = {row["name"] for row in query(con, "SELECT name FROM schema_migrations")}
-        for name, sql in migration_files():
-            if name in done:
-                continue
-            with transaction(con):
-                # Without parameters psycopg uses the simple-query protocol, so a migration file may
-                # hold several statements.
-                execute(con, sql)
-                execute(con, "INSERT INTO schema_migrations (name) VALUES (:name)", name=name)
-            applied_now.append(name)
-    return applied_now
+def alembic_config() -> "AlembicConfig":
+    """Alembic's Config for the migrations inside this package, found by its path (never by the
+    current directory)."""
+    from alembic.config import Config
+
+    config = Config(MIGRATIONS / "alembic.ini")
+    config.set_main_option("script_location", str(MIGRATIONS))
+    return config
+
+
+def migrate(engine: Engine) -> list[str]:
+    """Apply pending migrations; returns the revisions applied. Safe to run concurrently and repeatedly."""
+    from alembic import command
+
+    applied: list[str] = []
+    with engine.connect() as connection:
+        connection.execute(select(func.set_config("lock_timeout", MIGRATION_LOCK_TIMEOUT, False)))
+        connection.execute(select(func.pg_advisory_lock(LOCK_MIGRATE)))
+        connection.commit()  # Alembic runs each revision in a transaction of its own
+        try:
+            config = alembic_config()
+            config.attributes.update(connection=connection, applied=applied)
+            command.upgrade(config, "head")
+        finally:
+            connection.rollback()
+            connection.execute(select(func.pg_advisory_unlock(LOCK_MIGRATE)))
+            connection.commit()
+    return applied

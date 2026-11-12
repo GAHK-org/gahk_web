@@ -6,9 +6,9 @@ webhost's python3 before it switches to a release, and CI runs it on Python 3.13
 bundle. It needs no database, no config file and no network: it imports every module and package,
 checks that the packages are the ones installed for this python and that their compiled parts work
 (MarkupSafe's speedups, psycopg's libpq, Pillow's WebP and JPEG codecs and colour management, nh3),
-makes the variants of a sample picture, renders a sample snapshot with the release's templates into
-memory, checks the static files the pages link to, sends the Flask app two requests the way
-Apache hands them over, and sets up the FastCGI server.
+loads the database migrations, makes the variants of a sample picture, renders a sample snapshot
+with the release's templates into memory, checks the static files the pages link to, sends the
+Flask app two requests the way Apache hands them over, and sets up the FastCGI server.
 """
 
 import importlib
@@ -40,6 +40,9 @@ DEPENDENCIES = (
     "PIL",
     "psycopg",
     "psycopg_binary",
+    "sqlalchemy",
+    "alembic",
+    "mako",
 )
 
 
@@ -246,10 +249,20 @@ def check_release(release: Path | None) -> None:
 
 
 def check_migrations() -> None:
-    from .db import migration_files
+    """The release's Alembic revisions load (every file is imported) and form one line, and the
+    models map onto tables."""
+    from alembic.script import ScriptDirectory
+    from sqlalchemy.orm import configure_mappers
 
-    if not migration_files():
+    from .db import alembic_config
+
+    script = ScriptDirectory.from_config(alembic_config())
+    revisions = list(script.walk_revisions())
+    if not revisions:
         raise AssertionError("no database migrations found")
+    if len(script.get_heads()) != 1:
+        raise AssertionError(f"the migrations have several heads: {script.get_heads()}")
+    configure_mappers()
 
 
 def main(release: Path | None = None, vendor: Path | None = None) -> int:

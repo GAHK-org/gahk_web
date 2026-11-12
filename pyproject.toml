@@ -21,6 +21,10 @@ dependencies = [
     "pillow>=11",
     # The binary extra ships libpq and the C implementation; the webhost has no libpq of its own.
     "psycopg[binary]>=3.2",
+    # The database layer: typed SQLAlchemy 2 models (models.py), and the schema's migrations with
+    # Alembic, which the updater runs on the webhost.
+    "sqlalchemy>=2.1",
+    "alembic>=1.14",
 ]
 
 [dependency-groups]
@@ -41,6 +45,8 @@ package = false
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-ra"
+# SQLAlchemy warns before it changes behaviour; such a warning fails the tests.
+filterwarnings = ["error::sqlalchemy.exc.SADeprecationWarning"]
 
 [tool.mypy]
 python_version = "3.13"

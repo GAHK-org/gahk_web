@@ -1,6 +1,6 @@
 """Maintenance commands: python -m gahk_web <command>
 
-migrate   apply pending database migrations
+migrate   apply pending database migrations (Alembic, from gahk_web/migrations)
 rebuild   make missing image variants, then re-render the site from the cached snapshot
 version   print the code version of this release
 """
@@ -24,12 +24,16 @@ def main(argv: list[str]) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     cfg = load_config()
+    if command == "migrate":
+        engine = db.make_engine(cfg.database)
+        try:
+            applied = db.migrate(engine)
+        finally:
+            engine.dispose()
+        print("applied: " + (", ".join(applied) or "nothing"))
+        return 0
     con = db.connect(cfg.database)
     try:
-        if command == "migrate":
-            applied = db.migrate(con)
-            print("applied: " + (", ".join(applied) or "nothing"))
-            return 0
         snapshot = load_snapshot(con)
         if snapshot is not None:
             fill_variants(con, cfg, snapshot, COMMAND_VARIANT_BUDGET)

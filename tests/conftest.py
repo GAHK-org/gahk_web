@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import pytest
+from sqlalchemy import Engine, text
 from werkzeug.test import Client as WerkzeugClient
 
 from gahk_web import db, signing
@@ -44,14 +45,20 @@ def database_config() -> DatabaseConfig:
 
 
 @pytest.fixture(scope="session")
-def db_config() -> Iterator[DatabaseConfig]:
-    cfg = database_config()
-    con = db.connect(cfg)
-    db.execute(con, "DROP SCHEMA public CASCADE")
-    db.execute(con, "CREATE SCHEMA public")
-    db.migrate(con)
-    con.close()
-    yield cfg
+def engine() -> Iterator[Engine]:
+    """The test database, its schema made afresh by the Alembic migrations (as the updater does)."""
+    test_engine = db.make_engine(database_config())
+    with test_engine.begin() as connection:
+        connection.execute(text("DROP SCHEMA public CASCADE"))
+        connection.execute(text("CREATE SCHEMA public"))
+    db.migrate(test_engine)
+    yield test_engine
+    test_engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def db_config(engine: Engine) -> DatabaseConfig:
+    return database_config()
 
 
 @pytest.fixture
