@@ -618,6 +618,10 @@ class _Site(SimpleHTTPRequestHandler):
             self.send_response(500)
             self.end_headers()
             return
+        if b"Misrouted" in htaccess:  # Apache's own 404: the request never reaches the app
+            self.send_response(404)
+            self.end_headers()
+            return
         version = (self.home / "gahk_web" / "CURRENT").read_text().strip()
         runner = "cgi" if updater.cgi_only(htaccess) else site.runner
         if site.old_answers > 0:
@@ -756,6 +760,24 @@ def test_a_release_from_before_fastcgi_must_answer_through_cgi(
     assert not (home / "public_html" / "cgi-bin" / "gahk.fcgi").exists()
     assert (home / "public_html" / "cgi-bin" / "gahk.cgi").read_text().endswith(f"# {v2}\n")
     assert v1 != v2
+
+
+def test_an_htaccess_that_misroutes_the_api_is_put_back(home: Path, dist: Path, site: type[_Site]) -> None:
+    """The site answered as this one before the switch; afterwards /api/health is Apache's own 404
+    (no X-Gahk-Runner): the new .htaccess no longer reaches the app, so it is not "another site"."""
+    v1 = version(1)
+    release(dist, 1)
+    updater.run(home)
+    release(dist, 2, htaccess="Misrouted\n")
+
+    result = updater.run(home)
+
+    assert (
+        result.error is not None and "the site does not answer with the new release (HTTP 404" in result.error
+    )
+    assert (home / "public_html" / ".htaccess").read_text() == f"# {v1}\n"
+    assert current(home) == v1
+    assert "not this site" not in update_log(home)
 
 
 def test_an_answer_from_another_site_skips_the_check(home: Path, dist: Path, site: type[_Site]) -> None:

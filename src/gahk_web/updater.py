@@ -847,17 +847,30 @@ def put_back(layout: Layout, files: dict[Path, bytes | None], version: str) -> N
     write_atomic(layout.current_file, (version + "\n").encode("ascii"))
 
 
+def is_live(layout: Layout) -> bool:
+    """Before the switch: whether base_url reaches this site (an answer that names its runner)."""
+    return bool(site_health(layout).runner)
+
+
 def check_site(
-    layout: Layout, release: Path, target: str, current: str, previous: dict[Path, bytes | None]
+    layout: Layout,
+    release: Path,
+    target: str,
+    current: str,
+    previous: dict[Path, bytes | None],
+    *,
+    live: bool = True,
 ) -> None:
     """After the switch: the site must answer GET /api/health from the new release, through FastCGI
     (through CGI when the release has no gahk.fcgi or the LOCAL block switches to CGI only).
 
     Otherwise the previous .htaccess, stubs and release go back; when that cures the site, the update
     fails. When they do no better (the database is down, say), it is not the new release's fault,
-    and it stays. Skipped on the first install, where the operator is watching; when the site cannot
-    be reached from here; and when what answers is not this site (before the DNS switch, gahk.dk is
-    still the old site)."""
+    and it stays. Skipped on the first install, where the operator is watching, and when the site
+    cannot be reached from here. An answer that is not from this site (no X-Gahk-Runner) skips it
+    only when the site did not answer as this site before the switch either (`live`; before the DNS
+    switch, gahk.dk is still the old site). Once it did, such an answer means the new .htaccess no
+    longer sends /api/health to the app (and likely not /api/update either), so it goes back."""
     if previous.get(layout.public_html / ".htaccess") is None or not current:
         return
     installed = control_files(layout)
@@ -868,7 +881,7 @@ def check_site(
     if health.status is None or (health.version == target and health.runner == runner):
         log(layout, f"site check: {health.describe()}")
         return
-    if health.status < 500 and not health.runner:
+    if health.status < 500 and not health.runner and not live:
         log(layout, f"site check: not this site ({health.describe()}); skipped")
         return
     log(layout, f"site check: {health.describe()}, expected {target} through {runner}; trying the previous")
@@ -1018,11 +1031,13 @@ def _install(layout: Layout, target: str, manifest: Manifest | None, current: st
     ready_release(layout, release, current)
     run_release(layout, release, "migrations", "migrate", MIGRATE_TIMEOUT)
     controls = control_files(layout)
+    # Whether the site answers as this one now: if so, it must after the switch too.
+    live = bool(current and controls[layout.public_html / ".htaccess"] is not None and is_live(layout))
     install_public(layout, release, controls[layout.public_html / ".htaccess"])
 
     write_atomic(layout.current_file, (target + "\n").encode("ascii"))
     log(layout, f"switched from {current or 'nothing'} to {target}")
-    check_site(layout, release, target, current, controls)
+    check_site(layout, release, target, current, controls, live=live)
     os.utime(release)  # "newest" for prune_releases means most recently installed
 
     notes = []

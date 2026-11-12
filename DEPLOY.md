@@ -424,8 +424,11 @@ release. The webhost installs it on intern's next nudge (at most 15 minutes) or 
    expected. If the new release does not answer within a few seconds, it puts the previous
    `.htaccess`, stubs and `CURRENT` back; when the previous release then answers, the update fails
    (`the site does not answer with the new release …`). A failure the previous release shares (the
-   database is down, say) keeps the new one. The check is skipped on the first install, and when
-   the site cannot be reached or something else answers (before the DNS switch);
+   database is down, say) keeps the new one. The check is skipped on the first install, when the
+   site cannot be reached, and when something else answers (before the DNS switch). "Something
+   else" counts only if it answered before the switch too: once the site answered as itself, an
+   answer without `X-Gahk-Runner` after the switch (Apache's own 403 or 404) means the new
+   `.htaccess` no longer reaches the app, and it goes back;
 9. takes the release's `bin/updater.py` if it passes its own self-test, re-renders the site, deletes
    hashed static files that neither this nor the previous release uses, and keeps 3 releases.
 
