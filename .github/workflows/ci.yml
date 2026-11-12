@@ -87,6 +87,31 @@ jobs:
           ls -l dist
           cat dist/manifest.json >> "$GITHUB_STEP_SUMMARY"
 
+  # The bundle on a fake Hetzner account (scripts/fake_webhost): Debian trixie's Apache 2.4 with
+  # mod_rewrite, mod_fcgid, CGI and suEXEC, and the system python3 3.13 with Debian's pip, as on
+  # the webhost (glibc 2.41, the host's own; this runner's 2.39 is older, so a wheel the `bundle`
+  # job accepts also loads there), beside PostgreSQL 17. From the four bootstrap files a signed
+  # POST /api/update installs the release (pip from PyPI); then the real .htaccess, both stubs and
+  # the updater are tried end to end, including updates that must be refused or rolled back
+  # (DEPLOY.md section 13). The image's layers are cached between runs.
+  webhost:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with: { enable-cache: true }
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: scripts/fake_webhost
+          load: true
+          tags: gahkweb-fake-webhost
+          cache-from: type=gha,scope=fake-webhost
+          cache-to: type=gha,mode=max,scope=fake-webhost
+      - run: uv run python scripts/build_bundle.py
+      - run: uv run python scripts/fake_webhost/e2e.py --no-build
+
   security:
     runs-on: ubuntu-latest
     steps:
@@ -103,7 +128,7 @@ jobs:
   # not freeze releases, least of all the one that bumps it.
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [lint, typecheck, test, bundle]
+    needs: [lint, typecheck, test, bundle, webhost]
     runs-on: ubuntu-latest
     permissions:
       contents: write
