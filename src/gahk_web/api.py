@@ -12,7 +12,7 @@ from typing import Any
 from . import db, images, outbox, signing
 from .clock import copenhagen_today
 from .config import Config, home_dir
-from .housekeeping import purge, rebuild
+from .housekeeping import PUBLISH_VARIANT_BUDGET, REBUILD_VARIANT_BUDGET, fill_variants, purge, rebuild
 from .render import load_snapshot, preview_html, render_site
 from .snapshot import HEX64_RE, MAX_IMAGE_BYTES, SnapshotError, validate, validate_preview
 from .version import code_version
@@ -116,6 +116,8 @@ def image_put(api: Api, request: Request, sha256: str, body: bytes) -> Response:
         images.store(api.con, api.cfg, sha256, body, request.header("Content-Type"))
     except images.ImageError as exc:
         return _error(400, str(exc))
+    # intern uploads one image per request, so making its variants now spreads the work out.
+    images.ensure_variants(api.con, api.cfg, [sha256])
     return Response(204, b"", "text/plain")
 
 
@@ -123,6 +125,12 @@ def publish(api: Api, body: bytes) -> Response:
     snapshot = validate(_json(body))
     con = api.con
     today = api.today()
+    missing = images.missing_for(api.cfg, snapshot)
+    if missing:
+        return _error(409, "missing images", missing=missing)
+    # Before the lock: variants are cache files, and making them may take a while. Whatever the
+    # budget leaves is made by later requests (housekeeping), which then render again.
+    fill_variants(con, api.cfg, snapshot, PUBLISH_VARIANT_BUDGET)
     with db.advisory_lock(con, db.LOCK_RENDER):
         missing = images.missing_for(api.cfg, snapshot)
         if missing:
@@ -152,6 +160,9 @@ def outbox_ack(api: Api, body: bytes) -> Response:
 
 def rebuild_now(api: Api) -> Response:
     con = api.con
+    snapshot = load_snapshot(con)
+    if snapshot is not None:
+        fill_variants(con, api.cfg, snapshot, REBUILD_VARIANT_BUDGET)
     with db.advisory_lock(con, db.LOCK_RENDER):
         written = rebuild(con, api.cfg, api.today())
     if written is None:

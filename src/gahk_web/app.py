@@ -142,7 +142,7 @@ def handle_beacon(request: Request, ctx: Context, errors: TextIO) -> Response:
         return done
     try:
         con = ctx.db()
-        housekeeping.maybe_rebuild(con, ctx.cfg)
+        housekeeping.maybe_rebuild(con, ctx.cfg, make_variants=True)
         if stats.is_page(con, path):
             stats.record_view(
                 con, ctx.cfg.stats_secret, copenhagen_today(), path, request.remote_addr, user_agent

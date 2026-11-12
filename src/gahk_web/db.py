@@ -30,6 +30,7 @@ type Connection = psycopg.Connection[Row]
 # Advisory lock keys (pg_advisory_lock takes a bigint). "gahk" in hex, then a purpose.
 LOCK_MIGRATE = 0x6761686B_0001
 LOCK_RENDER = 0x6761686B_0002
+LOCK_VARIANTS = 0x6761686B_0003  # housekeeping's making of image variants
 
 CONNECT_TIMEOUT = 10
 

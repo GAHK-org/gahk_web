@@ -5,8 +5,9 @@ the updater has just installed them into) on sys.path and calls main(). The upda
 webhost's python3 before it switches to a release, and CI runs it on Python 3.13 and 3.14 for every
 bundle. It needs no database, no config file and no network: it imports every module and package,
 checks that the packages are the ones installed for this python and that their compiled parts work
-(MarkupSafe's speedups, psycopg's libpq, Pillow's WebP and JPEG codecs, nh3), renders a sample
-snapshot with the release's templates into memory, and checks the static files the pages link to.
+(MarkupSafe's speedups, psycopg's libpq, Pillow's WebP and JPEG codecs and colour management, nh3),
+makes the variants of a sample picture, renders a sample snapshot with the release's templates into
+memory, and checks the static files the pages link to.
 """
 
 import importlib
@@ -109,8 +110,11 @@ def check_packages(vendor: Path | None) -> None:
 
 
 def check_images() -> None:
-    """Pillow's compiled codecs: a tiny WebP and JPEG, written and read back in memory."""
-    from PIL import Image, features
+    """Pillow's compiled codecs: a tiny WebP and JPEG, written and read back in memory. Then the
+    variants of a turned JPEG with a colour profile (littlecms, the JPEG decoder's scaling)."""
+    from PIL import Image, ImageCms, features
+
+    from .variants import make
 
     if not features.check("webp"):
         raise AssertionError("Pillow was built without WebP")
@@ -121,6 +125,15 @@ def check_images() -> None:
             image.load()
             if image.format != kind or image.size != (8, 6):
                 raise AssertionError(f"a {kind} image did not survive a round trip")
+    exif = Image.Exif()
+    exif[0x0112] = 6  # turned: stored lying down
+    buffer = io.BytesIO()
+    srgb = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    Image.new("RGB", (1000, 500), (0, 96, 64)).save(buffer, "JPEG", exif=exif.tobytes(), icc_profile=srgb)
+    made = make(buffer.getvalue())
+    sizes = [(width, Image.open(io.BytesIO(data)).size) for width, data in made.files]
+    if (made.width, made.height) != (500, 1000) or sizes != [(480, (480, 960)), (500, (500, 1000))]:
+        raise AssertionError(f"unexpected variants: {made.width}x{made.height}, {sizes}")
 
 
 def check_sanitizer() -> None:
