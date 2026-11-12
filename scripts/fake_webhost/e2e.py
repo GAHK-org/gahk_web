@@ -55,7 +55,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -207,10 +207,20 @@ def picture(width: int, height: int, seed: int, noisy: bool) -> bytes:
     return out.getvalue()
 
 
+# The kitchen picture's name keeps its Danish letters (NFC), as intern sends it, and an old address
+# with one maps to it.
+DANISH_NAME = "køkken-på-første_sal.jpg"
+DANISH_HREF = "k%C3%B8kken-p%C3%A5-f%C3%B8rste_sal.jpg"
+DANISH_LEGACY = "/static/legacy/image/upload/images/køkken.jpg"
+
+
 def snapshot_with_pictures() -> tuple[dict[str, Any], dict[str, bytes]]:
-    """conftest.snapshot(), its three made-up JPEGs swapped for real ones (one of them large)."""
+    """conftest.snapshot(), its three made-up JPEGs swapped for real ones (one of them large), the
+    kitchen picture named with Danish letters."""
     conftest = load_module("e2e_conftest", ROOT / "tests" / "conftest.py")
-    data: dict[str, Any] = conftest.snapshot()
+    data: dict[str, Any] = conftest.rename_image(conftest.snapshot(), "kokken.jpg", DANISH_NAME)
+    kokken = next(image["url"] for image in data["images"] if image["url"].endswith(DANISH_NAME))
+    data["legacy_images"][DANISH_LEGACY] = kokken
     old = [conftest.GANG, conftest.HERO, conftest.KOKKEN]
     new = [picture(1200, 800, 1, False), picture(2400, 1600, 2, True), picture(1000, 700, 3, False)]
     text = json.dumps(data)
@@ -580,6 +590,7 @@ manifest_url = {MANIFEST_URL}
             (f"first install: POST /api/update outlives a 2 s CGI timeout, pip from {self.pip_source()}", lambda: self.first_install(host, first)),
             ("publish: images (small through FastCGI, large through CGI), variants, snapshot", lambda: self.publish(host, snapshot, pictures)),
             ("static files: served by Apache, cache headers, both slash forms", lambda: self.static(host, snapshot)),
+            ("an image name with Danish letters: the file, its percent-encoded URL, old addresses", lambda: self.danish_name(host, snapshot)),
             ("the app: redirects, 404, a POST to a page", lambda: self.dynamic(host)),
             ("forms, the visit beacon, the outbox and its ack", lambda: self.outbox(host)),
             ("preview and the calendar pass-through", lambda: self.preview_and_calendar(host, snapshot)),
@@ -766,6 +777,54 @@ manifest_url = {MANIFEST_URL}
             )
         python = [entry.request for entry in host.access() if entry.handler != "-"]
         expect(not python, f"these static requests started Python: {python}")
+
+    def danish_name(self, host: Webhost, snapshot: dict[str, Any]) -> None:
+        url = next(image["url"] for image in snapshot["images"] if image["url"].endswith(DANISH_NAME))
+        folder = url.rsplit("/", 1)[0]
+        href = f"{folder}/{DANISH_HREF}"
+        listing = host.exec(
+            "python3", "-I", "-c", "import os, sys; print(sorted(os.listdir(os.fsencode(sys.argv[1]))))",
+            f"{PUBLIC_HTML}{folder}", user=LOGIN,
+        )  # fmt: skip
+        expect(
+            repr(DANISH_NAME.encode("utf-8")) in listing, f"the file is not named in UTF-8 (NFC): {listing}"
+        )
+        host.access()
+        original = host.get(href)
+        expect(original.status == 200, f"{href}: {original.status}")
+        expect(original.header("Content-Type") == "image/jpeg", f"{href}: {original.header('Content-Type')}")
+        expect(
+            original.header("Cache-Control") == "public, max-age=31536000, immutable",
+            f"{href}: Cache-Control {original.header('Cache-Control')}",
+        )
+        lower = host.get(href.lower())  # %c3%b8 is the same byte as %C3%B8
+        expect(lower.status == 200 and lower.body == original.body, f"lower-case escapes: {lower.status}")
+        python = [entry.request for entry in host.access() if entry.handler != "-"]
+        expect(not python, f"the picture started Python: {python}")
+        nfd = host.get(f"{folder}/{DANISH_HREF.replace('p%C3%A5', 'pa%CC%8A')}")
+        expect(nfd.status == 404, f"the NFD spelling is another name: {nfd.status}")
+
+        page = host.get("/faciliteter/kokken").text
+        expect(
+            f'<meta property="og:image" content="https://gahk.dk{href}">' in page, "og:image is not encoded"
+        )
+        expect(f"{folder}/_480w.webp 480w" in page, "the body's picture has no srcset")
+        expect(DANISH_NAME not in page, "the page spells the image name out")
+
+        # /public/image/… → (Apache) /static/legacy/image/… → (the app) the picture's /billeder/ URL.
+        # mod_rewrite writes its escapes in lower case (%c3%b8): the same bytes.
+        old = host.get("/public/image/upload/images/k%C3%B8kken.jpg")
+        legacy = "/static/legacy/image/upload/images/k%C3%B8kken.jpg"
+        expect(
+            old.status == 301 and unquote(old.header("Location")).endswith(unquote(legacy)),
+            f"/public/image with Danish letters: {old.status} {old.header('Location')}",
+        )
+        moved = host.get(urlsplit(old.header("Location")).path)
+        expect(
+            moved.status == 301 and moved.header("Location") == href,
+            f"{legacy}: {moved.status} {moved.header('Location')}",
+        )
+        expect(host.get(moved.header("Location")).body == original.body, "the redirect leads elsewhere")
 
     def dynamic(self, host: Webhost) -> None:
         cases = [
