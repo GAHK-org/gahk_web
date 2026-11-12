@@ -7,8 +7,8 @@ bundle. It needs no database, no config file and no network: it imports every mo
 checks that the packages are the ones installed for this python and that their compiled parts work
 (MarkupSafe's speedups, psycopg's libpq, Pillow's WebP and JPEG codecs and colour management, nh3),
 makes the variants of a sample picture, renders a sample snapshot with the release's templates into
-memory, checks the static files the pages link to, and sends the Flask app two requests the way
-Apache hands them over.
+memory, checks the static files the pages link to, sends the Flask app two requests the way
+Apache hands them over, and sets up the FastCGI server.
 """
 
 import importlib
@@ -30,7 +30,17 @@ if TYPE_CHECKING:
 MIN_PYTHON = (3, 13)
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # The runtime dependencies, by import name (pyproject.toml's [project] dependencies).
-DEPENDENCIES = ("flask", "werkzeug", "jinja2", "markupsafe", "nh3", "PIL", "psycopg", "psycopg_binary")
+DEPENDENCIES = (
+    "flask",
+    "werkzeug",
+    "flup",
+    "jinja2",
+    "markupsafe",
+    "nh3",
+    "PIL",
+    "psycopg",
+    "psycopg_binary",
+)
 
 
 def sample_snapshot() -> dict[str, Any]:
@@ -197,6 +207,12 @@ def check_app() -> None:
         refused = client.get("/api/status")
         if refused.status_code != 401 or refused.get_json() != {"error": "missing signature"}:
             raise AssertionError(f"an unsigned /api/status answered {refused.status} {refused.data!r}")
+    # flup's FastCGI server, set up as cgi-bin/gahk.fcgi sets it up (it serves only under mod_fcgid).
+    from .fcgi_entry import RestartPolicy, Server
+
+    server = Server(client.application, RestartPolicy(()))
+    if server.capability.get("FCGI_MAX_REQS") != 1 or server.multithreaded:
+        raise AssertionError("flup's FastCGI server is not the single-threaded one")
 
 
 def check_static(release: Path | None, files: dict[str, tuple[str, str | None]]) -> None:
@@ -221,6 +237,7 @@ def check_release(release: Path | None) -> None:
     for required in (
         "public_html/.htaccess",
         "public_html/cgi-bin/gahk.cgi",
+        "public_html/cgi-bin/gahk.fcgi",
         "bin/updater.py",
         "requirements.lock",
     ):

@@ -9,8 +9,10 @@ requires-python = ">=3.13"
 # webhost's updater pip-installs that for its own python3. Each needs binary wheels for CPython 3.13
 # and 3.14 on manylinux x86_64: the CI bundle job installs them just as the webhost does.
 dependencies = [
-    # The dynamic part (API, forms, beacon, redirects, 404s) is a Flask app.
+    # The dynamic part (API, forms, beacon, redirects, 404s) is a Flask app, served by flup as a
+    # persistent FastCGI process (cgi-bin/gahk.fcgi) and through wsgiref's CGI handler (gahk.cgi).
     "flask>=3.1",
+    "flup>=1.0.3",
     "jinja2>=3.1.4",
     "markupsafe>=2.1",
     # Defence-in-depth sanitising of the published HTML (the same allowlist as intern).
@@ -43,7 +45,14 @@ addopts = "-ra"
 [tool.mypy]
 python_version = "3.13"
 mypy_path = "src"
-# The package, the build scripts, the release's selftest.py and the CGI stub (Python without .py).
-files = ["src/gahk_web", "scripts", "bundle", "public_html/cgi-bin/gahk.cgi"]
+# The package, the build scripts, the release's selftest.py and the two stubs (Python without .py).
+files = ["src/gahk_web", "scripts", "bundle", "public_html/cgi-bin/gahk.cgi", "public_html/cgi-bin/gahk.fcgi"]
 strict = true
 warn_unreachable = true
+# The stubs are scripts without a .py name; check them as modules of their own, not both as __main__.
+scripts_are_modules = true
+
+[[tool.mypy.overrides]]
+# flup (the FastCGI server) has no type hints.
+module = ["flup.*"]
+ignore_missing_imports = true

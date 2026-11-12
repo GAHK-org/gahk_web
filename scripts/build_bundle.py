@@ -15,7 +15,8 @@ The bundle, with no absolute paths, no links and fixed owners, dates and modes:
     bin/updater.py                  the self-updater (a copy of src/gahk_web/updater.py)
     src/gahk_web/                   the package; its static/ holds only static-manifest.json
     public_html/.htaccess
-    public_html/cgi-bin/gahk.cgi
+    public_html/cgi-bin/gahk.cgi    the CGI stub (POST /api/update, large bodies, the CGI-only switch)
+    public_html/cgi-bin/gahk.fcgi   the FastCGI stub (everything else, in a persistent process)
     public_html/static/             site assets: css/js with content-hashed names, the rest as they are
 
 The bundle holds no dependencies. The webhost's updater installs requirements.lock with pip for its
@@ -132,7 +133,7 @@ def requirements_lock() -> str:
 def stage_release(stage: Path, version: str) -> None:
     copy_tree(PACKAGE, stage / "src" / "gahk_web", skip=("static",))
     build_static(stage)
-    for rel in (".htaccess", "cgi-bin/gahk.cgi"):
+    for rel in (".htaccess", "cgi-bin/gahk.cgi", "cgi-bin/gahk.fcgi"):
         dest = stage / "public_html" / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / "public_html" / rel, dest)
@@ -143,7 +144,12 @@ def stage_release(stage: Path, version: str) -> None:
     (stage / "requirements.lock").write_text(requirements_lock(), encoding="utf-8")
 
 
-EXECUTABLES = {"selftest.py", "bin/updater.py", "public_html/cgi-bin/gahk.cgi"}
+EXECUTABLES = {
+    "selftest.py",
+    "bin/updater.py",
+    "public_html/cgi-bin/gahk.cgi",
+    "public_html/cgi-bin/gahk.fcgi",
+}
 
 
 def write_tarball(stage: Path, target: Path, mtime: int) -> None:

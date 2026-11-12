@@ -299,11 +299,21 @@ wheels = [
 ]
 
 [[package]]
+name = "flup"
+version = "1.0.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bb/b5/26cc8f7baf0ddebd3e61a354a2bcc692cfe8005123c37ee3d8507c4c7511/flup-1.0.3.tar.gz", hash = "sha256:5eb09f26eb0751f8380d8ac43d1dfb20e1d42eca0fa45ea9289fa532a79cd159", size = 52277, upload-time = "2018-02-07T21:55:35.092Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/e5/17bcf4431e811ffaec213feea7609a6f003084006d2e210f53cee09095d9/flup-1.0.3-py3-none-any.whl", hash = "sha256:ca9fd78e1cc0431da1236f73fafd1c01db684675b4d369460d5f5c62e6f0b8d6", size = 74226, upload-time = "2018-02-07T21:55:36.818Z" },
+]
+
+[[package]]
 name = "gahk-web"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "flask" },
+    { name = "flup" },
     { name = "jinja2" },
     { name = "markupsafe" },
     { name = "nh3" },
@@ -324,6 +334,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "flask", specifier = ">=3.1" },
+    { name = "flup", specifier = ">=1.0.3" },
     { name = "jinja2", specifier = ">=3.1.4" },
     { name = "markupsafe", specifier = ">=2.1" },
     { name = "nh3", specifier = ">=0.2.18" },
