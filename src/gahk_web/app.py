@@ -35,6 +35,8 @@ WsgiApp = Callable[[dict[str, Any], StartResponse], Iterable[bytes]]
 PAGE_CACHE = ("Cache-Control", "public, max-age=60")
 # The shape of a generated page's folder (pages have two segments at most, optagelse/ansoeg/success three).
 _PAGE_PATH_RE = re.compile(r"^[a-z0-9_-]+(?:/[a-z0-9_-]+){0,2}$")
+# The hash ManifestStaticFilesStorage put into the old site's static names: gang.b8dc291a4e43.jpg.
+_STATIC_HASH_RE = re.compile(r"\.[0-9a-f]{12}(?=\.[^./]+$)")
 
 
 class DatabaseUnavailable(Exception):
@@ -154,13 +156,19 @@ def handle_beacon(request: Request, ctx: Context, errors: TextIO) -> Response:
 
 
 def _legacy_image(con: db.Connection, path: str) -> str | None:
+    """The /billeder/ address of an old picture address, from the snapshot's legacy_images map.
+
+    The old site served these files through Django's ManifestStaticFilesStorage too, under names
+    with a 12-hex-digit hash before the extension (gang.b8dc291a4e43.jpg), and pages elsewhere may
+    still link those; without an exact match, the name without the hash is looked up."""
     row = db.query_one(con, "SELECT snapshot->'legacy_images' AS legacy FROM site_state WHERE id = 1")
     legacy = row["legacy"] if row else None
     if not isinstance(legacy, dict):
         return None
-    for old, new in legacy.items():
-        if old == path or unquote(old) == path:
-            return str(new)
+    for candidate in dict.fromkeys((path, _STATIC_HASH_RE.sub("", path))):
+        for old, new in legacy.items():
+            if old == candidate or unquote(old) == candidate:
+                return str(new)
     return None
 
 

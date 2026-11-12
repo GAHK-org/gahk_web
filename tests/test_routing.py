@@ -72,6 +72,20 @@ def test_old_image_addresses_follow_the_legacy_map(client: Client) -> None:
     assert client.get("/static/legacy/image/upload/images/ukendt.jpg").status == 404
 
 
+def test_old_image_addresses_with_the_old_sites_static_hash_follow_the_map(client: Client) -> None:
+    """The old site also served its legacy images under ManifestStaticFilesStorage's hashed names."""
+    publish(client)
+    gang = image("gang.jpg", GANG)["url"]
+    result = client.get("/static/legacy/image/upload/images/gang.b8dc291a4e43.jpg")
+    assert (result.status, result.headers["Location"]) == (301, gang)
+    result = client.get("/public/image/upload/images/gang.b8dc291a4e43.jpg")
+    assert result.headers["Location"] == "/static/legacy/image/upload/images/gang.b8dc291a4e43.jpg"
+    # Only a 12-hex-digit segment right before the extension is a hash.
+    assert client.get("/static/legacy/image/upload/images/gang.b8dc291a4e4.jpg").status == 404
+    assert client.get("/static/legacy/image/upload/images/gang.B8DC291A4E43.jpg").status == 404
+    assert client.get("/static/legacy/image/upload/images/ukendt.b8dc291a4e43.jpg").status == 404
+
+
 def test_slash_variants_redirect_to_the_canonical_form(client: Client) -> None:
     publish(client)
     result = client.get("/faciliteter/", query="x=1")

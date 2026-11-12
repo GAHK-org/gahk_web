@@ -31,7 +31,8 @@ intern or its storage is down.
   `/media/…`, the old admissions admin pages) redirect to the same place on intern.gahk.dk, keeping
   the method, so a form posted to an old address still arrives.
 - Old picture addresses (`/static/legacy/image/…`, `/public/image/…`) redirect to the picture's new
-  address, when intern has moved it into the image library.
+  address, when intern has moved it into the image library. So do the fingerprinted names the old
+  site also served them under (`gang.b8dc291a4e43.jpg`).
 - Residents' calendar feeds (`/kalender/<token>.ics`) keep working: gahk.dk fetches them from intern
   as they are, unchanged and uncached.
 - `www.gahk.dk` and `http://` redirect to `https://gahk.dk`.
