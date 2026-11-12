@@ -291,7 +291,7 @@ def test_image_names_with_other_letters_are_percent_encoded_in_pages(client: Cli
     put(client, BROKEN)
     data = photo_snapshot()
     data = rename_image(data, "galleri.jpg", "tovtrækning-2019.jpg")
-    data = rename_image(data, "broken.jpg", "kø_og_ål.v2.jpg")
+    data = rename_image(data, "broken.jpg", "kø_og_ål-v2.jpg")
     data = rename_image(data, "gang.jpg", "gangen-på-første.jpg")
     gallery = image("tovtrækning-2019.jpg", PHOTO)["url"]
     folder = f"/billeder/{PHOTO_SHA[:16]}"
@@ -300,7 +300,7 @@ def test_image_names_with_other_letters_are_percent_encoded_in_pages(client: Cli
     publish(client, data)
 
     html = (cfg.public_html / "galleri/index.html").read_text()
-    broken = f"/billeder/{BROKEN_SHA[:16]}/k%C3%B8_og_%C3%A5l.v2.jpg"
+    broken = f"/billeder/{BROKEN_SHA[:16]}/k%C3%B8_og_%C3%A5l-v2.jpg"
     assert f'<img src="{broken}">' in html  # no variants: the original, encoded
     assert html.count(f'srcset="{folder}/_480w.webp 480w') == 2  # both spellings found the picture
     assert f".page-stage--photo{{background-image:url('{folder}/_2000w.webp')}}" in html

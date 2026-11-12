@@ -212,7 +212,7 @@ def test_unused_images_are_collected_after_publish(client: Client, cfg: Config, 
 def test_image_files_keep_their_letters(client: Client, cfg: Config) -> None:
     """A name with Danish letters is written as it is, in UTF-8 and NFC: the bytes Apache looks for
     when a browser asks for the percent-encoded address."""
-    name = "køkken-på-første_sal.v2.jpg"
+    name = "køkken-på-første_sal-v2.jpg"
     assert unicodedata.is_normalized("NFC", name)
     publish(client, rename_image(snapshot(), "kokken.jpg", name))
     folder = os.fsencode(cfg.public_html / "billeder" / image(name, KOKKEN)["sha256"][:16])

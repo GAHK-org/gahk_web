@@ -46,8 +46,9 @@ def is_hidden(path: str) -> bool:
     return any(segment.startswith(".") for segment in segments) and not path.startswith("/.well-known/")
 
 
-# A name Apache would run (it maps handlers by every extension, case-insensitively: a.cgi.jpg too).
-_SCRIPT_RE = re.compile(r"(?:^|/)[^/]*\.(?:py|cgi|fcgi)(?:[./]|$)", re.IGNORECASE)
+# A name Apache would run (it maps handlers by every extension, case-insensitively: a.cgi.jpg too),
+# as Python, CGI, FastCGI, or whatever the host maps PHP, Perl and server-side includes to.
+_SCRIPT_RE = re.compile(r"(?:^|/)[^/]*\.(?:py|cgi|fcgi|php\d?|phtml|phar|pl|shtml)(?:[./]|$)", re.IGNORECASE)
 # Content-Length with six digits or more (100 000 bytes and up): too large for mod_fcgid.
 _LARGE_BODY_RE = re.compile(r"^[0-9]{6,}$")
 UPDATE_PATH = "/api/update"
@@ -64,7 +65,8 @@ def is_stub(path: str) -> bool:
 
 
 def is_script(path: str) -> bool:
-    """A Python, CGI or FastCGI script anywhere: the server would run it, so it is refused."""
+    """A Python, CGI, FastCGI, PHP, Perl or SSI script anywhere: the server would run it, so it is
+    refused."""
     return bool(_SCRIPT_RE.search(path))
 
 

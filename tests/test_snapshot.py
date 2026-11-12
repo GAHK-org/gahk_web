@@ -99,7 +99,6 @@ SHA16 = "0123456789abcdef"
         "kø_og_ål.jpeg",
         "æøå.png",
         "straße.gif",  # ß has no single upper-case letter, and needs none
-        "café.v2.webp",
         "fête_d-été.jpg",
         "ελληνικά.jpg",
         "日本語.png",
@@ -137,9 +136,13 @@ def test_image_names_keep_their_letters(name: str) -> None:
         "_960w.webp",  # gahk.dk's own variants
         "x-.jpg",
         "x.jpg\n",
-        "a.cgi.jpg",  # Apache would run it, so .htaccess refuses its address
+        "a.cgi.jpg",  # Apache maps a handler by every extension: it would run these
         "a.py.jpg",
         "a.fcgi.jpg",
+        "foto.php.jpg",
+        "foto.shtml.jpg",
+        "foto.phtml.png",
+        "café.v2.webp",  # one extension only (intern turns a "." in a stem into "-")
         "ø" * 126 + ".jpg",  # 256 bytes: more than a file name may have
     ],
 )

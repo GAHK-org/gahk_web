@@ -59,8 +59,9 @@ ErrorDocument 404 /404.html
   RewriteRule ^cgi-bin(?:/|$) - [F,L]
 
   # --- No other script runs: the server would run any *.py, *.cgi or *.fcgi under public_html (and,
-  # as Apache maps handlers by every extension, a.cgi.jpg too), whatever the case of its name ---
-  RewriteRule (?:^|/)[^/]*\.(?:py|cgi|fcgi)(?:[./]|$) - [F,L,NC]
+  # as Apache maps handlers by every extension, a.cgi.jpg too), whatever the case of its name. The
+  # same for what the host may map to PHP, Perl or server-side includes. ---
+  RewriteRule (?:^|/)[^/]*\.(?:py|cgi|fcgi|php\d?|phtml|phar|pl|shtml)(?:[./]|$) - [F,L,NC]
 
   # --- The intranet moved to intern.gahk.dk. 308 keeps the method and body (POSTs survive). ---
   # /intern/x and /nyintern/x → intern.gahk.dk/x

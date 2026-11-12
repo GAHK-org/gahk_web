@@ -234,13 +234,14 @@ when no release is installed yet (bootstrap) or the active one is broken.
     name as UTF-8 text (`/billeder/<sha16>/tovtrækning-2019.jpg`), never percent-encoded, and
     gahk.dk refuses the snapshot unless the name
     - is words of lower-case or caseless letters (Unicode categories Ll, Lm, Lo: `æ`, `ø`, `å`,
-      `é`, `ß`, other scripts) and decimal digits (Nd), joined by single `-`, `_` or `.`, so it
-      never starts with `_` or `.` (gahk.dk's variants are `_<width>w.webp`) and has no `..`, `/`,
-      space, control character, `%` or upper-case letter;
+      `é`, `ß`, other scripts) and decimal digits (Nd), joined by single `-` or `_`, then one `.`
+      and the extension, so it never starts with `_` or `.` (gahk.dk's variants are
+      `_<width>w.webp`) and has no `..`, `/`, space, control character, `%` or upper-case letter;
     - is NFC-normalized (`å` is one character, not `a` plus a combining ring);
     - has at most 255 bytes in UTF-8 (the file system's limit; intern cuts a stem at 120), within
       the URL's 200 characters;
-    - has no `.py`, `.cgi` or `.fcgi` before its extension (`.htaccess` refuses such addresses);
+    - has no second extension: Apache maps handlers by every extension in a name, so
+      `foto.php.jpg` could run as PHP and `foto.cgi.jpg` as CGI;
     - ends in an extension of its `content_type`.
   - gahk.dk writes the file under that name in UTF-8. Wherever it puts an image URL in a page (img
     `src`, `srcset`, CSS `url()`, `og:image`) or a `Location` header, the name is percent-encoded

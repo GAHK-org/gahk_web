@@ -18,7 +18,8 @@ FORMAT = 1
 PATH_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*(?:/[a-z0-9]+(?:[-_][a-z0-9]+)*)?$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 # /billeder/<sha16>/<name>. The name is UTF-8 text: words of letters and digits ([^\W_]: any
-# script, Danish letters included) joined by single "-", "_" or "."; billeder_match() checks the rest.
+# script, Danish letters included) joined by single "-" or "_", then one "." and the extension;
+# billeder_match() checks the rest.
 # It never starts with "_" or ".", so it cannot be one of gahk.dk's own variants (_960w.webp).
 BILLEDER_RE = re.compile(r"/billeder/([0-9a-f]{16})/([^\W_]+(?:[-_.][^\W_]+)*)")
 # Letters (lower-case or caseless) and decimal digits: what intern keeps in a name. "²", "½" and
@@ -26,9 +27,8 @@ BILLEDER_RE = re.compile(r"/billeder/([0-9a-f]{16})/([^\W_]+(?:[-_.][^\W_]+)*)")
 _NAME_CATEGORIES = frozenset({"Ll", "Lm", "Lo", "Nd"})
 # A file name may have 255 bytes on the webhost's file system; intern cuts a stem at 120.
 MAX_NAME_BYTES = 255
-# Extensions Apache would run a file for, wherever they stand in its name (it maps handlers by every
-# extension: a.cgi.jpg runs too, so .htaccess refuses such addresses with 403).
-_SCRIPT_EXTENSIONS = frozenset({"py", "cgi", "fcgi"})
+# Apache maps handlers and types by every extension in a name (a.php.jpg may run as PHP, a.cgi.jpg
+# as CGI), so a name has exactly one: its image extension. intern never writes a "." in a stem.
 LEGACY_IMAGE_PREFIX = "/static/legacy/image/"
 # A picture in intern's library, which only a preview may show: /media/cms/<path>. intern sends the
 # name percent-encoded (quote(name, safe="/")), so older names with other letters arrive as %XX.
@@ -268,7 +268,7 @@ def billeder_match(url: str) -> re.Match[str] | None:
         unicodedata.normalize("NFC", name) != name
         or any(unicodedata.category(char) not in _NAME_CATEGORIES for char in name if char not in "-_.")
         or len(name.encode("utf-8")) > MAX_NAME_BYTES
-        or any(part in _SCRIPT_EXTENSIONS for part in name.split(".")[1:])
+        or name.count(".") > 1
     ):
         return None
     return match

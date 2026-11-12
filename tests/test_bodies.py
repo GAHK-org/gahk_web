@@ -191,12 +191,12 @@ def test_images_with_other_letters_are_found_and_encoded() -> None:
         assert "srcset=" in out
 
     body = (
-        '<p><img src="/billeder/fedcba9876543210/kø_og_ål.v2.gif" alt="Kø og ål" class="x">'
+        '<p><img src="/billeder/fedcba9876543210/kø_og_ål-v2.gif" alt="Kø og ål" class="x">'
         '<img src="/billeder/fedcba9876543210/sa%CC%8A-ma%CC%8Ange.png" alt="">'
         '<img src="/billeder/fedcba9876543210/ελληνικά-日本語.jpg"></p>'
     )
     assert responsive_images(body, {}) == (
-        '<p><img src="/billeder/fedcba9876543210/k%C3%B8_og_%C3%A5l.v2.gif" alt="Kø og ål" class="x">'
+        '<p><img src="/billeder/fedcba9876543210/k%C3%B8_og_%C3%A5l-v2.gif" alt="Kø og ål" class="x">'
         '<img src="/billeder/fedcba9876543210/s%C3%A5-m%C3%A5nge.png" alt="">'
         '<img src="/billeder/fedcba9876543210/%CE%B5%CE%BB%CE%BB%CE%B7%CE%BD%CE%B9%CE%BA%CE%AC-'
         '%E6%97%A5%E6%9C%AC%E8%AA%9E.jpg"></p>'

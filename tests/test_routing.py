@@ -184,9 +184,10 @@ def test_htaccess_runs_the_stubs_only_through_its_own_rewrites() -> None:
     assert lines[refuse - 1] == "RewriteCond %{ENV:REDIRECT_STATUS} ^$"  # only the browser's request
     assert lines[refuse + 1] == r"RewriteRule ^cgi-bin/gahk\.f?cgi(?:/|$) - [L]"  # the second round
     assert lines[refuse + 2] == "RewriteRule ^cgi-bin(?:/|$) - [F,L]"  # anything else in cgi-bin
-    scripts = lines.index(r"RewriteRule (?:^|/)[^/]*\.(?:py|cgi|fcgi)(?:[./]|$) - [F,L,NC]")
+    pattern = r"(?:^|/)[^/]*\.(?:py|cgi|fcgi|php\d?|phtml|phar|pl|shtml)(?:[./]|$)"
+    scripts = lines.index(f"RewriteRule {pattern} - [F,L,NC]")
     assert refuse < scripts < lines.index("RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$")
-    assert routing._SCRIPT_RE.pattern == r"(?:^|/)[^/]*\.(?:py|cgi|fcgi)(?:[./]|$)"
+    assert routing._SCRIPT_RE.pattern == pattern
     # The stubs themselves may run; every other Python file is denied outright.
     files_match = re.search(r'<FilesMatch "([^"]+)">', HTACCESS.read_text())
     assert files_match and "py|" in files_match.group(1) and "cgi" not in files_match.group(1)
@@ -252,13 +253,22 @@ def test_which_stub_answers(path: str, content_length: str, cgi_only: bool, stub
         "/A.FCGI",
         "/billeder/0123456789abcdef/a.cgi.jpg",
         "/x.Py",
+        "/billeder/0123456789abcdef/foto.php.jpg",
+        "/billeder/0123456789abcdef/foto.PHP5.jpg",
+        "/billeder/0123456789abcdef/foto.shtml.jpg",
+        "/x.phtml",
+        "/x.phar",
+        "/cgi.pl",
     ],
 )
 def test_scripts_are_refused(path: str) -> None:
     assert routing.is_script(path)
 
 
-@pytest.mark.parametrize("path", ["/faciliteter", "/static/css/site.1a2b3c4d.css", "/pycon", "/a.pyc"])
+@pytest.mark.parametrize(
+    "path",
+    ["/faciliteter", "/static/css/site.1a2b3c4d.css", "/pycon", "/a.pyc", "/a.plan", "/php", "/a.phpx"],
+)
 def test_other_paths_are_not_scripts(path: str) -> None:
     assert not routing.is_script(path)
 
