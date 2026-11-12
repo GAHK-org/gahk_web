@@ -1,10 +1,10 @@
 """The content snapshot intern publishes, and its strict validation.
 
-The snapshot is signed, so its HTML bodies are trusted as they are (intern sanitized them; there is
-no HTML sanitizer here). Everything else is checked hard: types, sizes, path syntax, reserved
-paths, image URLs. Unknown keys are refused too, so a contract drift between intern and gahk.dk
-shows up as a failed publish on intern instead of silently missing content. A refused snapshot
-changes nothing: the site keeps serving the previous one.
+The snapshot is signed and intern sanitised its HTML bodies; they are kept as they are here and
+sanitised once more when they are rendered (bodies.py). Everything else is checked hard: types,
+sizes, path syntax, reserved paths, image URLs. Unknown keys are refused too, so a contract drift
+between intern and gahk.dk shows up as a failed publish on intern instead of silently missing
+content. A refused snapshot changes nothing: the site keeps serving the previous one.
 """
 
 import re

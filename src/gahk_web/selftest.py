@@ -124,11 +124,13 @@ def check_images() -> None:
 
 
 def check_sanitizer() -> None:
-    import nh3
+    from .bodies import sanitize
 
-    cleaned = nh3.clean('<p onclick="x()">Hej <b>alle</b><script>alert(1)</script></p>')
-    if cleaned != "<p>Hej <b>alle</b></p>":
-        raise AssertionError(f"nh3 left {cleaned!r}")
+    cleaned = sanitize(
+        '<p onclick="x()">Hej <b>alle</b><script>alert(1)</script><a href="javascript:x()">x</a></p>'
+    )
+    if cleaned != '<p>Hej <b>alle</b><a rel="noopener noreferrer">x</a></p>':
+        raise AssertionError(f"the sanitiser left {cleaned!r}")
 
 
 def check_render() -> dict[str, tuple[str, str | None]]:

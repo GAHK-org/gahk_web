@@ -15,9 +15,11 @@ released first.
   an outbox (form submissions, visit counts) until intern pulls it.
 - **What intern receives from gahk.dk is untrusted input.** It validates applications and visit
   counts as if they were form posts.
-- **The snapshot is trusted HTML.** intern sanitises page bodies before sending; gahk.dk has no
-  sanitiser and relies on the signature. Titles, labels and menu text are plain text, escaped by
-  gahk.dk's templates.
+- **Bodies are sanitised on both sides.** intern sanitises page, news and event bodies before it
+  stores them; gahk.dk cleans them again with the same allowlist (nh3) whenever it renders them, as
+  defence in depth. Anything intern's sanitiser allows survives unchanged, anything else is dropped.
+  Change the allowlist in both repositories together. Titles, labels and menu text are plain text,
+  escaped by gahk.dk's templates.
 
 ## Authentication
 

@@ -10,6 +10,8 @@ Every page of the site is a pre-rendered file that Apache serves without startin
     optagelse/ansoeg/success/index.html the thank-you page
     404.html, 503.html, sitemap.xml, robots.txt, sw.js
 
+Bodies are sanitised again before they are written (bodies.py).
+
 Each file is written to a temporary name and moved into place, so a visitor never sees half a page,
 and only when its content changed. The generated_files table lists what the last render wrote; a file
 in that list that the new render does not produce (a deleted or moved page) is removed. Nothing else in
@@ -238,7 +240,10 @@ class Site:
     # --- HTML ---
 
     def body(self, html: str) -> str:
-        """A trusted body from the signed snapshot. In a preview, intern-only images load from intern."""
+        """A body from the snapshot, sanitised again. In a preview, intern-only images load from intern."""
+        from .bodies import sanitize  # pages only
+
+        html = sanitize(html)
         if self.preview:
             return _MEDIA_ATTR_RE.sub(
                 lambda match: match.group(1) + self.preview_media_base + "/media/", html
