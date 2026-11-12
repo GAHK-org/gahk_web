@@ -214,11 +214,17 @@ address konsoleH shows for the account). The clock of the machine sending the re
 
 konsoleH → *Services* → *SSL Manager* → Let's Encrypt, for `gahk.dk` and `www.gahk.dk`.
 
-- **Before the DNS switch**, choose **DNS validation (TXT)**. konsoleH shows a `_acme-challenge`
-  TXT value for each name. Add them at gahk.dk's DNS provider (Punktum), wait for them to resolve,
-  and confirm in konsoleH. The certificate is then ready before any visitor arrives.
-- After the switch, Hetzner renews automatically while the account is active. Keep the TXT records
-  until the first renewal has gone through.
+- **Before the DNS switch**, choose **DNS validation (TXT)**, for this first certificate only.
+  konsoleH shows a `_acme-challenge` TXT value for each name. Add them at gahk.dk's DNS provider
+  (Punktum), wait for them to resolve, and confirm in konsoleH. The certificate is then ready before
+  any visitor arrives.
+- DNS validation cannot renew by itself. Every renewal gets a new `_acme-challenge` value, and
+  Hetzner cannot write records at Punktum, so the certificate would expire. Browsers that have seen
+  `Strict-Transport-Security` then refuse the site outright.
+- **Right after the switch**, once `@` and `www` resolve to the webhost, re-issue the certificate in
+  the SSL Manager (or switch it) with **file (HTTP) validation**. Hetzner then renews it
+  unattended while the account is active. The `.htaccess` lets `/.well-known/` through, and Let's
+  Encrypt follows the http→https redirect. Then delete the `_acme-challenge` TXT records at Punktum.
 - Do not switch on HSTS separately in konsoleH. The `.htaccess` sends
   `Strict-Transport-Security` on https responses once the certificate works.
 
@@ -233,7 +239,7 @@ webhost.
 
 | Name | Type | Value | When |
 |---|---|---|---|
-| `_acme-challenge`, `_acme-challenge.www` | TXT | from konsoleH's SSL Manager | before the switch (section 5) |
+| `_acme-challenge`, `_acme-challenge.www` | TXT | from konsoleH's SSL Manager | before the switch; delete once the certificate uses file validation (section 5) |
 | `intern` | A / AAAA | the Coolify server (today's gahk.dk addresses) | before the switch |
 | `@` (gahk.dk) | A / AAAA | the webhost's IPv4 / IPv6 from konsoleH | **the switch** |
 | `www` | A / AAAA (or CNAME `gahk.dk.`) | the webhost | the switch |
@@ -279,7 +285,8 @@ Until step 4, the old site keeps serving gahk.dk from Coolify.
    background. Ask `gahk_api GET /api/status` a minute later. gahk_web is now live but empty: pages
    answer the 503 page *"Siden opdateres"*.
 4. **Switch DNS**: `@` and `www` to the webhost (section 6). As resolvers pick it up, visitors see
-   *"Siden opdateres"* for a few minutes.
+   *"Siden opdateres"* for a few minutes. Once both names resolve to the webhost, re-issue the
+   certificate with file validation (section 5), or it will not renew.
 5. **Deploy the new intern** with `GAHK_WEB_URL`, `GAHK_WEB_KEY` and `PUBLIC_SITE_URL` set (section 3).
    Within about 2 minutes its sync task sees that gahk.dk has no content and publishes everything:
    it first converts the old `static/legacy` images into the image library, then uploads the images
@@ -315,6 +322,8 @@ In a browser:
 - Open a few pages on a phone. Logged in to intern as an editor, the pages show **Rediger siden**.
 - intern's *Hjemmeside* overview shows the running version equal to the available one, and the last
   update as `updated` or `unchanged`.
+- konsoleH's SSL Manager shows **file validation** for `gahk.dk` and `www.gahk.dk`, not DNS (section
+  5), so the certificate renews by itself.
 
 ## 10. Updates and rollback
 
