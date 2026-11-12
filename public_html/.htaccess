@@ -95,6 +95,9 @@ ErrorDocument 404 /404.html
   # /api/update always goes to gahk.cgi: it runs the self-updater without importing the release,
   # so an update can repair a broken release, or a broken FastCGI process, from there.
   RewriteRule ^api/update$ cgi-bin/gahk.cgi/api/update [L,QSA]
+  # Publishes and the nightly rebuild render the whole site after up to 30 s of picture variants:
+  # longer than mod_fcgid waits for an answer (FcgidIOTimeout, 40 s by default), so they go to CGI.
+  RewriteRule ^(api/(?:publish|rebuild))$ cgi-bin/gahk.cgi/$1 [L,QSA]
   # Bodies of 100 000 bytes and more (image uploads, publishes) go to gahk.cgi: mod_fcgid refuses
   # bodies over FcgidMaxRequestLen (128 KiB unless Hetzner raised it), which no .htaccess can change.
   RewriteCond %{HTTP:Content-Length} ^[0-9]{6,}$

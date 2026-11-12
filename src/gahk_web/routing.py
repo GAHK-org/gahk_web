@@ -51,6 +51,9 @@ _SCRIPT_RE = re.compile(r"(?:^|/)[^/]*\.(?:py|cgi|fcgi)(?:[./]|$)", re.IGNORECAS
 # Content-Length with six digits or more (100 000 bytes and up): too large for mod_fcgid.
 _LARGE_BODY_RE = re.compile(r"^[0-9]{6,}$")
 UPDATE_PATH = "/api/update"
+# Requests that may run longer than mod_fcgid waits (FcgidIOTimeout, 40 s by default): picture
+# variants, then a render of the whole site.
+LONG_PATHS = frozenset({"/api/publish", "/api/rebuild"})
 CGI_STUB = "gahk.cgi"
 FASTCGI_STUB = "gahk.fcgi"
 
@@ -67,9 +70,10 @@ def is_script(path: str) -> bool:
 
 def stub_for(path: str, content_length: str = "", *, cgi_only: bool = False) -> str:
     """Which stub .htaccess hands a request for the app to: gahk.cgi for /api/update (the updater
-    must work when the release or FastCGI does not), for bodies too large for mod_fcgid, and for
-    everything while the operator's CGI-only switch is on; gahk.fcgi for the rest."""
-    if path == UPDATE_PATH or _LARGE_BODY_RE.match(content_length) or cgi_only:
+    must work when the release or FastCGI does not), for publishes and rebuilds (they may outlast
+    mod_fcgid's FcgidIOTimeout), for bodies too large for mod_fcgid, and for everything while the
+    operator's CGI-only switch is on; gahk.fcgi for the rest."""
+    if path == UPDATE_PATH or path in LONG_PATHS or _LARGE_BODY_RE.match(content_length) or cgi_only:
         return CGI_STUB
     return FASTCGI_STUB
 

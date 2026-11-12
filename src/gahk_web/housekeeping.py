@@ -35,7 +35,8 @@ from .version import code_version
 RATE_LIMIT_KEEP = timedelta(days=1)
 SEEN_KEEP_DAYS = 2
 # Seconds a request may spend making image variants. A publish or rebuild answers intern (which waits
-# 60 s); housekeeping runs inside a visitor's request; the command line runs detached (the updater).
+# 60 s), through CGI (.htaccess: mod_fcgid's FcgidIOTimeout, 40 s by default, would cut them off);
+# housekeeping runs inside a visitor's request; the command line runs detached (the updater).
 PUBLISH_VARIANT_BUDGET = 20.0
 REBUILD_VARIANT_BUDGET = 30.0
 HOUSEKEEPING_VARIANT_BUDGET = 3.0

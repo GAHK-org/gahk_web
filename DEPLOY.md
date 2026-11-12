@@ -110,10 +110,11 @@ stubs in `~/public_html/cgi-bin/`, both from the release:
   So after an update or a change to `config.ini`, only a request already in flight is answered
   with what the old process had. Should such a request ask for the site to be rendered again, the
   old release leaves that to the new one (it never renders once `CURRENT` names another release).
-- **`gahk.cgi`**, a new process per request, for three cases: `/api/update`, whose updater must work
-  however broken the release or FastCGI is; request bodies of 100 000 bytes and more (image
-  uploads, publishes), which mod_fcgid refuses; and everything, while the **CGI-only switch** is on
-  (section 12).
+- **`gahk.cgi`**, a new process per request, for four cases: `/api/update`, whose updater must work
+  however broken the release or FastCGI is; `/api/publish` and `/api/rebuild`, which may run longer
+  than mod_fcgid waits for an answer (picture variants, then the whole site rendered); request
+  bodies of 100 000 bytes and more (image uploads), which mod_fcgid refuses; and everything, while
+  the **CGI-only switch** is on (section 12).
 
 When the release cannot run (none installed yet, packages for another python, an import failure),
 `gahk.fcgi` does not crash and restart for every request: it answers like `gahk.cgi` does in that
@@ -545,7 +546,7 @@ them.
 | Every page answers *"gahk.dk er ved at blive installeret"* although a release is installed | The stub looks in the wrong home. `gahk.fcgi` takes the account's home or the folder above `public_html`; `gahk.cgi` also takes `SetEnv GAHK_WEB_HOME /usr/home/<login>` between the `# BEGIN LOCAL` and `# END LOCAL` lines of `~/public_html/.htaccess`, but only without suEXEC (section 13 item 14; mod_fcgid never passes it on). If only FastCGI looks in the wrong place, the CGI-only switch (below) works around it; report it, the stub needs a fix. |
 | After an update, or a change to `config.ini`, a form or the API still behaves as before | Not a FastCGI process of the old release: those end within about a second of the change. Look for a browser or proxy cache, and check `GET /api/health`'s `version`. To restart every process anyway, change `~/gahk_web/config.ini`'s modification time (open it in the file manager and save it, or upload it again): each ends within about a second. |
 | `/api/health` answers 503 `the release cannot start (<exception type>)` with `X-Gahk-Runner: gahk.fcgi` | The release fails to import in the FastCGI process; the error log has the traceback, and a signed `GET /api/status` the exception in `detail` (health never shows more than its type: the text may quote `config.ini`). `gahk.fcgi` answers 503 for 30 seconds at a time, then tries again (at once after an update). If CGI works (`/api/update` answers), the CGI-only switch keeps the site up while the release is fixed. |
-| Error log: `mod_fcgid: can't apply process slot`, `… exceeds MaxRequestLen`, or `read data timeout` | One of mod_fcgid's limits: more processes at once than Webhosting S allows (not known), a body under 100 000 bytes still over Hetzner's `FcgidMaxRequestLen` (larger ones already go to CGI), or a request running longer than mod_fcgid waits (`FcgidIOTimeout`, 40 s by default; see section 13 item 12). The CGI-only switch avoids all three. |
+| Error log: `mod_fcgid: can't apply process slot`, `… exceeds MaxRequestLen`, or `read data timeout` | One of mod_fcgid's limits: more processes at once than Webhosting S allows (not known), a body under 100 000 bytes still over Hetzner's `FcgidMaxRequestLen` (larger ones already go to CGI), or a request running longer than mod_fcgid waits (`FcgidIOTimeout`, 40 s by default; publishes and rebuilds already go to CGI; see section 13 item 12). The CGI-only switch avoids all three. |
 | Error log: `gahk.fcgi[<pid>]: exiting (…)` | Normal: a FastCGI process ended after a change, 500 requests or an hour. |
 
 **The CGI-only switch.** Should FastCGI misbehave, send everything to `gahk.cgi`: in
@@ -664,9 +665,11 @@ it; each of those still needs a look on Hetzner only if its Apache is set up dif
     the most processes at once. `FcgidMaxRequestLen`: 128 KiB by default and only raised in the
     server's configuration, so bodies of 100 000 bytes and more go to CGI (with the defaults:
     **fake webhost**). `FcgidIOTimeout`: 40 s by default; a FastCGI request that runs longer is cut
-    off. The longest are `POST /api/rebuild` (at most 30 s of picture variants, then the render)
-    and a publish under 100 000 bytes (20 s, then the render). If `read data timeout` appears in
-    the error log, lower those budgets (`housekeeping.py`) or send those paths to CGI. A FastCGI
+    off. The longest requests, `POST /api/rebuild` (at most 30 s of picture variants, then the
+    render) and `POST /api/publish` (20 s, then the render), therefore always go to CGI, where
+    Apache's own `Timeout` applies; what FastCGI answers takes a few seconds at most (an image
+    upload's variants, the visit beacon's 3 s). If `read data timeout` appears in the error log all
+    the same, the CGI-only switch avoids it. A FastCGI
     process keeps the memory a request once needed (Pillow, item 13) until it ends, at most an hour
     later. **Not verified on Hetzner.**
 13. A CGI or FastCGI process may use the memory Pillow needs for the WebP variants: about 50 MB above

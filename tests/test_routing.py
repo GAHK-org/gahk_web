@@ -197,6 +197,7 @@ def test_htaccess_sends_updates_and_large_bodies_to_cgi_and_the_rest_to_fastcgi(
     tail = lines[lines.index("RewriteRule ^api/update$ cgi-bin/gahk.cgi/api/update [L,QSA]") :]
     assert tail == [
         "RewriteRule ^api/update$ cgi-bin/gahk.cgi/api/update [L,QSA]",
+        "RewriteRule ^(api/(?:publish|rebuild))$ cgi-bin/gahk.cgi/$1 [L,QSA]",
         "RewriteCond %{HTTP:Content-Length} ^[0-9]{6,}$",
         "RewriteRule ^(.*)$ cgi-bin/gahk.cgi/$1 [L,QSA]",
         "RewriteCond %{ENV:GAHK_CGI_ONLY} =1",
@@ -205,6 +206,7 @@ def test_htaccess_sends_updates_and_large_bodies_to_cgi_and_the_rest_to_fastcgi(
     ]
     assert routing._LARGE_BODY_RE.pattern == "^[0-9]{6,}$"
     assert routing.UPDATE_PATH == "/api/update"
+    assert routing.LONG_PATHS == {"/api/publish", "/api/rebuild"}
 
 
 def test_the_cgi_only_switch_is_in_the_local_block_and_off() -> None:
@@ -224,8 +226,12 @@ def test_the_cgi_only_switch_is_in_the_local_block_and_off() -> None:
     [
         ("/api/update", "2", False, "gahk.cgi"),
         ("/api/update/", "2", False, "gahk.fcgi"),
-        ("/api/publish", "99999", False, "gahk.fcgi"),
+        ("/api/publish", "99999", False, "gahk.cgi"),  # may outlast mod_fcgid's FcgidIOTimeout
         ("/api/publish", "100000", False, "gahk.cgi"),
+        ("/api/rebuild", "2", False, "gahk.cgi"),
+        ("/api/rebuild/", "2", False, "gahk.fcgi"),
+        ("/api/preview", "99999", False, "gahk.fcgi"),
+        ("/api/status", "", False, "gahk.fcgi"),
         ("/api/images/" + "a" * 64, "2400000", False, "gahk.cgi"),
         ("/s", "", False, "gahk.fcgi"),
         ("/optagelse/ansoeg", "512", False, "gahk.fcgi"),

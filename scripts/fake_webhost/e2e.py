@@ -719,6 +719,14 @@ manifest_url = {MANIFEST_URL}
         )
         published = host.api("POST", "/api/publish", snapshot)
         expect(published.status == 200, f"publish: {published.status} {published.text}")
+        rebuilt = host.api("POST", "/api/rebuild", {})
+        expect(rebuilt.status == 200, f"rebuild: {rebuilt.status} {rebuilt.text}")
+        # Both may outlast mod_fcgid's FcgidIOTimeout, so .htaccess sends them to CGI.
+        long_requests = [(entry.request, entry.handler) for entry in host.access()]
+        expect(
+            len(long_requests) == 2 and all(handler == "cgi-script" for _, handler in long_requests),
+            f"publish and rebuild should run as CGI: {long_requests}",
+        )
         hero = next(image for image in snapshot["images"] if image["url"].endswith("/hero.jpg"))
         folder = hero["url"].rsplit("/", 1)[0]
         listing = host.exec("ls", f"{PUBLIC_HTML}{folder}", user=LOGIN).split()

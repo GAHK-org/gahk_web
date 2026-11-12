@@ -94,8 +94,10 @@ The runbook is DEPLOY.md.
   cost more than answering it; the webhost keeps a FastCGI program running for free. Updates stay on
   CGI, which needs nothing but the standard library, so they work when the running version or
   FastCGI does not.
-- **Large uploads go through CGI.** The webhost's FastCGI module refuses request bodies over 128 KiB,
-  and that limit cannot be raised from the site.
+- **Large uploads, publishes and the nightly rebuild go through CGI.** The webhost's FastCGI module
+  refuses request bodies over 128 KiB and cuts off requests that run longer than 40 seconds (its
+  defaults), and neither limit can be raised from the site. A publish or a rebuild may make
+  picture variants for up to half a minute and then render every page.
 - **A restart is a fresh process, never a reload inside one.** A process ends as soon as it sees a
   new version or configuration (finishing a request it is answering), so no code or setting of two
   versions ever mixes. It looks while idle too: the web server may never hand an old process another
