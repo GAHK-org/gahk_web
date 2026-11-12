@@ -48,7 +48,7 @@ import traceback
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote
 
 UPDATE_PATH = "/api/update"
 HEALTH_PATH = "/api/health"
@@ -59,6 +59,8 @@ MIN_KEY_LENGTH = 32  # as gahk_web/config.py
 NOT_INSTALLED = "no release is installed yet"
 # What answers, on GET /api/health (as gahk_web/api.py's RUNNER_HEADER): the stub itself.
 RUNNER_HEADER = "X-Gahk-Runner"
+# The scheme and authority of an absolute-form request target (as gahk_web/web.py's).
+ABSOLUTE_FORM_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*")
 
 # (status line, headers, body): what a stub answers instead of the release.
 type Answer = tuple[str, list[tuple[str, str]], bytes]
@@ -155,10 +157,13 @@ def cgi_response(result: Answer) -> bytes:
 
 
 def request_path(environ: Mapping[str, str]) -> str:
-    """The path the client asked for (and intern signed), read as gahk_web/web.py reads it."""
+    """The path the client asked for (and intern signed), read as gahk_web/web.py's
+    use_browser_path() reads it: an absolute-form target's scheme and host dropped, the query cut
+    off, percent-decoding undone, leading slashes collapsed."""
     request_uri = environ.get("REQUEST_URI", "")
     if request_uri:
-        return "/" + unquote(urlsplit(request_uri).path, errors="replace").lstrip("/")
+        raw_path = ABSOLUTE_FORM_RE.sub("", request_uri, count=1).partition("?")[0]
+        return "/" + unquote(raw_path, errors="replace").lstrip("/")
     return "/" + environ.get("PATH_INFO", "").lstrip("/")
 
 

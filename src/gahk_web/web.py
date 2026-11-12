@@ -2,6 +2,7 @@
 limits, responses with the site's headers, and the request's database session."""
 
 import json
+import re
 from collections.abc import Callable, Iterable
 from typing import Any
 from urllib.parse import unquote_to_bytes
@@ -20,6 +21,10 @@ PAGE_CACHE = ("Cache-Control", "public, max-age=60")
 # Every method a route may see. Routes take them all and refuse the wrong ones themselves, so a
 # signature is checked before the method (as intern expects) and OPTIONS gets no automatic answer.
 ALL_METHODS = ["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+
+# An absolute-form request target (GET https://gahk.dk/api/health HTTP/1.1) starts with the scheme
+# and authority; only those are dropped, so "//api/x" stays a path. cgi-bin/gahk.cgi reads it alike.
+ABSOLUTE_FORM_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*")
 
 type StartResponse = Callable[..., Any]
 type WsgiApp = Callable[[dict[str, Any], StartResponse], Iterable[bytes]]
@@ -49,12 +54,13 @@ def use_browser_path(environ: dict[str, Any]) -> None:
     Under Apache the .htaccess rewrites what it cannot serve to /cgi-bin/gahk.fcgi/<path> (or
     gahk.cgi), so SCRIPT_NAME names the stub and PATH_INFO is the rewritten, decoded path.
     REQUEST_URI is the original request line: exactly what the client, and the signer on intern,
-    used. The app sees it as PATH_INFO (decoded, leading slashes collapsed) with an empty
-    SCRIPT_NAME, so neither routing nor any URL the app builds ever contains the stub's path.
+    used. The app sees it as PATH_INFO (decoded, leading slashes collapsed, the scheme and host of
+    an absolute-form target dropped) with an empty SCRIPT_NAME, so neither routing nor any URL the
+    app builds ever contains the stub's path. cgi-bin/gahk.cgi's request_path() reads it alike.
     """
     request_uri = environ.get("REQUEST_URI", "")
     if request_uri:
-        raw_path, has_query, query_string = request_uri.partition("?")
+        raw_path, has_query, query_string = ABSOLUTE_FORM_RE.sub("", request_uri, count=1).partition("?")
         # WSGI strings carry the request's bytes as latin-1; the bytes stay as they are, and
         # Werkzeug decodes them as UTF-8 (U+FFFD for what is not UTF-8).
         path = unquote_to_bytes(raw_path.encode("latin-1", "replace")).decode("latin-1")

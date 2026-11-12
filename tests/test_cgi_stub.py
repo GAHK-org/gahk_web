@@ -242,6 +242,34 @@ def test_a_release_without_packages_answers_503(home: Path, tmp_path: Path) -> N
     assert "not installed" in json.loads(body)["error"]
 
 
+@pytest.mark.parametrize(
+    ("request_uri", "path"),
+    [
+        ("https://gahk.dk/api/health", "/api/health"),  # absolute form
+        ("HTTP://gahk.dk:443/api/health?x=1", "/api/health"),
+        ("https://gahk.dk", "/"),
+        ("//api/health", "/api/health"),  # not a host: leading slashes collapse
+        ("/api//health?x=1", "/api//health"),
+        ("/optagelse/s%C3%B8g?a=b", "/optagelse/søg"),
+        ("/a%2Fb", "/a/b"),
+        ("/api/health?next=https://x.dk/", "/api/health"),
+    ],
+)
+def test_the_stub_reads_the_path_as_the_app_does(request_uri: str, path: str) -> None:
+    from gahk_web.web import use_browser_path
+
+    loader = importlib.machinery.SourceFileLoader("gahk_cgi_stub", str(STUB))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    environ = {"REQUEST_URI": request_uri, "PATH_INFO": "/elsewhere", "SCRIPT_NAME": "/cgi-bin/gahk.fcgi"}
+    use_browser_path(environ)
+
+    assert environ["PATH_INFO"].encode("latin-1").decode("utf-8") == path  # WSGI's latin-1 bytes
+    assert module.request_path({"REQUEST_URI": request_uri}) == path
+
+
 def test_the_stub_and_the_updater_agree_on_the_python() -> None:
     loader = importlib.machinery.SourceFileLoader("gahk_cgi_stub", str(STUB))
     spec = importlib.util.spec_from_loader(loader.name, loader)
