@@ -388,8 +388,20 @@ def main() -> None:
             return
     if result is not None:
         drain_cgi_input()
-        sys.stdout.buffer.write(cgi_response(result))
+        send(cgi_response(result))
+
+
+def send(response: bytes) -> None:
+    """Write the answer. The web server may have stopped waiting for it: Apache gives up on a CGI
+    script after its Timeout, which a slow update (pip on the first install) can outlast, while the
+    updater carries on detached. Then there is nobody to tell, so no traceback goes to the log."""
+    try:
+        sys.stdout.buffer.write(response)
         sys.stdout.buffer.flush()
+    except BrokenPipeError:
+        print("gahk.cgi: the web server stopped waiting before the answer was ready", file=sys.stderr)
+        # Python flushes stdout again at exit; point it somewhere that accepts the leftover bytes.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
 
 
 if __name__ == "__main__":

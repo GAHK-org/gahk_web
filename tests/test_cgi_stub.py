@@ -250,3 +250,32 @@ def test_the_stub_and_the_updater_agree_on_the_python() -> None:
     loader.exec_module(module)
 
     assert module.interpreter_abi() == updater.interpreter_abi()
+
+
+def test_an_answer_nobody_waits_for_any_more_leaves_no_traceback(home: Path) -> None:
+    """Apache gives up on a CGI script after its Timeout; a slow update outlasts it (the updater
+    carries on detached). Writing the answer then hits a closed pipe: one line in the log, exit 0."""
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "GAHK_WEB_HOME": str(home),
+        "REQUEST_METHOD": "GET",
+        "REQUEST_URI": "/faciliteter",
+        "PATH_INFO": "/faciliteter",
+        "CONTENT_LENGTH": "0",
+    }
+    read_end, write_end = os.pipe()
+    os.close(read_end)  # the web server is gone
+    try:
+        done = subprocess.run(
+            [sys.executable, str(STUB)],
+            stdout=write_end,
+            stderr=subprocess.PIPE,
+            env=env,
+            timeout=60,
+            check=False,
+        )
+    finally:
+        os.close(write_end)
+    assert done.returncode == 0
+    assert "Traceback" not in done.stderr.decode()
+    assert "stopped waiting" in done.stderr.decode()
