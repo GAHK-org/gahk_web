@@ -14,7 +14,7 @@ import pytest
 from conftest import SYNC_KEY, Client, execute, page, publish, query, query_one, snapshot, upload_images
 from sqlalchemy.orm import Session
 
-from gahk_web import db, housekeeping, kalender, render, updater
+from gahk_web import calendar_feed, db, housekeeping, render, updater
 from gahk_web.clock import copenhagen_today
 from gahk_web.config import Config
 from gahk_web.snapshot import validate
@@ -151,8 +151,8 @@ def test_calendar_is_streamed_from_intern(client: Client, monkeypatch: pytest.Mo
             headers={"Content-Type": "text/calendar; charset=utf-8", "Cache-Control": "private, no-store"},
         )
 
-    monkeypatch.setattr(kalender, "HTTPResponse", Upstream)
-    monkeypatch.setattr(kalender, "urlopen", fake_urlopen)
+    monkeypatch.setattr(calendar_feed, "HTTPResponse", Upstream)
+    monkeypatch.setattr(calendar_feed, "urlopen", fake_urlopen)
     result = client.get("/kalender/abc_DEF-123.ics")
     assert result.status == 200
     assert result.body.startswith(b"BEGIN:VCALENDAR")
@@ -167,7 +167,7 @@ def test_calendar_errors_pass_through(client: Client, monkeypatch: pytest.Monkey
         headers["Content-Type"] = "text/plain"
         raise HTTPError(request.full_url, 404, "Not Found", headers, io.BytesIO(b"nope"))
 
-    monkeypatch.setattr(kalender, "urlopen", gone)
+    monkeypatch.setattr(calendar_feed, "urlopen", gone)
     result = client.get("/kalender/old-token.ics")
     assert result.status == 404
     assert result.headers["Cache-Control"] == "private, no-store"
@@ -175,7 +175,7 @@ def test_calendar_errors_pass_through(client: Client, monkeypatch: pytest.Monkey
     def down(request: Request, timeout: float) -> Upstream:
         raise URLError("unreachable")
 
-    monkeypatch.setattr(kalender, "urlopen", down)
+    monkeypatch.setattr(calendar_feed, "urlopen", down)
     assert client.get("/kalender/abc.ics").status == 502
     assert client.get("/kalender/../x.ics").status in (404, 503)  # not a feed address
 

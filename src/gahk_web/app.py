@@ -4,7 +4,7 @@
     POST /optagelse/ansoeg, /optagelse/send_rundvisning,
          /optagelse/fremlej, /optagelse/send_fremleje        the optagelse forms (forms.py)
     POST /s                             the visit beacon (stats.py)
-    GET  /kalender/<token>.ics          the calendar pass-through to intern (kalender.py)
+    GET  /kalender/<token>.ics          the calendar pass-through to intern (calendar_feed.py)
     anything else (GET/HEAD)            the fallback: old addresses → 301/308, a page in either
                                         slash form → its file, else the 404 page; no snapshot yet → 503
 
@@ -181,14 +181,14 @@ def beacon() -> Response:
 
 @site.route("/kalender/<anypath:rest>", methods=ALL_METHODS)
 def calendar(rest: str) -> Response:
-    from . import kalender  # the only request that calls out, with urllib
+    from . import calendar_feed  # the only request that calls out, with urllib
 
-    feed = kalender.token(request.path)
+    feed = calendar_feed.token(request.path)
     if feed is None:
         return fallback()
     if request.method not in ("GET", "HEAD"):
         return method_not_allowed("GET, HEAD")
-    return kalender.pass_through(_cfg().intern_url, feed, request.method)
+    return calendar_feed.pass_through(_cfg().intern_url, feed, request.method)
 
 
 # --- everything else ---
