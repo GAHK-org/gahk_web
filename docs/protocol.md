@@ -219,6 +219,23 @@ when no release is installed yet (bootstrap) or the active one is broken.
 - Unknown keys anywhere, and duplicate page, news or event ids, make gahk.dk refuse the snapshot.
   This way a contract drift shows up as a failed publish, not as missing content.
 
+## The edit link
+
+Every page on gahk.dk carries a hidden **Rediger siden** link. A script on the page shows it when the
+browser has the cookie below, which only intern sets. The cookie is a hint for the browser, not a
+permission: intern checks the user's roles again when the link is followed.
+
+- Cookie: `gahk_redaktoer=1`, with `Domain=.gahk.dk`, `Path=/`, `Secure`, `SameSite=Lax`, and **not**
+  `HttpOnly`, because gahk.dk's script must read it. No other value shows the link.
+- intern sets it at login, and again on each request, for a user who is a superuser or holds one of
+  `CMS_EDITOR_ROLES` as a real role (not a role preview). It deletes it (same name, domain and path)
+  at logout, and on the first request after the user has lost the role.
+- The link points at intern, which must serve these addresses:
+  - `{intern_url}/hjemmeside/sider/<page id>/`: edit that page (every page, the front page included).
+  - `{intern_url}/hjemmeside/`: the Hjemmeside overview, for every other page (news and events, the
+    forms, the 404 page).
+- `intern_url` is `[site] intern_url` in gahk.dk's `config.ini`, `https://intern.gahk.dk` by default.
+
 ## Who sends what, when (intern's side)
 
 | When | Requests |

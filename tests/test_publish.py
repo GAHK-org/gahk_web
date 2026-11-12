@@ -238,3 +238,17 @@ def test_render_writes_only_changed_files(client: Client, cfg: Config) -> None:
     result = client.api("POST", "/api/rebuild", {})
     assert result.json()["pages_written"] == 0
     assert target.stat().st_mtime_ns == mtime
+
+
+def test_edit_links_follow_the_protocol(client: Client, cfg: Config) -> None:
+    """docs/protocol.md "The edit link": the cookie name and intern's edit addresses."""
+    publish(client)
+    pages = {
+        "index.html": "https://intern.gahk.dk/hjemmeside/sider/1/",
+        "faciliteter/kokken/index.html": "https://intern.gahk.dk/hjemmeside/sider/3/",
+        "begivenheder/index.html": "https://intern.gahk.dk/hjemmeside/",
+    }
+    for name, edit_url in pages.items():
+        html = (cfg.public_html / name).read_text()
+        assert f'<a id="rediger" class="editor-link" href="{edit_url}" hidden>Rediger siden</a>' in html
+        assert "gahk_redaktoer=1" in html
