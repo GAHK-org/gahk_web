@@ -10,10 +10,11 @@ import re
 from pathlib import Path
 
 # Paths of the old intranet and its tools, now on intern.gahk.dk. 308 keeps the method and body, so
-# a form or API POST to an old address still arrives.
+# a form or API POST to an old address still arrives. /intern/x and /nyintern/x keep their prefix, so
+# the link works whatever code intern.gahk.dk runs: the old serves /intern/…, the new sends /intern/x
+# on to /x itself (308, the query kept).
 _INTERN_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"^/(?:intern|nyintern)(?:/(.*))?$"), r"/\1"),
-    (re.compile(r"^/((?:admin|django-admin|wiki)(?:/.*)?)$"), r"/\1"),
+    (re.compile(r"^/((?:intern|nyintern|admin|django-admin|wiki)(?:/.*)?)$"), r"/\1"),
     (re.compile(r"^/((?:photo-album|media)/.*)$"), r"/\1"),
     (re.compile(r"^/health/?$"), "/health"),
     (re.compile(r"^/(optagelse/(?:listansoegninger|eksport))/?$"), r"/\1"),

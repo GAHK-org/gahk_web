@@ -226,14 +226,14 @@ def _page_url(session: Session, path: str) -> str | None:
 @site.route("/", methods=ALL_METHODS, defaults={"path": ""})
 @site.route("/<path:path>", methods=ALL_METHODS)
 def fallback(path: str = "") -> Response:
-    """GET/HEAD for a path Apache had no file for."""
-    if request.method not in ("GET", "HEAD"):
-        return method_not_allowed("GET, HEAD")
+    """GET/HEAD for a path Apache had no file for (and an old intranet address, whatever the method)."""
     cfg = _cfg()
     path = request.path
     target = routing.intern_redirect(path)
-    if target is not None:
+    if target is not None:  # 308 for every method, as in .htaccess: a POST stays a POST
         return redirect(308, cfg.intern_url + quote_path(target), query())
+    if request.method not in ("GET", "HEAD"):
+        return method_not_allowed("GET, HEAD")
     target = routing.public_image_redirect(path)
     if target is not None:
         return redirect(301, quote_path(target), query())

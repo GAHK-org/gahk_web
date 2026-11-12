@@ -121,7 +121,10 @@ def test_one_process_answers_request_after_request(spawn: Spawn, home: Path) -> 
     page = process.request("GET", "/faciliteter")
     assert page.status == 503 and "Siden opdateres" in page.text
     moved = process.request("GET", "/intern/den-hurtige/?side=2")
-    assert (moved.status, moved.headers["Location"]) == (308, "https://intern.gahk.dk/den-hurtige/?side=2")
+    assert (moved.status, moved.headers["Location"]) == (
+        308,
+        "https://intern.gahk.dk/intern/den-hurtige/?side=2",
+    )
     signed = signing.signed_headers(SYNC_KEY, "GET", "/api/status", b"")
     status = process.request("GET", "/api/status", headers=signed)
     assert status.status == 200 and json.loads(status.body)["version"] == SHA
@@ -369,7 +372,7 @@ def test_cgi_still_runs_the_whole_app(home: Path) -> None:
         check=False,
     )
     head = done.stdout.partition(b"\r\n\r\n")[0].decode()
-    assert "Status: 308" in head and "Location: https://intern.gahk.dk/x?y=1" in head, done.stderr
+    assert "Status: 308" in head and "Location: https://intern.gahk.dk/intern/x?y=1" in head, done.stderr
     env["REQUEST_URI"] = env["PATH_INFO"] = "/api/health"
     done = subprocess.run(
         [sys.executable, str(home / "public_html" / "cgi-bin" / "gahk.cgi")],

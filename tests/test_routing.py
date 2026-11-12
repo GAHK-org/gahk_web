@@ -32,10 +32,14 @@ def test_unknown_path_is_the_404_page(client: Client) -> None:
 @pytest.mark.parametrize(
     ("path", "target"),
     [
-        ("/intern", "https://intern.gahk.dk/"),
-        ("/intern/", "https://intern.gahk.dk/"),
-        ("/intern/den-hurtige/", "https://intern.gahk.dk/den-hurtige/"),
-        ("/nyintern/x", "https://intern.gahk.dk/x"),
+        # The prefix stays: intern.gahk.dk sends /intern/x on to /x itself (or, running the old
+        # code, serves it).
+        ("/intern", "https://intern.gahk.dk/intern"),
+        ("/intern/", "https://intern.gahk.dk/intern/"),
+        ("/intern/den-hurtige/", "https://intern.gahk.dk/intern/den-hurtige/"),
+        ("/intern/admin/login", "https://intern.gahk.dk/intern/admin/login"),
+        ("/nyintern", "https://intern.gahk.dk/nyintern"),
+        ("/nyintern/x", "https://intern.gahk.dk/nyintern/x"),
         ("/admin", "https://intern.gahk.dk/admin"),
         ("/admin/roles", "https://intern.gahk.dk/admin/roles"),
         ("/django-admin/", "https://intern.gahk.dk/django-admin/"),
@@ -83,9 +87,20 @@ def test_htaccess_redirects_the_intranet_before_it_refuses_scripts() -> None:
     assert intern and max(intern) < scripts
 
 
+def test_old_intranet_posts_keep_their_method_and_prefix(client: Client, dev: Client) -> None:
+    moved = dev.post("/intern/den-hurtige/send", query="x=1")
+    assert (moved.status, moved.headers["Location"]) == (
+        308,
+        "https://intern.gahk.dk/intern/den-hurtige/send?x=1",
+    )
+    moved = client.post("/nyintern/login")
+    assert (moved.status, moved.headers["Location"]) == (308, "https://intern.gahk.dk/nyintern/login")
+
+
 def test_not_intranet() -> None:
     assert routing.intern_redirect("/administration") is None
     assert routing.intern_redirect("/internat") is None
+    assert routing.intern_redirect("/nyinternet") is None
     assert routing.intern_redirect("/optagelse/") is None
 
 
@@ -189,10 +204,9 @@ def test_htaccess_names_the_same_rules() -> None:
     rules = re.findall(
         r"^\s*RewriteRule \^(\S+) https://intern\.gahk\.dk/\S* \[R=308,L\]$", text, re.MULTILINE
     )
-    assert len(rules) == 6
+    assert len(rules) == 5
     for prefix in (
-        "intern|nyintern",
-        "admin|django-admin|wiki",
+        "intern|nyintern|admin|django-admin|wiki",
         "photo-album|media",
         "health",
         "listansoegninger|eksport",
@@ -372,7 +386,7 @@ def test_devserver_serves_images_with_other_letters(client: Client, dev: Client)
 
 def test_devserver_matches_production_routing(client: Client, dev: Client) -> None:
     publish(client)
-    assert dev.get("/intern/x").headers["Location"] == "https://intern.gahk.dk/x"
+    assert dev.get("/intern/x").headers["Location"] == "https://intern.gahk.dk/intern/x"
     assert dev.get("/public/image/a.jpg").headers["Location"] == "/static/legacy/image/a.jpg"
     assert dev.get("/gammel-side").headers["Location"] == "/kontakt"
     assert dev.get("/findes-ikke").status == 404

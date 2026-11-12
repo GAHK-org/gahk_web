@@ -847,7 +847,7 @@ manifest_url = {MANIFEST_URL}
         cases = [
             ("http", "gahk.dk", "/faciliteter", 301, "https://gahk.dk/faciliteter"),
             ("https", "www.gahk.dk", "/faciliteter?a=1", 301, "https://gahk.dk/faciliteter?a=1"),
-            ("https", "gahk.dk", "/intern/x?y=1", 308, "https://intern.gahk.dk/x?y=1"),
+            ("https", "gahk.dk", "/intern/x?y=1", 308, "https://intern.gahk.dk/intern/x?y=1"),
             ("https", "gahk.dk", "/wiki/", 308, "https://intern.gahk.dk/wiki/"),
             (
                 "https",

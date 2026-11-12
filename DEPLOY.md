@@ -361,7 +361,9 @@ Until step 4, the old site keeps serving gahk.dk from Coolify.
    with many old pictures, the last of them follow within a few syncs. The *Hjemmeside* overview on
    intern shows the publication and gahk.dk's version.
 6. **Check** everything in section 9. Old intranet links (`gahk.dk/intern/…`) now redirect to
-   `intern.gahk.dk/…`, and the old calendar feed URLs keep working through gahk.dk.
+   `intern.gahk.dk/intern/…` (the prefix kept, so the link works whichever code intern.gahk.dk
+   runs), and intern sends that on to `intern.gahk.dk/…`. The old calendar feed URLs keep working
+   through gahk.dk.
 
 ## 9. Verification checklist
 
@@ -373,7 +375,8 @@ curl -sI https://gahk.dk/faciliteter/      # 200 (both slash forms are served, n
 curl -sS https://gahk.dk/api/health        # {"ok": true, "version": "<sha>", "revision": "<64 hex>"}
 curl -sI https://gahk.dk/api/health        # X-Gahk-Runner: fastcgi (cgi with the CGI-only switch)
 curl -sI https://gahk.dk/cgi-bin/gahk.fcgi/api/health   # 403: the stubs run only through .htaccess
-curl -sI https://gahk.dk/intern/           # 308 → https://intern.gahk.dk/
+curl -sI https://gahk.dk/intern/           # 308 → https://intern.gahk.dk/intern/
+curl -sI https://intern.gahk.dk/intern/    # 308 → https://intern.gahk.dk/ (intern drops the old prefix)
 curl -sI https://gahk.dk/wiki/             # 308 → https://intern.gahk.dk/wiki/
 curl -sI https://gahk.dk/findes-ikke       # 404 with the site's 404 page
 curl -sI https://gahk.dk/.htaccess         # 403

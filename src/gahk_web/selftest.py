@@ -207,7 +207,7 @@ def check_app() -> None:
         client = create_app(sample_config(Path(scratch))).test_client()
         stub = {"SCRIPT_NAME": "/cgi-bin/gahk.fcgi", "REQUEST_URI": "/intern/den-hurtige/?side=2"}
         moved = client.get("/den-hurtige/", environ_overrides=stub)
-        location = "https://intern.gahk.dk/den-hurtige/?side=2"
+        location = "https://intern.gahk.dk/intern/den-hurtige/?side=2"
         if moved.status_code != 308 or moved.headers.get("Location") != location:
             raise AssertionError(f"/intern/den-hurtige/ answered {moved.status} {moved.headers}")
         refused = client.get("/api/status")
