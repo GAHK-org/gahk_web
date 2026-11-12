@@ -123,6 +123,9 @@ def test_htaccess_names_the_same_rules() -> None:
     ):
         assert any(prefix in rule for rule in rules), prefix
     assert "max-age=31536000, immutable" in text
+    # No script but the stub runs: the cgi-bin rule comes first, then every other *.cgi/*.fcgi is refused.
+    assert text.index("RewriteRule ^cgi-bin/ - [L]") < text.index(r"RewriteRule \.(?:cgi|fcgi)$ - [F,L]")
+    assert re.search(r'<FilesMatch "[^"]*\|fcgi\)\$">', text)
 
 
 # --- the development server emulates .htaccess ---
@@ -167,6 +170,8 @@ def test_devserver_matches_production_routing(client: Client, dev: Client) -> No
     assert dev.get("/gammel-side").headers["Location"] == "/kontakt"
     assert dev.get("/findes-ikke").status == 404
     assert dev.get("/.htaccess").status == 403
+    assert dev.get("/fcgitest/test.fcgi").status == 403  # a test left by hand is never run
+    assert dev.get("/install.cgi").status == 403
     assert dev.get("/static/../../etc/passwd").status == 403
     # POSTs never hit a file, even where one exists.
     assert dev.post("/optagelse/ansoeg").status == 403  # no Origin: refused by the app, not served as a file

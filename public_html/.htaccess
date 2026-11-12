@@ -49,6 +49,9 @@ ErrorDocument 404 /404.html
   # --- The CGI script itself: stop here (also ends the second round after the rewrite below) ---
   RewriteRule ^cgi-bin/ - [L]
 
+  # --- No other script runs: the server would run any *.cgi or *.fcgi under public_html ---
+  RewriteRule \.(?:cgi|fcgi)$ - [F,L]
+
   # --- The intranet moved to intern.gahk.dk. 308 keeps the method and body (POSTs survive). ---
   # /intern/x and /nyintern/x → intern.gahk.dk/x
   RewriteRule ^(?:intern|nyintern)(?:/(.*))?$ https://intern.gahk.dk/$1 [R=308,L]
@@ -82,8 +85,9 @@ ErrorDocument 404 /404.html
   RewriteRule ^(.*)$ cgi-bin/gahk.cgi/$1 [L,QSA]
 </IfModule>
 
-# --- Files that must never be served, whatever happens to the rules above ---
-<FilesMatch "\.(?:ini|py|pyc|sql|cfg|toml|lock|log|bak|sh)$">
+# --- Files that must never be served or run, whatever happens to the rules above. (fcgi: the site
+# has no FastCGI script; one added to cgi-bin/ must leave this list.) ---
+<FilesMatch "\.(?:ini|py|pyc|sql|cfg|toml|lock|log|bak|sh|fcgi)$">
   Require all denied
 </FilesMatch>
 

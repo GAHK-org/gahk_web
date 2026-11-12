@@ -44,7 +44,7 @@ def _file_response(path: Path, method: str) -> Response:
 def static_response(cfg: Config, request: Request) -> Response | None:
     """What Apache would answer before the CGI app, or None to let the app answer."""
     path = request.path
-    if routing.is_hidden(path) or path.startswith("/cgi-bin/"):
+    if routing.is_hidden(path) or routing.is_script(path) or path.startswith("/cgi-bin/"):
         return text(403, "Forbidden")
     target = routing.intern_redirect(path)
     if target is not None:

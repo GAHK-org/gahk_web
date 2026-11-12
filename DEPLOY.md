@@ -181,10 +181,12 @@ This is the only manual upload. Afterwards every update comes from GitHub by its
    Together with `~/gahk_web/config.ini` (mode 600), that is all. The updater creates `releases/`,
    `state/`, `var/` and `CURRENT` itself.
 3. Delete any placeholder Hetzner put in `~/public_html` (e.g. `index.html`). Delete the files left
-   from testing the webhost in November 2026 as well: `~/public_html/install.py` and
+   from testing the webhost in November 2026 as well: `~/public_html/install.py`,
    `~/public_html/test_numpy.py` (`install.py` lets anyone on the internet start pip runs on the
-   account), and the folder `~/python_packages`. gahk.dk needs none of them: the updater installs
-   its own packages into each release.
+   account), the folder `~/public_html/fcgitest` (a FastCGI test app, `test.fcgi`), and the folder
+   `~/python_packages`. gahk.dk needs none of them: the updater installs its own packages into each
+   release. The `.htaccess` refuses every `*.py` and `*.fcgi`, and every `*.cgi` outside
+   `cgi-bin/`, but delete them all the same.
 4. The CGI script must not be group- or world-writable, or suEXEC refuses to run it. The same goes
    for its folder.
 5. Every install overwrites `~/public_html/.htaccess` with the release's, keeping only the lines
@@ -326,6 +328,7 @@ curl -sI https://gahk.dk/intern/           # 308 → https://intern.gahk.dk/
 curl -sI https://gahk.dk/wiki/             # 308 → https://intern.gahk.dk/wiki/
 curl -sI https://gahk.dk/findes-ikke       # 404 with the site's 404 page
 curl -sI https://gahk.dk/.htaccess         # 403
+curl -sI https://gahk.dk/fcgitest/test.fcgi   # 403 (and delete the folder, section 4 step 3)
 curl -sI https://gahk.dk/favicon.ico       # 200
 curl -s  https://gahk.dk/ | grep -o '/static/css/site\.[0-9a-f]*\.css'   # the hashed stylesheet …
 curl -sI https://gahk.dk/static/css/site.<hash>.css   # … 200, max-age=31536000, immutable
