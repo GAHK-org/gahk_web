@@ -346,6 +346,9 @@ def isolate(release: Path, script: str) -> None:
 # --- CGI ---
 
 
+_consumed = [0]  # bytes of the request body read so far
+
+
 def read_cgi_body() -> bytes | None:
     """The request body, or None when it is larger than any request this stub answers."""
     try:
@@ -354,7 +357,21 @@ def read_cgi_body() -> bytes | None:
         length = -1
     if not 0 <= length <= MAX_UPDATE_BODY:
         return None
-    return sys.stdin.buffer.read(length) if length else b""
+    data = sys.stdin.buffer.read(length) if length else b""
+    _consumed[0] += len(data)
+    return data
+
+
+def drain_cgi_input() -> None:
+    """Read what is left of the request body, never more than CONTENT_LENGTH (as gahk_web/cgi_entry.py
+    does): Apache writes all of it to the script before it reads the answer, and an answer written
+    without reading it is lost."""
+    try:
+        left = int(os.environ.get("CONTENT_LENGTH") or 0) - _consumed[0]
+        while left > 0 and (chunk := sys.stdin.buffer.read(min(65536, left))):
+            left -= len(chunk)
+    except (OSError, ValueError):
+        pass
 
 
 def main() -> None:
@@ -370,6 +387,7 @@ def main() -> None:
             run()
             return
     if result is not None:
+        drain_cgi_input()
         sys.stdout.buffer.write(cgi_response(result))
         sys.stdout.buffer.flush()
 

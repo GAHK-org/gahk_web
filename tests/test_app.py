@@ -2,6 +2,7 @@
 and the database connection a persistent process reuses from request to request."""
 
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 from conftest import Client, publish
@@ -229,3 +230,20 @@ def test_every_request_ends_without_an_open_transaction(
             assert shared.connection.info.transaction_status == pq.TransactionStatus.IDLE
         else:
             assert shared.connection is None
+
+
+def test_cgi_reads_what_the_app_left_of_the_body_and_no_more() -> None:
+    """Apache drops a CGI answer when the script ends without reading the whole body; reading past
+    CONTENT_LENGTH would wait for a body that never comes."""
+    import io
+
+    from gahk_web.cgi_entry import draining
+
+    def app(environ: dict[str, Any], start_response: Callable[..., object]) -> list[bytes]:
+        environ["wsgi.input"].read(1000)  # the app takes a little
+        start_response("204 No Content", [])
+        return []
+
+    stream = io.BytesIO(b"x" * 300_000 + b"not part of the body")
+    draining(app)({"wsgi.input": stream, "CONTENT_LENGTH": "300000"}, lambda *_: None)
+    assert stream.read() == b"not part of the body"
