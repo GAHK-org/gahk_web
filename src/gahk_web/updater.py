@@ -101,6 +101,10 @@ class UpdateError(Exception):
     """An update step failed; the message says which and why (it ends up on intern's overview)."""
 
 
+class LockError(Exception):
+    """The update lock could not be taken for another reason than a running update."""
+
+
 # --- where things are ---
 
 
@@ -241,14 +245,23 @@ def read_state(layout: Layout) -> dict[str, Any]:
 
 @contextlib.contextmanager
 def update_lock(layout: Layout) -> Iterator[bool]:
-    """An exclusive, non-blocking lock. The kernel drops it if the process dies, so it never sticks."""
-    layout.var.mkdir(parents=True, exist_ok=True)
-    with layout.lock_file.open("a") as handle:
+    """An exclusive, non-blocking lock. The kernel drops it if the process dies, so it never sticks.
+
+    Yields False while another update holds it. Any other failure (no lock support on the file
+    system, no permission) raises LockError, so it is reported as a failure, not as contention."""
+    try:
+        layout.var.mkdir(parents=True, exist_ok=True)
+        handle = layout.lock_file.open("a")
+    except OSError as exc:
+        raise LockError(str(exc)) from exc
+    with handle:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
+        except BlockingIOError:  # EWOULDBLOCK/EAGAIN: another update holds the lock
             yield False
             return
+        except OSError as exc:
+            raise LockError(str(exc)) from exc
         try:
             yield True
         finally:
@@ -660,47 +673,66 @@ def _install(layout: Layout, target: str, manifest: Manifest | None, current: st
 def run(home: Path | str | None = None) -> Result:
     """Check for a new release and install it. Never raises: failures are in the result."""
     layout = load_layout(home)
-    with update_lock(layout) as locked:
-        if not locked:
-            current = read_current(layout)
-            return Result(
-                False, current, read_state(layout).get("available_version"), "an update is already running"
-            )
-        current = read_current(layout)
-        available: str | None = None
-        try:
-            if not layout.config.is_file():
-                raise UpdateError(f"{layout.config} is missing")
-            if layout.pin and not SHA_RE.match(layout.pin):
-                raise UpdateError("[update] pin must be a full 40-character git sha")
-            published = fetch_manifest(layout)
-            available = published.version
-            target = layout.pin or published.version
-            manifest: Manifest | None = published
-            if target != published.version:
-                # A pin: a release that is still kept needs no download, else its own manifest.
-                kept = release_ok(layout.releases / target, target)
-                manifest = None if kept else fetch_manifest(layout, target)
-            if target == current and release_ok(layout.releases / current, current):
-                note = refresh_updater(layout, layout.releases / current)  # heals an interrupted run
-                pinned = (
-                    f" (pinned; {available} is available)" if layout.pin and layout.pin != available else ""
+    try:
+        with update_lock(layout) as locked:
+            if not locked:
+                current = read_current(layout)
+                return Result(
+                    False,
+                    current,
+                    read_state(layout).get("available_version"),
+                    "an update is already running",
                 )
-                result = Result(False, current, available, f"already running {current}{pinned}")
-                if note:
-                    result.detail += f"; {note}"
-            else:
-                log(layout, f"updating {current or 'nothing'} -> {target}")
-                result = _install(layout, target, manifest, current)
-                result.available_version = available
-        except UpdateError as exc:
-            log(layout, f"update failed: {exc}")
-            result = Result(False, read_current(layout), available, f"failed: {exc}", str(exc))
-        except Exception as exc:  # anything unexpected must still be reported, not lost
-            log(layout, f"update failed unexpectedly: {exc!r}")
-            result = Result(False, read_current(layout), available, f"failed: {exc!r}", repr(exc))
+            return _run_locked(layout)
+    except LockError as exc:
+        message = f"cannot take the update lock: {exc}"
+        log(layout, f"update failed: {message}")
+        result = Result(
+            False,
+            read_current(layout),
+            read_state(layout).get("available_version"),
+            f"failed: {message}",
+            message,
+        )
         save_state(layout, result)
         return result
+
+
+def _run_locked(layout: Layout) -> Result:
+    """run() once it holds the lock."""
+    current = read_current(layout)
+    available: str | None = None
+    try:
+        if not layout.config.is_file():
+            raise UpdateError(f"{layout.config} is missing")
+        if layout.pin and not SHA_RE.match(layout.pin):
+            raise UpdateError("[update] pin must be a full 40-character git sha")
+        published = fetch_manifest(layout)
+        available = published.version
+        target = layout.pin or published.version
+        manifest: Manifest | None = published
+        if target != published.version:
+            # A pin: a release that is still kept needs no download, else its own manifest.
+            kept = release_ok(layout.releases / target, target)
+            manifest = None if kept else fetch_manifest(layout, target)
+        if target == current and release_ok(layout.releases / current, current):
+            note = refresh_updater(layout, layout.releases / current)  # heals an interrupted run
+            pinned = f" (pinned; {available} is available)" if layout.pin and layout.pin != available else ""
+            result = Result(False, current, available, f"already running {current}{pinned}")
+            if note:
+                result.detail += f"; {note}"
+        else:
+            log(layout, f"updating {current or 'nothing'} -> {target}")
+            result = _install(layout, target, manifest, current)
+            result.available_version = available
+    except UpdateError as exc:
+        log(layout, f"update failed: {exc}")
+        result = Result(False, read_current(layout), available, f"failed: {exc}", str(exc))
+    except Exception as exc:  # anything unexpected must still be reported, not lost
+        log(layout, f"update failed unexpectedly: {exc!r}")
+        result = Result(False, read_current(layout), available, f"failed: {exc!r}", repr(exc))
+    save_state(layout, result)
+    return result
 
 
 def nudge(home: Path | str | None = None, wait: float = NUDGE_WAIT) -> dict[str, Any]:
@@ -794,9 +826,12 @@ def selftest() -> list[str]:
             if passed != should_pass:
                 problems.append(f"unpack check failed on the {name} sample")
         lock_layout = Layout(Path(scratch), Path(scratch) / "c.ini", Path(scratch), Path(scratch))
-        with update_lock(lock_layout) as locked:
-            if not locked:
-                problems.append("cannot take the update lock")
+        try:
+            with update_lock(lock_layout) as locked:
+                if not locked:
+                    problems.append("cannot take the update lock")
+        except LockError as exc:
+            problems.append(f"cannot take the update lock: {exc}")
     return problems
 
 

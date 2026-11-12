@@ -382,6 +382,7 @@ them.
 | `/api/*` answers 503 `database unavailable` | The `[database]` settings, or the database host is down. |
 | The update result says `self-test failed` | The new release does not run on this python. The old one keeps running. See `update.log`. |
 | The update says `an update is already running` | Another update holds the lock; it is released when that run ends. |
+| The update says `failed: cannot take the update lock: …` | The file system refuses the lock on `~/gahk_web/var/update.lock` (permissions, or no lock support). No update installs until that is fixed. |
 | `gahk.cgi` is shown as text, or 500 with "Premature end of script headers" | The CGI mode or permissions (section 4), or see section 13 item 1. |
 
 ## 13. Things to verify on Hetzner

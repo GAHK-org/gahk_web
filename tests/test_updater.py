@@ -1,6 +1,7 @@
 """The self-updater: fetch, verify, unpack, self-test, migrate, install, switch, prune."""
 
 import ast
+import errno
 import json
 import sys
 import tarfile
@@ -286,6 +287,25 @@ def test_only_one_update_runs_at_a_time(home: Path, dist: Path) -> None:
         assert locked
         result = updater.run(home)
     assert result.detail == "an update is already running"
+    assert current(home) == ""
+
+
+def test_a_lock_that_cannot_be_taken_is_a_failure(
+    home: Path, dist: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only contention means "already running"; e.g. ENOLCK on a network home is a failure."""
+    release(dist, 1)
+
+    def no_locks(fd: int, operation: int) -> None:
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(updater.fcntl, "flock", no_locks)
+    result = updater.run(home)
+
+    assert result.error is not None
+    assert result.detail.startswith("failed: cannot take the update lock:")
+    assert "No locks available" in result.detail
+    assert state(home)["last_result"] == "failed"
     assert current(home) == ""
 
 
