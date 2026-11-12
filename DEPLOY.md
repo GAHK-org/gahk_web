@@ -399,6 +399,53 @@ In a browser:
 - konsoleH's SSL Manager shows **file validation** for `gahk.dk` and `www.gahk.dk`, not DNS (section
   5), so the certificate renews by itself.
 
+### Addresses kept from the old site
+
+Every address that answered on the old gahk.dk answers at the same address after the cutover. The
+intranet is the exception by design: it moved to intern.gahk.dk, and its old addresses redirect
+there with their path, query and method. Check these once DNS has switched:
+
+| Address | Answer |
+|---|---|
+| `/` and every page, without and with the trailing slash: `/faciliteter`, `/faciliteter/vaerelse`, `/faciliteter/faellesomraade`, `/faciliteter/kokken`, `/kollegielivet`, `/kollegielivet/historie`, `…/aaretsgang`, `…/alumnerne`, `…/selvstyre`, `…/bestyrelse`, `/legater`, `/legater/modtagne`, `/kontakt`, `/vision`, `/optagelse/`, `/begivenheder/` | 200 in both forms, no redirect |
+| `/velkommen`, `/velkommen/` (the old second address of the front page) | 200, the front page (canonical link `/`) |
+| `/optagelse/ansoeg`, `/optagelse/fremlej` | 200, the forms; a POST there, or to the old targets `/optagelse/send_rundvisning` and `/optagelse/send_fremleje`, is handled |
+| `/optagelse/ansoeg/success` | 200, the thank-you page |
+| `/static/legacy/image/upload/…` (also with the old site's hash in the name), `/public/image/…` | 301 to the picture's `/billeder/<sha16>/<name>` (200) |
+| `/static/legacy/image/elements/lamassu.svg`, `…/lamassu.b8dc291a4e43.svg` (the old logo and favicon) | 200, `image/svg+xml` |
+| `/favicon.ico`, `/static/icons/icon-192x192.png`, `/static/icons/badge-72x72.png` | 200 |
+| `/kalender/<token>.ics` | 200 `text/calendar`, passed through from intern |
+| `/sw.js` | 200; now a worker that removes itself (the old one was the intranet's push worker) |
+| `/intern/…`, `/nyintern/…` | 308 to `https://intern.gahk.dk/intern/…` (`/nyintern/…`), which intern sends on to `/…` |
+| `/admin/…`, `/django-admin/…`, `/wiki/…` (also `/wiki/index.php?title=…`, `/wiki/load.php?…`), `/photo-album/…`, `/media/…`, `/health`, `/healthz`, `/optagelse/listansoegninger`, `/optagelse/eksport`, `/optagelse/showAnsoegning/…` | 308 to the same path on intern.gahk.dk |
+| `/static/manifest.json`, `/static/icons/icon-512x512.png` (and the other icons this site has no file for), `/static/dist/…`, `/static/legacy/image/elements/logo.png` (and the rest of `elements/` and `intern/`) | 301 to the same path on intern.gahk.dk |
+
+```sh
+for p in faciliteter faciliteter/kokken kollegielivet/historie legater kontakt vision optagelse \
+         begivenheder velkommen optagelse/ansoeg optagelse/fremlej optagelse/ansoeg/success; do
+  for u in "/$p" "/$p/"; do
+    printf '%s %s\n' "$(curl -so /dev/null -w '%{http_code}' "https://gahk.dk$u")" "$u"
+  done
+done                                       # 200 on every line
+curl -sI https://gahk.dk/static/legacy/image/elements/lamassu.b8dc291a4e43.svg   # 200, image/svg+xml
+curl -sI 'https://gahk.dk/wiki/index.php?title=Forside'   # 308 → https://intern.gahk.dk/wiki/index.php?title=Forside
+curl -sI https://gahk.dk/healthz           # 308 → https://intern.gahk.dk/healthz
+curl -sI https://gahk.dk/static/manifest.json   # 301 → https://intern.gahk.dk/static/manifest.json
+```
+
+Apart from the intranet and the old picture addresses (which lead to the same picture), only two
+addresses now redirect where the old site answered 200, both on purpose:
+
+- `https://www.gahk.dk/…` answers 301 to `https://gahk.dk/…`. One canonical host keeps the site
+  from being indexed twice, and the forms' Origin check accepts `gahk.dk` only.
+- A **GET** of `/optagelse/send_rundvisning` or `/optagelse/send_fremleje` (the old forms' POST
+  targets, which only a reload of a failed form would ask for) answers 301 to its form. A POST there
+  still sends the form.
+
+An old picture address leads to the picture only when intern imported it, and intern imports the
+pictures the content shows. The one file under `static/legacy/image/upload/` that no page shows
+(`images/pylon-bg/pylon_3_scaleret2.JPG`) answers 404.
+
 ## 10. Updates and rollback
 
 **Normal updates.** Merging into `main` runs CI. If every check passes and the commit is still the
