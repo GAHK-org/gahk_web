@@ -58,7 +58,7 @@ def test_valid_submission_is_queued_and_redirects(client: Client, con: Session) 
     assert result.headers["Location"] == "/optagelse/ansoeg/success"
     rows = applications(con)
     assert len(rows) == 1
-    assert rows[0]["kind"] == "rundvisning"
+    assert rows[0]["kind"] == "tour"
     assert rows[0]["fields"]["full_name"] == "Anna Jensen"
     assert "website" not in rows[0]["fields"]
 
@@ -70,7 +70,7 @@ def test_legacy_post_addresses_still_work(client: Client, con: Session) -> None:
     }
     assert post(client, "/optagelse/send_fremleje", fremleje | {"occupation": "Studerende"}).status == 303
     assert post(client, "/optagelse/send_rundvisning", VALID).status == 303
-    assert [row["kind"] for row in applications(con)] == ["fremleje", "rundvisning"]
+    assert [row["kind"] for row in applications(con)] == ["sublet", "tour"]
 
 
 def test_missing_and_invalid_fields_rerender_with_values(client: Client, con: Session) -> None:
@@ -93,9 +93,9 @@ def test_missing_and_invalid_fields_rerender_with_values(client: Client, con: Se
 
 
 def test_motivation_of_exactly_500_is_fine() -> None:
-    _cleaned, errors = forms.validate(forms.RUNDVISNING, VALID | {"motivation": "m" * 500})
+    _cleaned, errors = forms.validate(forms.TOUR, VALID | {"motivation": "m" * 500})
     assert errors == {}
-    _cleaned, errors = forms.validate(forms.FREMLEJE, VALID | {"motivation": "m" * 5000})
+    _cleaned, errors = forms.validate(forms.SUBLET, VALID | {"motivation": "m" * 5000})
     assert errors == {}
 
 

@@ -140,7 +140,7 @@ it renders as an ordinary page and leaves the front page alone. Previews are nev
 ```json
 {
   "applications": [
-    {"id": "<uuid>", "kind": "rundvisning" | "fremleje", "submitted_at": "<iso>", "fields": {…}}
+    {"id": "<uuid>", "kind": "tour" | "sublet", "submitted_at": "<iso>", "fields": {…}}
   ],
   "visits": [
     {"day": "2026-11-10", "path": "faciliteter", "views": 12, "visitors": 9},
@@ -151,8 +151,9 @@ it renders as an ordinary page and leaves the front page alone. Previews are nev
 
 - `applications`: the oldest 500 not yet acknowledged. `fields` uses the names of intern's
   admissions forms: `full_name`, `email`, `gender` (`male`/`female`/`other`), `age`,
-  `heard_about_us`, `motivation`. A `rundvisning` adds `study_year`, `year_left`, `university` and
-  `field_of_study`; a `fremleje` adds `occupation`.
+  `heard_about_us`, `motivation`. A `tour` adds `study_year`, `year_left`, `university` and
+  `field_of_study`; a `sublet` adds `occupation`. intern stores a `tour` as its application type
+  `rundvisning` and a `sublet` as `fremleje`, and refuses any other kind.
 - `visits`: every day not yet acknowledged, today included, though today is still counting. `path`
   is the page path without slashes (`""` is the front page), and `"*"` is the whole site that day.
   `visitors` are unique per day.

@@ -68,7 +68,7 @@ def upgrade() -> None:
         sa.Column("kind", sa.Text(), nullable=False),
         sa.Column("fields", postgresql.JSONB(), nullable=False),
         sa.Column("submitted_at", sa.DateTime(timezone=True), nullable=False),
-        sa.CheckConstraint("kind IN ('rundvisning', 'fremleje')", name=op.f("applications_kind_check")),
+        sa.CheckConstraint("kind IN ('tour', 'sublet')", name=op.f("applications_kind_check")),
         sa.PrimaryKeyConstraint("id", name=op.f("applications_pkey")),
     )
     op.create_table(

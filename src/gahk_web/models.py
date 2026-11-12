@@ -120,7 +120,7 @@ class Application(Base):
     """Outbox: optagelse form submissions until intern pulls and acknowledges them."""
 
     __tablename__ = "applications"
-    __table_args__ = (CheckConstraint("kind IN ('rundvisning', 'fremleje')", name="kind"),)
+    __table_args__ = (CheckConstraint("kind IN ('tour', 'sublet')", name="kind"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
     kind: Mapped[str]

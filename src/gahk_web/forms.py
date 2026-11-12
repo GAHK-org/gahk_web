@@ -92,7 +92,7 @@ _HEARD = Field("heard_about_us", "Hvor hørte du om os?", "select", required=Tru
 
 @dataclass(frozen=True)
 class FormSpec:
-    kind: str  # the application kind intern knows: "rundvisning" or "fremleje"
+    kind: str  # the application kind in the outbox: "tour" or "sublet"
     path: str  # where the form page lives (and posts to)
     legacy_post_path: str  # the old POST address, still accepted
     title: str
@@ -101,8 +101,8 @@ class FormSpec:
     fields: tuple[Field, ...]
 
 
-RUNDVISNING = FormSpec(
-    kind="rundvisning",
+TOUR = FormSpec(
+    kind="tour",
     path="optagelse/ansoeg",
     legacy_post_path="optagelse/send_rundvisning",
     title="Anmod om rundvisning",
@@ -125,8 +125,8 @@ RUNDVISNING = FormSpec(
     ),
 )
 
-FREMLEJE = FormSpec(
-    kind="fremleje",
+SUBLET = FormSpec(
+    kind="sublet",
     path="optagelse/fremlej",
     legacy_post_path="optagelse/send_fremleje",
     title="Ansøg om fremleje",
@@ -144,7 +144,7 @@ FREMLEJE = FormSpec(
     ),
 )
 
-SPECS = (RUNDVISNING, FREMLEJE)
+SPECS = (TOUR, SUBLET)
 SUCCESS_PATH = "optagelse/ansoeg/success"
 
 

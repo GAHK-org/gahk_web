@@ -54,8 +54,8 @@ def test_outbox_lists_and_acks(client: Client, con: Session) -> None:
     execute(
         con,
         "INSERT INTO applications (id, kind, fields, submitted_at) VALUES"
-        " ('11111111-1111-4111-8111-111111111111', 'fremleje', '{\"full_name\": \"A\"}', now()),"
-        " ('22222222-2222-4222-8222-222222222222', 'rundvisning', '{\"full_name\": \"B\"}', now())",
+        " ('11111111-1111-4111-8111-111111111111', 'sublet', '{\"full_name\": \"A\"}', now()),"
+        " ('22222222-2222-4222-8222-222222222222', 'tour', '{\"full_name\": \"B\"}', now())",
     )
     data: dict[str, Any] = client.api("GET", "/api/outbox").json()
     assert [app["id"] for app in data["applications"]] == [
