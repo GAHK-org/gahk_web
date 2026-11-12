@@ -94,8 +94,11 @@ intern or its storage is down.
   publish with every old picture stays within a web request; anything left over is made a few
   seconds at a time afterwards.
 - **WebP only, quality 80, four widths.** Every browser in use shows WebP, and four steps cover
-  phones to large high-resolution screens. The original is no longer linked from pages, so nothing
-  of what the camera wrote reaches a visitor, even if a picture slipped through intern unstripped.
+  phones to large high-resolution screens.
+- **Removing camera data stays intern's job.** Pages link the copies wherever they exist, and the
+  copies carry none of it. The original is still served at its address, link previews point at it
+  (not every link-preview service reads WebP), and pictures without copies show it. So a picture
+  that slipped through intern with its GPS position still shows it there.
 - **Texts are cleaned on gahk.dk too.** intern removes scripts and the like before it saves a text;
   gahk.dk removes them again, with exactly the same rules, before it shows one. Nothing an editor
   can do on intern is lost by it.
