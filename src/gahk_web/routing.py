@@ -21,6 +21,13 @@ _INTERN_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^/(optagelse/(?:showAnsoegning|setasreceived|kasser)/.+)$"), r"/\1"),
 )
 
+# The old intranet's static files, which the old gahk.dk served: its app manifest and icons, its
+# build (/static/dist/), and the pictures its templates show. intern.gahk.dk serves them at the same
+# path. Only when gahk.dk has no file of that name: its own static/icons/ come first.
+_INTERN_STATIC_RE = re.compile(
+    r"^/(static/(?:manifest\.json|icons/[^/]+|dist/.+|legacy/image/(?:elements|intern)/.+))$"
+)
+
 PUBLIC_IMAGE_PREFIX = "/public/image/"
 LEGACY_IMAGE_PREFIX = "/static/legacy/image/"
 
@@ -32,6 +39,12 @@ def intern_redirect(path: str) -> str | None:
         if match:
             return match.expand(replacement)
     return None
+
+
+def intern_static_redirect(path: str) -> str | None:
+    """The path on intern.gahk.dk of an old intranet static file gahk.dk has no file for, or None."""
+    match = _INTERN_STATIC_RE.match(path)
+    return "/" + match.group(1) if match else None
 
 
 def public_image_redirect(path: str) -> str | None:

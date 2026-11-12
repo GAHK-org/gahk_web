@@ -31,7 +31,9 @@ intern or its storage is down.
   `/media/…`, the old admissions admin pages) redirect to the same path on intern.gahk.dk, keeping
   the query and the method, so a form posted to an old address still arrives. `/intern/…` keeps
   its prefix: intern.gahk.dk drops it itself, so the link works before and after intern's own move
-  to the root.
+  to the root. The old intranet's static files (`/static/manifest.json`, its icons, `/static/dist/…`,
+  the pictures its templates show) redirect to the same path on intern.gahk.dk when gahk.dk has no
+  file of that name.
 - Old picture addresses (`/static/legacy/image/…`, `/public/image/…`) redirect to the picture's new
   address, when intern has moved it into the image library. So do the fingerprinted names the old
   site also served them under (`gang.b8dc291a4e43.jpg`), and names with Danish letters, however the

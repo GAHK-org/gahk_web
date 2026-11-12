@@ -378,7 +378,47 @@ def test_the_old_sites_logo_keeps_its_addresses(client: Client, dev: Client) -> 
         result = dev.get(path)
         assert (result.status, result.body) == (200, logo), path
         assert result.headers["Content-Type"] == "image/svg+xml"
-    assert dev.get("/static/legacy/image/elements/lamassu.0123456789ab.svg").status == 404
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/static/manifest.json",
+        "/static/icons/icon-512x512.png",
+        "/static/icons/icon-512x512-maskable.png",
+        "/static/dist/app.css",
+        "/static/dist/app.2d95e49102ae.css",
+        "/static/dist/chunks/den-hurtige.js",
+        "/static/legacy/image/elements/logo.png",
+        "/static/legacy/image/elements/gahk-kiosk.jpg",
+        "/static/legacy/image/intern/sal1.png",
+    ],
+)
+def test_the_old_intranets_static_files_go_to_intern(client: Client, dev: Client, path: str) -> None:
+    """The old gahk.dk served them for the intranet; intern.gahk.dk serves them at the same path."""
+    publish(client)
+    for answer in (dev.get(path, query="v=2"), client.get(path, query="v=2")):
+        assert (answer.status, answer.headers["Location"]) == (301, f"https://intern.gahk.dk{path}?v=2")
+
+
+def test_this_sites_own_static_files_win_over_intern(client: Client, dev: Client) -> None:
+    publish(client)
+    assert dev.get("/static/icons/icon-192x192.png").status == 200
+    assert dev.get("/static/icons/badge-72x72.png").status == 200
+    assert dev.get("/static/css/findes-ikke.css").status == 404
+    assert dev.get("/static/legacy/image/upload/images/ukendt.jpg").status == 404  # the picture map's
+    assert routing.intern_static_redirect("/static/icons/") is None
+    assert routing.intern_static_redirect("/static/manifest.json/x") is None
+    assert routing.intern_static_redirect("/static/legacy/image/upload/images/gang.jpg") is None
+
+
+def test_htaccess_sends_the_old_intranets_static_files_to_intern_after_its_own_files() -> None:
+    lines = rule_lines(HTACCESS.read_text())
+    rule = next(line for line in lines if "https://intern.gahk.dk/$1 [R=301,L]" in line)
+    pattern = rule.split()[1]
+    assert pattern == "^" + routing._INTERN_STATIC_RE.pattern.removeprefix("^/")
+    assert lines.index("RewriteRule ^(.*?)/?$ $1/index.html [L]") < lines.index(rule)
+    assert lines.index(rule) < lines.index("RewriteRule ^api/update$ cgi-bin/gahk.cgi/api/update [L,QSA]")
 
 
 def test_fonts_may_be_fetched_from_any_origin(client: Client, dev: Client) -> None:

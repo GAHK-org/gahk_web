@@ -66,6 +66,9 @@ def static_response(cfg: Config, method: str, path: str, query: str) -> Response
         file = routing.static_file(cfg.public_html, path) or _package_static(path)
         if file is not None:
             return _file_response(file, path)
+    target = routing.intern_static_redirect(path)
+    if target is not None:
+        return redirect(301, cfg.intern_url + quote_path(target), query)
     return None
 
 

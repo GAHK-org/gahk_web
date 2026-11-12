@@ -237,6 +237,9 @@ def fallback(path: str = "") -> Response:
     target = routing.public_image_redirect(path)
     if target is not None:
         return redirect(301, quote_path(target), query())
+    target = routing.intern_static_redirect(path)
+    if target is not None:
+        return redirect(301, cfg.intern_url + quote_path(target), query())
 
     session = database()
     state = housekeeping.site_state(session)
