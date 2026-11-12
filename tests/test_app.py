@@ -71,16 +71,20 @@ def transactions_left_open(con: Session) -> list[dict[str, Any]]:
 def test_the_app_routes_on_the_browsers_path_not_the_stubs(client: Client) -> None:
     publish(client)
     stub = {"SCRIPT_NAME": "/cgi-bin/gahk.fcgi"}
-    result = client.request("GET", "/faciliteter/", headers={}, query="x=1")
-    assert (result.status, result.headers["Location"]) == (301, "/faciliteter?x=1")
+    result = client.request("GET", "/gammel-side/", headers={}, query="x=1")
+    assert (result.status, result.headers["Location"]) == (301, "/kontakt?x=1")
     # Apache: PATH_INFO is the rewritten path behind the stub, REQUEST_URI the original request.
     from werkzeug.test import Client as WerkzeugClient
 
     response = WerkzeugClient(client.app).get(
-        "/faciliteter/",
-        environ_overrides={**stub, "REQUEST_URI": "/faciliteter/?x=1", "QUERY_STRING": "x=1"},
+        "/gammel-side/",
+        environ_overrides={**stub, "REQUEST_URI": "/gammel-side/?x=1", "QUERY_STRING": "x=1"},
     )
-    assert (response.status_code, response.headers["Location"]) == (301, "/faciliteter?x=1")
+    assert (response.status_code, response.headers["Location"]) == (301, "/kontakt?x=1")
+    response = WerkzeugClient(client.app).get(
+        "/faciliteter/", environ_overrides={**stub, "REQUEST_URI": "/faciliteter/?x=1", "QUERY_STRING": "x=1"}
+    )
+    assert response.status_code == 200 and "Om faciliteterne" in response.get_data(as_text=True)
     response = WerkzeugClient(client.app).get(
         "/gammel-side", environ_overrides={**stub, "REQUEST_URI": "/gammel-side"}
     )

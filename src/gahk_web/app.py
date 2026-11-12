@@ -5,8 +5,8 @@
          /optagelse/fremlej, /optagelse/send_fremleje        the optagelse forms (forms.py)
     POST /s                             the visit beacon (stats.py)
     GET  /kalender/<token>.ics          the calendar pass-through to intern (kalender.py)
-    anything else (GET/HEAD)            the fallback: old addresses → 301/308, the other slash form
-                                        of a page → 301, else the 404 page; no snapshot yet → 503
+    anything else (GET/HEAD)            the fallback: old addresses → 301/308, a page in either
+                                        slash form → its file, else the 404 page; no snapshot yet → 503
 
 On the webhost it runs as a persistent FastCGI process (fcgi_entry.py, behind cgi-bin/gahk.fcgi),
 or one request per process through CGI (cgi_entry.py, behind cgi-bin/gahk.cgi). The database is
@@ -255,8 +255,9 @@ def fallback(path: str = "") -> Response:
     if bare == "" or _PAGE_PATH_RE.match(bare):
         url = _page_url(session, bare)
         if url is not None:
-            if url == path:
-                # Apache should have served this file; serve it here rather than fail.
+            if url.rstrip("/") == path.rstrip("/"):
+                # Apache should have served this file, in either slash form (as the old site did);
+                # serve it here rather than fail or redirect. Its canonical link names one form.
                 file = cfg.public_html / page_file(bare)
                 return serve_file(file) if file.is_file() else not_found(cfg)
             return redirect(301, quote_path(url), query())

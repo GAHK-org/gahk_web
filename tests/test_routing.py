@@ -168,19 +168,24 @@ def test_old_image_addresses_with_other_letters_follow_the_map(client: Client) -
     assert (result.status, result.headers["Location"]) == (301, "/static/legacy/image/upload/k%C3%B8kken.jpg")
 
 
-def test_slash_variants_redirect_to_the_canonical_form(client: Client) -> None:
+def test_the_app_serves_a_page_in_either_slash_form(client: Client) -> None:
+    """Apache serves both forms from the file; should it hand one to the app (a host whose index
+    rule misses the slashed form), the app serves the same file instead of redirecting. The old site
+    answered 200 in both forms too. The canonical link names the form the menu uses."""
     publish(client)
-    result = client.get("/faciliteter/", query="x=1")
-    assert result.status == 301
-    assert result.headers["Location"] == "/faciliteter?x=1"
-    result = client.get("/begivenheder")
-    assert (result.status, result.headers["Location"]) == (301, "/begivenheder/")
-    result = client.get("/optagelse")
-    assert (result.status, result.headers["Location"]) == (301, "/optagelse/")
-    # The canonical form itself is served (Apache normally does it; the app is the safety net).
-    result = client.get("/faciliteter")
-    assert result.status == 200
-    assert "Om faciliteterne" in result.text
+    for path, canonical in (
+        ("/faciliteter", "/faciliteter"),
+        ("/faciliteter/", "/faciliteter"),
+        ("/faciliteter/kokken/", "/faciliteter/kokken"),
+        ("/begivenheder", "/begivenheder/"),
+        ("/begivenheder/", "/begivenheder/"),
+        ("/optagelse", "/optagelse/"),
+        ("/optagelse/ansoeg/", "/optagelse/ansoeg"),
+    ):
+        result = client.get(path, query="x=1")
+        assert result.status == 200, path
+        assert f'<link rel="canonical" href="https://gahk.dk{canonical}">' in result.text, path
+    assert "Om faciliteterne" in client.get("/faciliteter/").text
 
 
 def test_old_page_addresses_redirect(client: Client) -> None:
