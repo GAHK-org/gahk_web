@@ -227,7 +227,23 @@ when no release is installed yet (bootstrap) or the active one is broken.
 - **Images** are content: they all live in intern's image library, and gahk_web's repository holds
   none.
   - intern rewrites `/media/cms/<name>` to `/billeder/<sha256[:16]>/<basename>`. The basename is
-    slugified and lower-case, with its extension kept.
+    slugified and lower-case, with its extension kept. It keeps its letters: the JSON carries the
+    name as UTF-8 text (`/billeder/<sha16>/tovtrækning-2019.jpg`), never percent-encoded, and
+    gahk.dk refuses the snapshot unless the name
+    - is words of lower-case or caseless letters (Unicode categories Ll, Lm, Lo: `æ`, `ø`, `å`,
+      `é`, `ß`, other scripts) and decimal digits (Nd), joined by single `-`, `_` or `.`, so it
+      never starts with `_` or `.` (gahk.dk's variants are `_<width>w.webp`) and has no `..`, `/`,
+      space, control character, `%` or upper-case letter;
+    - is NFC-normalized (`å` is one character, not `a` plus a combining ring);
+    - has at most 255 bytes in UTF-8 (the file system's limit; intern cuts a stem at 120), within
+      the URL's 200 characters;
+    - has no `.py`, `.cgi` or `.fcgi` before its extension (`.htaccess` refuses such addresses);
+    - ends in an extension of its `content_type`.
+  - gahk.dk writes the file under that name in UTF-8. Wherever it puts an image URL in a page (img
+    `src`, `srcset`, CSS `url()`, `og:image`) or a `Location` header, the name is percent-encoded
+    from UTF-8 (`quote(url, safe="/")`: `tovtr%C3%A6kning-2019.jpg`), which is also what browsers
+    ask for and Apache decodes to the file. In a body, intern may write an image's `src` either
+    way; gahk.dk finds the image both ways and writes it encoded.
   - Every image a page, background or body uses is listed in `images`, with its type (jpeg, png,
     gif, webp) and size (≤ 15 MB). Page and default backgrounds must be `/billeder/` URLs listed
     there.
@@ -238,7 +254,8 @@ when no release is installed yet (bootstrap) or the active one is broken.
     stays at its URL. This changes nothing intern sends.
 - **`legacy_images`** maps old public image URLs (`/static/legacy/image/<rest>`) to their
   `/billeder/` URL. gahk.dk answers `/static/legacy/image/<rest>` and `/public/image/<rest>` with a
-  301 to the new URL.
+  301 to the new URL. A key may have its letters spelled out (`køkken.jpg`) or percent-encoded
+  (`k%C3%B8kken.jpg`); a request matches either, in NFC or NFD.
 - **Links** in bodies to `/intern/…` or `http(s)://(www.)gahk.dk/intern/…` are rewritten by intern
   to `https://intern.gahk.dk/…`.
 - **Menu** URLs are site paths (`/vision`, `/begivenheder/`) or absolute URLs. A page's canonical

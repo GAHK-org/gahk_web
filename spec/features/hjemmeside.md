@@ -32,7 +32,8 @@ intern or its storage is down.
   the method, so a form posted to an old address still arrives.
 - Old picture addresses (`/static/legacy/image/…`, `/public/image/…`) redirect to the picture's new
   address, when intern has moved it into the image library. So do the fingerprinted names the old
-  site also served them under (`gang.b8dc291a4e43.jpg`).
+  site also served them under (`gang.b8dc291a4e43.jpg`), and names with Danish letters, however the
+  link spells them.
 - Residents' calendar feeds (`/kalender/<token>.ics`) keep working: gahk.dk fetches them from intern
   as they are, unchanged and uncached.
 - `www.gahk.dk` and `http://` redirect to `https://gahk.dk`.
@@ -55,6 +56,8 @@ intern or its storage is down.
 - GIFs, animations and files that cannot be read are shown as they are. So are new pictures for the
   few minutes until their copies are ready.
 - The original picture keeps its address, so old links to it keep working.
+- A picture's address keeps the letters of its file name, Danish and others
+  (`/billeder/…/tovtrækning-2019.jpg`), in lower case.
 - A picture the editors take off the site disappears with the next publication, its smaller copies
   included.
 
@@ -90,6 +93,11 @@ intern or its storage is down.
   when published; the site's code holds only the logo, icons and fonts. The old pictures were moved
   into the library once, and their old addresses redirect.
 - **No trailing-slash redirects.** The old site served both forms, and links to both exist.
+- **Picture names keep their letters.** Names are UTF-8 everywhere, so there is no reason to spell
+  "æ", "ø" and "å" out as "ae", "oe" and "aa" (as an earlier version did). A name is stored in one
+  normalized form (NFC), so the same letters always give the same address, and pages write every
+  picture address percent-encoded (`tovtr%C3%A6kning-2019.jpg`), which is what a browser asks for
+  anyway. Names already spelled out stay as they are.
 - **Smaller copies are made on the webhost, not on intern.** They are cache: gahk.dk can make them
   again from the picture it already has, and intern needs no knowledge of how the site shows
   pictures. They are made when intern sends a picture, one picture per request, so even the first
