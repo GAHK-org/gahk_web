@@ -234,9 +234,9 @@ def fallback(path: str = "") -> Response:
         return redirect(308, cfg.intern_url + quote_path(target), query())
     if request.method not in ("GET", "HEAD"):
         return method_not_allowed("GET, HEAD")
-    target = routing.public_image_redirect(path)
+    target = routing.old_asset_redirect(path)
     if target is not None:
-        return redirect(301, quote_path(target), query())
+        return redirect(301, target, query())
     target = routing.intern_static_redirect(path)
     if target is not None:
         return redirect(301, cfg.intern_url + quote_path(target), query())
@@ -247,8 +247,9 @@ def fallback(path: str = "") -> Response:
         return unavailable(cfg)
     housekeeping.maybe_rebuild(session, cfg, state)
 
-    if path.startswith(routing.LEGACY_IMAGE_PREFIX):
-        image = _legacy_image(session, path)
+    legacy_key = routing.legacy_image_key(path)
+    if legacy_key is not None:  # straight to /billeder/, never by way of another /legacy/ address
+        image = _legacy_image(session, legacy_key)
         return redirect(301, billeder_href(image)) if image else not_found(cfg)
 
     bare = path.strip("/")

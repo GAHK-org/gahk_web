@@ -111,12 +111,11 @@ def test_not_intranet() -> None:
 def test_old_image_addresses_follow_the_legacy_map(client: Client) -> None:
     publish(client)
     gang = image("gang.jpg", GANG)["url"]
-    result = client.get("/public/image/upload/images/gang.jpg")
-    assert result.status == 301
-    assert result.headers["Location"] == "/static/legacy/image/upload/images/gang.jpg"
-    result = client.get("/static/legacy/image/upload/images/gang.jpg")
-    assert result.status == 301
-    assert result.headers["Location"] == gang
+    # Both old forms go straight to /billeder/, never by way of another /legacy/ address.
+    for path in ("/public/image/upload/images/gang.jpg", "/static/legacy/image/upload/images/gang.jpg"):
+        result = client.get(path)
+        assert (result.status, result.headers["Location"]) == (301, gang), path
+    assert client.get("/public/image/upload/images/ukendt.jpg").status == 404
     assert client.get("/static/legacy/image/upload/images/ukendt.jpg").status == 404
 
 
@@ -127,7 +126,7 @@ def test_old_image_addresses_with_the_old_sites_static_hash_follow_the_map(clien
     result = client.get("/static/legacy/image/upload/images/gang.b8dc291a4e43.jpg")
     assert (result.status, result.headers["Location"]) == (301, gang)
     result = client.get("/public/image/upload/images/gang.b8dc291a4e43.jpg")
-    assert result.headers["Location"] == "/static/legacy/image/upload/images/gang.b8dc291a4e43.jpg"
+    assert (result.status, result.headers["Location"]) == (301, gang)
     # Only a 12-hex-digit segment right before the extension is a hash.
     assert client.get("/static/legacy/image/upload/images/gang.b8dc291a4e4.jpg").status == 404
     assert client.get("/static/legacy/image/upload/images/gang.B8DC291A4E43.jpg").status == 404
@@ -165,7 +164,7 @@ def test_old_image_addresses_with_other_letters_follow_the_map(client: Client) -
         assert (result.status, result.headers["Location"]) == (301, href), path
     assert client.get("/static/legacy/image/upload/kokken.jpg").status == 404
     result = client.get("/public/image/upload/k%C3%B8kken.jpg")
-    assert (result.status, result.headers["Location"]) == (301, "/static/legacy/image/upload/k%C3%B8kken.jpg")
+    assert (result.status, result.headers["Location"]) == (301, href)
 
 
 def test_the_app_serves_a_page_in_either_slash_form(client: Client) -> None:
@@ -238,7 +237,11 @@ def test_htaccess_names_the_same_rules() -> None:
     assert "DirectorySlash Off" in text
     assert "RewriteCond %{REQUEST_FILENAME}/index.html -f" in text
     assert "RewriteRule ^(.*)$ cgi-bin/gahk.fcgi/$1 [L,QSA]" in text
-    assert "RewriteRule ^public/image/(.+)$ /static/legacy/image/$1 [R=301,L]" in text
+    assert not any("public/image" in line for line in text.splitlines() if "RewriteRule" in line)
+    assert (
+        "RewriteRule ^static/legacy/image/elements/lamassu(?:\\.b8dc291a4e43)?\\.svg$ /static/img/lamassu.svg"
+        " [R=301,L]" in text
+    )
     rules = re.findall(
         r"^\s*RewriteRule \^(\S+) https://intern\.gahk\.dk/\S* \[R=308,L\]$", text, re.MULTILINE
     )
@@ -401,7 +404,7 @@ def test_devserver_serves_assets_and_images(client: Client, dev: Client) -> None
 
 def test_htaccess_serves_the_same_aliases() -> None:
     rules = re.findall(r"^\s*RewriteRule \^(\S+)\$ (static/\S+) \[L\]$", HTACCESS.read_text(), re.MULTILINE)
-    assert len(rules) == 3
+    assert len(rules) == 2
     for path, target in routing.ALIASES.items():
         assert [to for pattern, to in rules if re.fullmatch(pattern, path.lstrip("/"))] == [
             target.lstrip("/")
@@ -410,19 +413,19 @@ def test_htaccess_serves_the_same_aliases() -> None:
         assert (STATIC_DIR / target.removeprefix("static/")).is_file(), target
 
 
-def test_the_old_sites_logo_keeps_its_addresses(client: Client, dev: Client) -> None:
-    """The logo and favicon of every page of the old site; other sites may link it too."""
+def test_the_old_sites_logo_redirects_to_the_sites_own(client: Client, dev: Client) -> None:
+    """The logo and favicon of every page of the old site; other sites may link it. Nothing is served
+    at an address with /legacy/ in it: the old addresses redirect to the site's own copy."""
     publish(client)
     logo = (STATIC_DIR / "img" / "lamassu.svg").read_bytes()
     assert logo.startswith(b"<?xml") and b"<svg" in logo
-    for path in (
-        "/static/legacy/image/elements/lamassu.svg",
-        "/static/legacy/image/elements/lamassu.b8dc291a4e43.svg",
-        "/static/img/lamassu.svg",
-    ):
-        result = dev.get(path)
-        assert (result.status, result.body) == (200, logo), path
-        assert result.headers["Content-Type"] == "image/svg+xml"
+    for path in routing.OLD_LOGO_PATHS:
+        for app in (dev, client):
+            result = app.get(path)
+            assert (result.status, result.headers["Location"]) == (301, routing.LOGO_PATH), path
+    result = dev.get(routing.LOGO_PATH)
+    assert (result.status, result.body) == (200, logo)
+    assert result.headers["Content-Type"] == "image/svg+xml"
 
 
 @pytest.mark.parametrize(
@@ -503,7 +506,9 @@ def test_devserver_serves_images_with_other_letters(client: Client, dev: Client)
 def test_devserver_matches_production_routing(client: Client, dev: Client) -> None:
     publish(client)
     assert dev.get("/intern/x").headers["Location"] == "https://intern.gahk.dk/intern/x"
-    assert dev.get("/public/image/a.jpg").headers["Location"] == "/static/legacy/image/a.jpg"
+    gang = image("gang.jpg", GANG)["url"]
+    assert dev.get("/public/image/upload/images/gang.jpg").headers["Location"] == gang
+    assert dev.get("/public/image/a.jpg").status == 404
     assert dev.get("/gammel-side").headers["Location"] == "/kontakt"
     assert dev.get("/findes-ikke").status == 404
     assert dev.get("/.htaccess").status == 403

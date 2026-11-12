@@ -59,9 +59,9 @@ def static_response(cfg: Config, method: str, path: str, query: str) -> Response
         return redirect(308, cfg.intern_url + quote_path(target), query)
     if routing.is_script(path):
         return text(403, "Forbidden")
-    target = routing.public_image_redirect(path)
+    target = routing.old_asset_redirect(path)
     if target is not None:
-        return redirect(301, quote_path(target), query)
+        return redirect(301, target, query)
     if method in ("GET", "HEAD"):
         file = routing.static_file(cfg.public_html, path) or _package_static(path)
         if file is not None:

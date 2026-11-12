@@ -78,15 +78,16 @@ ErrorDocument 404 /404.html
   # which run nothing: /wiki/index.php?title=… and /wiki/load.php?… must reach intern.gahk.dk. ---
   RewriteRule (?:^|/)[^/]*\.(?:py|cgi|fcgi|php\d?|phtml|phar|pl|shtml)(?:[./]|$) - [F,L,NC]
 
-  # --- The oldest image addresses. The app then sends /static/legacy/image/... on to the
-  # picture's /billeder/ address (from the published snapshot), or answers 404.
-  RewriteRule ^public/image/(.+)$ /static/legacy/image/$1 [R=301,L]
+  # --- Old picture addresses (/static/legacy/image/... and the older /public/image/...) have no
+  # file here: the app redirects each in one step to the picture's /billeder/ address (from the
+  # published snapshot), or answers 404. Nothing is ever served at an address with /legacy/ in it. ---
 
-  # --- Icons browsers ask for at the root, and the old site's logo at its old addresses (the logo
-  # and favicon of every page there, plain and with Django's content hash; others may link it) ---
+  # --- Icons browsers ask for at the root ---
   RewriteRule ^favicon\.ico$ static/favicon.ico [L]
   RewriteRule ^apple-touch-icon(?:-precomposed)?\.png$ static/img/apple-touch-icon.png [L]
-  RewriteRule ^static/legacy/image/elements/lamassu(?:\.b8dc291a4e43)?\.svg$ static/img/lamassu.svg [L]
+  # The old site's logo (also its favicon; others may link it), plain and with Django's content
+  # hash: redirected to the same logo among the site's own assets, not served at the old address.
+  RewriteRule ^static/legacy/image/elements/lamassu(?:\.b8dc291a4e43)?\.svg$ /static/img/lamassu.svg [R=301,L]
 
   # --- Files that exist are served as they are (GET/HEAD only: a POST must reach the app) ---
   RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$

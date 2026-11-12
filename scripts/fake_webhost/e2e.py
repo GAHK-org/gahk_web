@@ -55,7 +55,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -776,9 +776,7 @@ manifest_url = {MANIFEST_URL}
             (snapshot["images"][0]["url"], "public, max-age=31536000, immutable"),
             ("/favicon.ico", "public, max-age=604800"),
             ("/static/icons/icon-192x192.png", "public, max-age=604800"),
-            # The old site's logo at its old addresses: served, not redirected.
-            ("/static/legacy/image/elements/lamassu.svg", "public, max-age=604800"),
-            ("/static/legacy/image/elements/lamassu.b8dc291a4e43.svg", "public, max-age=604800"),
+            ("/static/img/lamassu.svg", "public, max-age=604800"),
             ("/sw.js", "no-cache"),
             ("/sitemap.xml", "public, max-age=60"),
             ("/robots.txt", "public, max-age=60"),
@@ -789,11 +787,22 @@ manifest_url = {MANIFEST_URL}
                 answer.header("Cache-Control") == cache,
                 f"{path}: Cache-Control {answer.header('Cache-Control')}",
             )
-        logo = host.get("/static/legacy/image/elements/lamassu.svg")
+        logo = host.get("/static/img/lamassu.svg")
         expect(
             logo.header("Content-Type").startswith("image/svg+xml") and logo.body.startswith(b"<?xml"),
-            f"the old logo address: {logo.header('Content-Type')}",
+            f"the logo: {logo.header('Content-Type')}",
         )
+        # The old site's logo at its old addresses: redirected to the site's own copy by Apache
+        # (no Python), never served at an address with /legacy/ in it.
+        for old_logo in (
+            "/static/legacy/image/elements/lamassu.svg",
+            "/static/legacy/image/elements/lamassu.b8dc291a4e43.svg",
+        ):
+            answer = host.get(old_logo)
+            expect(
+                answer.status == 301 and answer.header("Location").endswith("/static/img/lamassu.svg"),
+                f"{old_logo}: {answer.status} {answer.header('Location')}",
+            )
         velkommen = host.get("/velkommen")
         expect('<link rel="canonical" href="https://gahk.dk/">' in velkommen.text, "/velkommen's canonical")
         # intern's preview (this site's HTML on intern.gahk.dk) loads the fonts cross-origin.
@@ -841,20 +850,18 @@ manifest_url = {MANIFEST_URL}
         expect(f"{folder}/_480w.webp 480w" in page, "the body's picture has no srcset")
         expect(DANISH_NAME not in page, "the page spells the image name out")
 
-        # /public/image/… → (Apache) /static/legacy/image/… → (the app) the picture's /billeder/ URL.
-        # mod_rewrite writes its escapes in lower case (%c3%b8): the same bytes.
-        old = host.get("/public/image/upload/images/k%C3%B8kken.jpg")
-        legacy = "/static/legacy/image/upload/images/k%C3%B8kken.jpg"
-        expect(
-            old.status == 301 and unquote(old.header("Location")).endswith(unquote(legacy)),
-            f"/public/image with Danish letters: {old.status} {old.header('Location')}",
-        )
-        moved = host.get(urlsplit(old.header("Location")).path)
-        expect(
-            moved.status == 301 and moved.header("Location") == href,
-            f"{legacy}: {moved.status} {moved.header('Location')}",
-        )
-        expect(host.get(moved.header("Location")).body == original.body, "the redirect leads elsewhere")
+        # Both old picture addresses go in one step to the picture's /billeder/ URL (the app, from
+        # the snapshot's legacy_images map); never by way of another /legacy/ address.
+        for old_path in (
+            "/public/image/upload/images/k%C3%B8kken.jpg",
+            "/static/legacy/image/upload/images/k%C3%B8kken.jpg",
+        ):
+            old = host.get(old_path)
+            expect(
+                old.status == 301 and old.header("Location") == href,
+                f"{old_path}: {old.status} {old.header('Location')}",
+            )
+        expect(host.get(old.header("Location")).body == original.body, "the redirect leads elsewhere")
 
     def dynamic(self, host: Webhost) -> None:
         cases = [
@@ -890,13 +897,6 @@ manifest_url = {MANIFEST_URL}
                 301,
                 "https://intern.gahk.dk/static/legacy/image/elements/logo.png",
             ),
-            (
-                "https",
-                "gahk.dk",
-                "/public/image/upload/images/gang.jpg",
-                301,
-                "/static/legacy/image/upload/images/gang.jpg",
-            ),
             ("https", "gahk.dk", "/gammel-side?utm=x", 301, "/kontakt?utm=x"),
             ("https", "gahk.dk", "/kontakt/", 200, ""),
             ("https", "gahk.dk", "/optagelse/send_rundvisning", 301, "/optagelse/ansoeg"),
@@ -909,11 +909,15 @@ manifest_url = {MANIFEST_URL}
                 expect(got.endswith(location), f"{name}{path}: Location {got}, expected {location}")
             if scheme == "http":
                 expect(not answer.header("Strict-Transport-Security"), "HSTS sent over plain http")
-        legacy = host.get("/static/legacy/image/upload/images/gang.jpg")
-        expect(
-            legacy.status == 301 and legacy.header("Location").startswith("/billeder/"),
-            f"legacy: {legacy.status}",
-        )
+        for old_path in (
+            "/static/legacy/image/upload/images/gang.jpg",
+            "/public/image/upload/images/gang.jpg",
+        ):
+            legacy = host.get(old_path)
+            expect(
+                legacy.status == 301 and legacy.header("Location").startswith("/billeder/"),
+                f"{old_path}: {legacy.status} {legacy.header('Location')}",
+            )
         missing = host.get("/findes-ikke")
         expect(missing.status == 404 and "<html" in missing.text.lower(), f"404 page: {missing.status}")
         expect(not missing.header("X-Gahk-Runner"), "only /api/health says what answered")

@@ -401,9 +401,10 @@ In a browser:
 
 ### Addresses kept from the old site
 
-Every address that answered on the old gahk.dk answers at the same address after the cutover. The
-intranet is the exception by design: it moved to intern.gahk.dk, and its old addresses redirect
-there with their path, query and method. Check these once DNS has switched:
+Every page address that answered on the old gahk.dk answers at the same address after the cutover.
+Media and other files are never served at an address with `/legacy/` in it: an old media address
+redirects to where the file lives now. The intranet moved to intern.gahk.dk by design, and its old
+addresses redirect there with their path, query and method. Check these once DNS has switched:
 
 | Address | Answer |
 |---|---|
@@ -411,8 +412,8 @@ there with their path, query and method. Check these once DNS has switched:
 | `/velkommen`, `/velkommen/` (the old second address of the front page) | 200, the front page (canonical link `/`) |
 | `/optagelse/ansoeg`, `/optagelse/fremlej` | 200, the forms; a POST there, or to the old targets `/optagelse/send_rundvisning` and `/optagelse/send_fremleje`, is handled |
 | `/optagelse/ansoeg/success` | 200, the thank-you page |
-| `/static/legacy/image/upload/…` (also with the old site's hash in the name), `/public/image/…` | 301 to the picture's `/billeder/<sha16>/<name>` (200) |
-| `/static/legacy/image/elements/lamassu.svg`, `…/lamassu.b8dc291a4e43.svg` (the old logo and favicon) | 200, `image/svg+xml` |
+| `/static/legacy/image/upload/…` (also with the old site's hash in the name), `/public/image/…` | 301, in one step, to the picture's `/billeder/<sha16>/<name>` (200) |
+| `/static/legacy/image/elements/lamassu.svg`, `…/lamassu.b8dc291a4e43.svg` (the old logo and favicon) | 301 to `/static/img/lamassu.svg` (200, `image/svg+xml`) |
 | `/favicon.ico`, `/static/icons/icon-192x192.png`, `/static/icons/badge-72x72.png` | 200 |
 | `/kalender/<token>.ics` | 200 `text/calendar`, passed through from intern |
 | `/sw.js` | 200; now a worker that removes itself (the old one was the intranet's push worker) |
@@ -427,7 +428,7 @@ for p in faciliteter faciliteter/kokken kollegielivet/historie legater kontakt v
     printf '%s %s\n' "$(curl -so /dev/null -w '%{http_code}' "https://gahk.dk$u")" "$u"
   done
 done                                       # 200 on every line
-curl -sI https://gahk.dk/static/legacy/image/elements/lamassu.b8dc291a4e43.svg   # 200, image/svg+xml
+curl -sI https://gahk.dk/static/legacy/image/elements/lamassu.b8dc291a4e43.svg   # 301 → /static/img/lamassu.svg
 curl -sI 'https://gahk.dk/wiki/index.php?title=Forside'   # 308 → https://intern.gahk.dk/wiki/index.php?title=Forside
 curl -sI https://gahk.dk/healthz           # 308 → https://intern.gahk.dk/healthz
 curl -sI https://gahk.dk/static/manifest.json   # 301 → https://intern.gahk.dk/static/manifest.json

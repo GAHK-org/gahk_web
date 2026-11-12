@@ -36,8 +36,9 @@ intern or its storage is down.
   to the root. The old intranet's static files (`/static/manifest.json`, its icons, `/static/dist/…`,
   the pictures its templates show) redirect to the same path on intern.gahk.dk when gahk.dk has no
   file of that name.
-- Old picture addresses (`/static/legacy/image/…`, `/public/image/…`) redirect to the picture's new
-  address, when intern has moved it into the image library. So do the fingerprinted names the old
+- Old picture addresses (`/static/legacy/image/…`, `/public/image/…`) redirect in one step to the
+  picture's new address, when intern has moved it into the image library. Nothing is ever served at
+  an address with `/legacy/` in it; the old logo's address redirects to the site's own copy. So do the fingerprinted names the old
   site also served them under (`gang.b8dc291a4e43.jpg`), and names with Danish letters, however the
   link spells them.
 - Residents' calendar feeds (`/kalender/<token>.ics`) keep working: gahk.dk fetches them from intern

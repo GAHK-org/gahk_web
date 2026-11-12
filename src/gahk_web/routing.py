@@ -47,11 +47,30 @@ def intern_static_redirect(path: str) -> str | None:
     return "/" + match.group(1) if match else None
 
 
-def public_image_redirect(path: str) -> str | None:
-    """The oldest image addresses (/public/image/...) point at today's /static/legacy/image/..."""
-    if path.startswith(PUBLIC_IMAGE_PREFIX) and len(path) > len(PUBLIC_IMAGE_PREFIX):
-        return LEGACY_IMAGE_PREFIX + path[len(PUBLIC_IMAGE_PREFIX) :]
+def legacy_image_key(path: str) -> str | None:
+    """The key in the snapshot's legacy_images map for an old picture address, or None.
+
+    The old site's pictures were at /static/legacy/image/..., and before that at /public/image/...
+    (the same files). Both are only ever redirected, in one step, to the picture's /billeder/ address:
+    gahk.dk never serves anything at an address with /legacy/ in it."""
+    for prefix in (LEGACY_IMAGE_PREFIX, PUBLIC_IMAGE_PREFIX):
+        if path.startswith(prefix) and len(path) > len(prefix):
+            return LEGACY_IMAGE_PREFIX + path[len(prefix) :]
     return None
+
+
+# The old site's logo (also its favicon), plain and with Django's content hash. Others may link it,
+# so it redirects to the same logo among gahk.dk's own assets; it is never served at the old address.
+OLD_LOGO_PATHS = (
+    "/static/legacy/image/elements/lamassu.svg",
+    "/static/legacy/image/elements/lamassu.b8dc291a4e43.svg",
+)
+LOGO_PATH = "/static/img/lamassu.svg"
+
+
+def old_asset_redirect(path: str) -> str | None:
+    """Where an old site asset gahk.dk still has now lives (301), or None."""
+    return LOGO_PATH if path in OLD_LOGO_PATHS else None
 
 
 def is_hidden(path: str) -> bool:
@@ -103,14 +122,11 @@ def stub_for(path: str, content_length: str = "", *, cgi_only: bool = False) -> 
 
 
 # Addresses .htaccess serves another file at (a rewrite, not a redirect): the icons browsers ask for
-# at the root, and the old site's logo, which was the logo and favicon of every page there, under its
-# plain name and the one with Django's content hash.
+# at the root.
 ALIASES = {
     "/favicon.ico": "/static/favicon.ico",
     "/apple-touch-icon.png": "/static/img/apple-touch-icon.png",
     "/apple-touch-icon-precomposed.png": "/static/img/apple-touch-icon.png",
-    "/static/legacy/image/elements/lamassu.svg": "/static/img/lamassu.svg",
-    "/static/legacy/image/elements/lamassu.b8dc291a4e43.svg": "/static/img/lamassu.svg",
 }
 
 

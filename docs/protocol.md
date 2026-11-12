@@ -258,7 +258,7 @@ when no release is installed yet (bootstrap) or the active one is broken.
     stays at its URL. This changes nothing intern sends.
 - **`legacy_images`** maps old public image URLs (`/static/legacy/image/<rest>`) to their
   `/billeder/` URL. gahk.dk answers `/static/legacy/image/<rest>` and `/public/image/<rest>` with a
-  301 to the new URL. A key may have its letters spelled out (`køkken.jpg`) or percent-encoded
+  301 straight to the new URL; it never serves a file at an address with `/legacy/` in it. A key may have its letters spelled out (`køkken.jpg`) or percent-encoded
   (`k%C3%B8kken.jpg`); a request matches either, in NFC or NFD.
 - **Links** in bodies to `/intern/…` or `http(s)://(www.)gahk.dk/intern/…` are rewritten by intern
   to `https://intern.gahk.dk/…`.
