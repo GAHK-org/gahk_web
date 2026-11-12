@@ -220,11 +220,14 @@ def main() -> None:
         unavailable(sha, problem)
         return
 
-    here = str(Path(__file__).absolute().parent)
+    # Python puts the script's folder first on sys.path, resolved (symlinks followed), while
+    # __file__ keeps the path Apache gave; compare both resolved, or a link on the way keeps
+    # cgi-bin/ on the path ahead of the standard library.
+    here = os.path.realpath(Path(__file__).parent)
     sys.path[:] = [str(release / "src"), str(release / "vendor")] + [
         entry
         for entry in sys.path
-        if entry != here and "site-packages" not in entry and "dist-packages" not in entry
+        if os.path.realpath(entry) != here and "site-packages" not in entry and "dist-packages" not in entry
     ]
     from gahk_web.cgi_entry import main as run  # only importable once sys.path is set
 

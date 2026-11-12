@@ -149,6 +149,22 @@ def test_the_release_runs_with_only_its_own_src_and_packages(home: Path, tmp_pat
     assert Path(seen["gahkfake"]).is_relative_to(release / "vendor")
 
 
+def test_a_symlink_on_the_way_to_the_stub_keeps_cgi_bin_off_sys_path(home: Path, tmp_path: Path) -> None:
+    v1, stub = install(home, tmp_path)
+    link = tmp_path / "linked_public_html"
+    link.symlink_to(home / "public_html", target_is_directory=True)
+
+    status, _, body = cgi(home, "GET", "/faciliteter", stub=link / "cgi-bin" / "gahk.cgi")
+
+    assert status == 200, body
+    seen = json.loads(body)["sys_path"]
+    assert seen[:2] == [
+        str(home / "gahk_web" / "releases" / v1 / "src"),
+        str(home / "gahk_web" / "releases" / v1 / "vendor"),
+    ]
+    assert not [entry for entry in seen if os.path.realpath(entry) == os.path.realpath(stub.parent)]
+
+
 def test_packages_for_another_python_are_not_imported_until_an_update_reinstalls_them(
     home: Path, tmp_path: Path
 ) -> None:
