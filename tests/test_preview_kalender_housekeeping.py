@@ -70,6 +70,35 @@ def test_preview_news_and_event(client: Client) -> None:
     assert "Julefrokost" not in result.text  # replaced by the edited version with the same id
 
 
+def test_preview_of_a_page_without_an_address(
+    client: Client, cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A draft that is not the front page and has no address yet renders as an ordinary page."""
+    publish(client)
+    sites: list[render.Site] = []
+
+    class RecordingSite(render.Site):
+        def __post_init__(self) -> None:
+            super().__post_init__()
+            sites.append(self)
+
+    monkeypatch.setattr(render, "Site", RecordingSite)
+    item = page(2**31 - 1, "", "Ny side uden adresse", "<p>Kladde</p>")
+    result = client.api(
+        "POST", "/api/preview", {"kind": "page", "item": item, "media_base": "https://intern.gahk.dk"}
+    )
+    assert result.status == 200
+    assert '<h1 class="font-display page-title">Ny side uden adresse</h1>' in result.text
+    assert "hero--home" not in result.text
+    assert 'class="section-nav"' not in result.text
+    # The stored front page stays in the previewed site, and stays its front page.
+    [site] = sites
+    assert [p["id"] for p in site.snapshot["pages"] if p["path"] == ""] == [1, 2**31 - 1]
+    front = site.front_page()
+    assert front is not None
+    assert front["id"] == 1
+
+
 def test_preview_works_before_the_first_publish(client: Client) -> None:
     item = page(1, "", "Velkommen", "<p>Hej</p>")
     result = client.api(

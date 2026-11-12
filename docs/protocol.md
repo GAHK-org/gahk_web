@@ -112,7 +112,8 @@ Body: a [snapshot](#the-snapshot).
 → `200 text/html`: the item rendered with the currently published menu and settings, marked
 `noindex`. Preview items may reference `/media/cms/…` images, which get `media_base` in front, so the
 editor's browser loads them from intern. A page that has not been saved yet needs a placeholder
-`id` ≥ 1. Previews are never stored.
+`id` ≥ 1. A page with path `""` and an id other than `front_page_id` is a draft without an address:
+it renders as an ordinary page and leaves the front page alone. Previews are never stored.
 
 ### GET /api/outbox
 

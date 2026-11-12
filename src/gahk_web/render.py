@@ -167,7 +167,12 @@ class Site:
     preview_media_base: str = ""  # set for POST /api/preview
 
     def __post_init__(self) -> None:
-        self.pages_by_path = {page["path"]: page for page in self.snapshot["pages"]}
+        front_page_id = self.snapshot["site"]["front_page_id"]
+        self.pages_by_path = {
+            page["path"]: page
+            for page in self.snapshot["pages"]
+            if page["path"] or page["id"] == front_page_id  # a pathless preview draft has no address
+        }
         self.menu_urls = {item["url"] for item in self.snapshot["menu"]}
 
     @property
@@ -276,7 +281,7 @@ class Site:
         return environment().get_template(template).render(self._context(**extra))
 
     def page_html(self, page: Page) -> str:
-        if not page["path"]:
+        if not page["path"] and page["id"] == self.snapshot["site"]["front_page_id"]:
             return self.home_html(page)
         section_title, section_links = self.section_nav(page)
         url = self.page_url(page["path"])
@@ -511,7 +516,13 @@ def preview_html(
     today = copenhagen_today()
     if kind == "page":
         page = cast(Page, item)
-        others = [old for old in changed["pages"] if old["id"] != page["id"] and old["path"] != page["path"]]
+        # A page with path "" that is not the front page is a draft without an address: it replaces
+        # no other page, and it renders as an ordinary page.
+        others = [
+            old
+            for old in changed["pages"]
+            if old["id"] != page["id"] and (not page["path"] or old["path"] != page["path"])
+        ]
         changed["pages"] = [*others, page]
         return Site(cfg, changed, today, preview_media_base=media_base).page_html(page)
     if kind == "news":
