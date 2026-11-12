@@ -309,10 +309,15 @@ Until step 4, the old site keeps serving gahk.dk from Coolify.
    *"Siden opdateres"* for a few minutes. Once both names resolve to the webhost, re-issue the
    certificate with file validation (section 5), or it will not renew.
 5. **Deploy the new intern** with `GAHK_WEB_URL`, `GAHK_WEB_KEY` and `PUBLIC_SITE_URL` set (section 3).
-   Within about 2 minutes its sync task sees that gahk.dk has no content and publishes everything:
-   it first converts the old `static/legacy` images into the image library, then uploads the images
-   and the snapshot. The site is complete from that moment. The *Hjemmeside* overview on intern
-   shows the publication and gahk.dk's version.
+   Within about 2 minutes its sync task sees that gahk.dk has no content and publishes everything.
+   On that first sync after the deploy, intern imports the old site's pictures into its image
+   library by itself: it downloads each picture the content still references from a pinned commit
+   of the public gahk_intern repository, a bounded batch per sync, and points the content at the
+   library copy. Then it uploads the images and the snapshot, whose `legacy_images` map lets gahk.dk
+   redirect the old picture addresses. Should the automatic import fail for a picture, intern has a
+   manual import command as a fallback (see intern's DEPLOY). The site is complete from that moment;
+   with many old pictures, the last of them follow within a few syncs. The *Hjemmeside* overview on
+   intern shows the publication and gahk.dk's version.
 6. **Check** everything in section 9. Old intranet links (`gahk.dk/intern/…`) now redirect to
    `intern.gahk.dk/…`, and the old calendar feed URLs keep working through gahk.dk.
 
