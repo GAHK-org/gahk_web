@@ -35,7 +35,7 @@
 - [ ] A new runtime dependency has binary wheels for CPython 3.13 and 3.14 on manylinux x86_64 (the bundle job checks this)
 - [ ] No secrets committed — configuration lives in `config.ini` on the webhost, never in git
 - [ ] Docs updated if behaviour, config or deploy changed (README / DEPLOY.md / spec)
-- [ ] User-facing text is in Danish
+- [ ] User-facing text is in Danish; everything behind the scenes (code, file names, URLs no visitor reads, cookies, values sent between gahk.dk and intern) is English
 
 ## Screenshots / notes
 

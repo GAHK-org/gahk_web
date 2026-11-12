@@ -25,9 +25,9 @@ body:
       label: Area
       options:
         - "pages / menu / layout"
-        - "begivenheder"
-        - "optagelse (the forms)"
-        - "statistik"
+        - "news and events"
+        - "admission forms"
+        - "statistics"
         - "sync with intern.gahk.dk"
         - "self-update / webhost"
         - "other"

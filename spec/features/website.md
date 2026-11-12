@@ -1,4 +1,4 @@
-# Feature: Hjemmeside — what visitors see on gahk.dk
+# Feature: Website — what visitors see on gahk.dk
 
 The public site of the kollegium. Every word and picture is edited on intern.gahk.dk (*Hjemmeside*);
 gahk.dk only shows it. Each page is a finished file on the webhost, so the site stays up when
@@ -18,7 +18,7 @@ intern or its storage is down.
 - `/begivenheder/` lists the upcoming events, then up to 20 past events and the 40 latest news items.
   An event moves from upcoming to past on its day in Copenhagen time, even if nobody edits anything.
 - `/optagelse/` is an ordinary page: the criteria and the rent. The two forms have their own pages
-  (see *optagelse*).
+  (see [admissions](admissions.md)).
 - Each page has a description for search engines and link previews, either the editors' own or a
   general one. The site has a sitemap and a robots file.
 
@@ -71,7 +71,8 @@ intern or its storage is down.
 ## Speed and caching
 
 - Pages, pictures and the stylesheet are plain files that the web server sends directly. Only forms,
-  the visit count and redirects need a program, which keeps running between requests (see *drift*).
+  the visit count and redirects need a program, which keeps running between requests (see
+  [operations](operations.md)).
 - Browsers keep a page for a minute, so an edit shows within about a minute of saving it on intern.
 - Pictures and the stylesheet carry a fingerprint in their address, so browsers keep them for a year
   and never see a stale one.

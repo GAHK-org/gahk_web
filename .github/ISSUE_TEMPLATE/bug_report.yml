@@ -33,9 +33,9 @@ body:
       description: Which part of the site is affected?
       options:
         - "pages / menu / layout"
-        - "begivenheder"
-        - "optagelse (the forms)"
-        - "statistik"
+        - "news and events"
+        - "admission forms"
+        - "statistics"
         - "sync with intern.gahk.dk"
         - "self-update / webhost"
         - "other / not sure"

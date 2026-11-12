@@ -1,4 +1,4 @@
-# Feature: Statistik — visits to gahk.dk
+# Feature: Statistics — visits to gahk.dk
 
 How many people read the public site, and which pages, shown on intern's statistics page. Counting
 happens on gahk.dk, so it works while intern is down. The numbers move to intern within a couple of

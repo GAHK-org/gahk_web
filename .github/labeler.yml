@@ -3,7 +3,7 @@
 # Labels are created on first use if they don't exist yet.
 
 # What visitors see: rendering, templates and the routing of addresses.
-"area:hjemmeside":
+"area:website":
   - changed-files:
       - any-glob-to-any-file:
           - "src/gahk_web/render.py"
@@ -11,11 +11,11 @@
           - "src/gahk_web/templates/**"
           - "public_html/.htaccess"
 
-"area:optagelse":
+"area:admissions":
   - changed-files:
       - any-glob-to-any-file: ["src/gahk_web/forms.py", "src/gahk_web/templates/form.html", "src/gahk_web/templates/success.html"]
 
-"area:statistik":
+"area:statistics":
   - changed-files:
       - any-glob-to-any-file: ["src/gahk_web/stats.py"]
 
@@ -30,7 +30,7 @@
           - "src/gahk_web/outbox.py"
           - "docs/protocol.md"
 
-"area:drift":
+"area:operations":
   - changed-files:
       - any-glob-to-any-file:
           - "src/gahk_web/updater.py"

@@ -1,4 +1,4 @@
-# Feature: Drift — how gahk.dk keeps itself running
+# Feature: Operations — how gahk.dk keeps itself running
 
 gahk.dk runs on a small Hetzner webhost with no SSH and no scheduled jobs. It keeps itself up to
 date, keeps serving when intern.gahk.dk or its storage is down, and can be rebuilt from nothing.
