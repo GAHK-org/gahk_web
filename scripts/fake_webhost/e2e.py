@@ -1059,8 +1059,13 @@ manifest_url = {MANIFEST_URL}
         host.wait_health(second.version, "fastcgi")
         for _ in range(3):
             host.wait_health(second.version, "fastcgi")
-        time.sleep(1)
+        # An idle old process notices the switch on its own within about a second, but on a busy CI
+        # runner it can take longer: wait for it rather than look once.
+        deadline = time.monotonic() + 20
         after = host.fcgi_pids()
+        while before & after and time.monotonic() < deadline:
+            time.sleep(0.5)
+            after = host.fcgi_pids()
         expect(after and not before & after, f"FastCGI processes before {before}, after {after}")
         errors = host.read("/var/log/apache2/error.log").decode(errors="replace")
         expect(
