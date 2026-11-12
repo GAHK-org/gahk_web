@@ -50,11 +50,15 @@ def _file_response(path: Path, url_path: str) -> Response:
 
 def static_response(cfg: Config, method: str, path: str, query: str) -> Response | None:
     """What Apache would answer before the app, or None to let the app answer."""
-    if routing.is_hidden(path) or routing.is_script(path) or routing.is_stub(path):
+    if routing.is_hidden(path) or routing.is_stub(path):
         return text(403, "Forbidden")
+    # The intranet redirects come before the script refusal, as in .htaccess: the old wiki's
+    # addresses end in .php (/wiki/index.php?title=…).
     target = routing.intern_redirect(path)
     if target is not None:
         return redirect(308, cfg.intern_url + quote_path(target), query)
+    if routing.is_script(path):
+        return text(403, "Forbidden")
     target = routing.public_image_redirect(path)
     if target is not None:
         return redirect(301, quote_path(target), query)

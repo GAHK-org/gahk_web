@@ -42,6 +42,7 @@ def test_unknown_path_is_the_404_page(client: Client) -> None:
         ("/photo-album/1/", "https://intern.gahk.dk/photo-album/1/"),
         ("/media/cms/2026/x.jpg", "https://intern.gahk.dk/media/cms/2026/x.jpg"),
         ("/wiki/Forside", "https://intern.gahk.dk/wiki/Forside"),
+        ("/wiki/index.php", "https://intern.gahk.dk/wiki/index.php"),
         ("/health", "https://intern.gahk.dk/health"),
         ("/optagelse/listansoegninger", "https://intern.gahk.dk/optagelse/listansoegninger"),
         ("/optagelse/eksport", "https://intern.gahk.dk/optagelse/eksport"),
@@ -53,6 +54,33 @@ def test_intranet_addresses_go_to_intern_with_308(client: Client, path: str, tar
     result = client.get(path, query="a=1")
     assert result.status == 308
     assert result.headers["Location"] == target + "?a=1"
+
+
+# The old wiki's own addresses: $wgArticlePath is /wiki/index.php?title=$1, and its pages load
+# scripts and styles from /wiki/load.php. They end in .php, yet must be redirected, not refused.
+WIKI_ADDRESSES = (
+    ("/wiki/index.php", "title=Forside"),
+    ("/wiki/index.php", "title=Speciel:Log_ind&returnto=Forside"),
+    ("/wiki/index.php", ""),
+    ("/wiki/load.php", "modules=startup&only=scripts&raw=1&skin=vector"),
+    ("/wiki/api.php", "action=query&format=json"),
+)
+
+
+@pytest.mark.parametrize(("path", "query"), WIKI_ADDRESSES)
+def test_the_wikis_php_addresses_go_to_intern(client: Client, dev: Client, path: str, query: str) -> None:
+    target = "https://intern.gahk.dk" + path + (f"?{query}" if query else "")
+    for answer in (dev.get(path, query=query), client.get(path, query=query)):
+        assert (answer.status, answer.headers["Location"]) == (308, target)
+    login = dev.post(path, query=query)  # the wiki's login form posts to index.php
+    assert (login.status, login.headers["Location"]) == (308, target)
+
+
+def test_htaccess_redirects_the_intranet_before_it_refuses_scripts() -> None:
+    lines = rule_lines(HTACCESS.read_text())
+    scripts = next(i for i, line in enumerate(lines) if line.endswith("- [F,L,NC]"))
+    intern = [i for i, line in enumerate(lines) if "https://intern.gahk.dk/" in line and "[R=308,L]" in line]
+    assert intern and max(intern) < scripts
 
 
 def test_not_intranet() -> None:
