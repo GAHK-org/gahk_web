@@ -17,7 +17,9 @@ Variants are cache: they are made when intern PUTs the image (one image per requ
 and whatever is still missing is made, within a time budget, by the next publish, rebuild or
 housekeeping pass. A publish that stops using an image deletes its variants at once, together with
 its public copies; only the blob waits out the grace hour. An image that fails gets none, and pages
-show the original; a publish never fails because of a variant.
+show the original; a publish never fails because of a variant. An attempt that never finished (the
+process was killed) is retried only by housekeeping and the command line, never by a request intern
+waits for, and an image is given up after MAX_VARIANT_ATTEMPTS of them.
 """
 
 import contextlib
@@ -318,12 +320,21 @@ def snapshot_shas(snapshot: Snapshot) -> list[str]:
 
 
 def ensure_variants(
-    con: db.Connection, cfg: Config, shas: Iterable[str], budget: float | None = None
+    con: db.Connection,
+    cfg: Config,
+    shas: Iterable[str],
+    budget: float | None = None,
+    *,
+    retry: bool = True,
 ) -> VariantProgress:
     """Make the variants these images lack, until `budget` seconds have passed (None: no limit).
 
     Recorded variants whose files have gone are forgotten first, so no page links a missing file;
-    they are made again like any other. Images over the budget stay pending for a later pass."""
+    they are made again like any other. Images over the budget stay pending for a later pass.
+
+    With retry=False, an image whose earlier attempt never finished (the process was killed, maybe
+    for its memory) is left pending: the requests intern waits for (PUT, publish, rebuild) pass that
+    False, so such an image cannot fail them again. Housekeeping and the command line retry it."""
     shas = list(dict.fromkeys(shas))
     if not shas:
         return VariantProgress(0, 0)
@@ -355,7 +366,9 @@ def ensure_variants(
                 sha=sha,
             )
             continue
-        if deadline is not None and time.monotonic() >= deadline:
+        if (not retry and row["variant_attempts"] > 0) or (
+            deadline is not None and time.monotonic() >= deadline
+        ):
             pending += 1
             continue
         if make_variants(con, cfg, sha):

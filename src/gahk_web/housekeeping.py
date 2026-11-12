@@ -83,10 +83,13 @@ def rebuild(con: db.Connection, cfg: Config, today: date) -> int | None:
     return result.pages_written
 
 
-def fill_variants(con: db.Connection, cfg: Config, snapshot: Snapshot, budget: float) -> int:
+def fill_variants(
+    con: db.Connection, cfg: Config, snapshot: Snapshot, budget: float, *, retry: bool = True
+) -> int:
     """Make the variants the snapshot's images lack, for at most about `budget` seconds. Returns how
-    many images' links changed (the site needs rendering again when that is not 0)."""
-    return images.ensure_variants(con, cfg, images.snapshot_shas(snapshot), budget).changed
+    many images' links changed (the site needs rendering again when that is not 0). retry=False
+    leaves images whose earlier attempt never finished to housekeeping (images.ensure_variants)."""
+    return images.ensure_variants(con, cfg, images.snapshot_shas(snapshot), budget, retry=retry).changed
 
 
 def maybe_rebuild(

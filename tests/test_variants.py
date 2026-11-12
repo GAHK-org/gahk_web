@@ -407,6 +407,33 @@ def test_a_full_disk_does_not_count_toward_giving_up(
     assert image_row(con, PHOTO_SHA)["variant_widths"] == [480, 960, 1600, 2000]
 
 
+def test_requests_intern_waits_for_leave_a_killed_attempt_to_housekeeping(
+    client: Client, cfg: Config, con: db.Connection
+) -> None:
+    put(client, PHOTO)
+    put(client, BROKEN)
+    for name in variant_files(cfg, PHOTO_SHA):
+        (cfg.public_html / "billeder" / PHOTO_SHA[:16] / name).unlink()
+    # As if the process making them had been killed once (for its memory, say).
+    db.execute(
+        con,
+        "UPDATE images SET variant_widths = NULL, variant_attempts = 1 WHERE sha256 = :sha",
+        sha=PHOTO_SHA,
+    )
+    assert images.ensure_variants(con, cfg, [PHOTO_SHA], retry=False) == images.VariantProgress(0, 1)
+
+    publish(client, photo_snapshot())
+    assert client.api("POST", "/api/rebuild", {}).status == 200
+    page_file = cfg.public_html / "galleri/index.html"
+    assert "srcset" not in page_file.read_text()  # the original for now
+    assert image_row(con, PHOTO_SHA)["variant_attempts"] == 1  # neither request tried again
+
+    beacon = client.post("/s", b"/galleri", headers={"User-Agent": "Mozilla/5.0 (Macintosh)"})
+    assert beacon.status == 204  # the beacon, where a killed process costs nobody anything, does
+    assert image_row(con, PHOTO_SHA)["variant_widths"] == [480, 960, 1600, 2000]
+    assert "srcset" in page_file.read_text()
+
+
 def test_a_preview_keeps_intern_images_and_is_sanitised(client: Client) -> None:
     put(client, PHOTO)
     put(client, BROKEN)

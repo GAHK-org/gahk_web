@@ -497,4 +497,8 @@ the home is `/usr/home/<login>` with `public_html` directly under it.
     beacons, 404s and redirects start Python.
 13. A CGI process may use the memory Pillow needs for the WebP variants: about 50 MB above the
     process for a 2400 px picture (what intern sends), about 200 MB for a 10 MP one. If Hetzner
-    kills it, the image gets no variants after three tries and pages show its original.
+    kills it, that request fails once: a killed `PUT` makes intern's publish fail, and the next
+    sync publishes again. The `PUT`, `publish` and `rebuild` requests never retry an image whose
+    attempt was killed; the visit beacon and the updater's re-render do, where a kill costs nobody
+    an answer. After three killed attempts the image gets no variants, and pages show its
+    original. A full disk does not count as an attempt.
