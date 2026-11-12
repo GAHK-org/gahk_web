@@ -5,7 +5,7 @@
 {% block content %}
 {% macro field_input(field) %}
 {% set value = values.get(field.name, "") %}
-{% set described = ' aria-invalid="true" aria-describedby="fejl-' ~ field.name ~ '"' if field.name in errors else '' %}
+{% set described = ' aria-invalid="true" aria-describedby="error-' ~ field.name ~ '"' if field.name in errors else '' %}
 {% if field.widget == "select" %}
             <select name="{{ field.name }}" id="id_{{ field.name }}"{% if field.required %} required{% endif %}{{ described|safe }}>
 {% for key, label in field.choices %}
@@ -22,8 +22,8 @@
 {% if spec.show_criteria %}
       <div class="form-aside">
         <p class="prose-gahk">{{ spec.intro }}</p>
-{% if optagelse_url %}
-        <a class="card card--link" href="{{ optagelse_url }}">
+{% if admissions_url %}
+        <a class="card card--link" href="{{ admissions_url }}">
           <div class="font-display card--link__title">Før du søger ›</div>
           <p>Læs om kriterierne for at søge ind, husleje og hvornår der er ledige værelser.</p>
         </a>
@@ -46,7 +46,7 @@
               <label for="id_{{ field.name }}">{{ field.label }}</label>
 {{ field_input(field) }}
 {% if field.name in errors %}
-              <div class="errorlist" id="fejl-{{ field.name }}">{{ errors[field.name] }}</div>
+              <div class="errorlist" id="error-{{ field.name }}">{{ errors[field.name] }}</div>
 {% endif %}
             </div>
 {% endfor %}

@@ -59,7 +59,7 @@ STATIC_MANIFEST = STATIC_DIR / "static-manifest.json"
 
 SITE_NAME = "G. A. Hagemanns Kollegium"
 DEFAULT_DESCRIPTION = "Traditionsrigt kollegium på Østerbro, København"
-BEGIVENHEDER_URL = "/begivenheder/"
+EVENTS_URL = "/begivenheder/"
 HOME_EVENTS = 3
 HOME_NEWS = 4
 ARCHIVE_NEWS = 40
@@ -382,12 +382,12 @@ class Site:
             else self.cfg.intern_url + "/hjemmeside/",
         )
 
-    def begivenheder_html(self) -> str:
+    def events_html(self) -> str:
         return self._render(
-            "begivenheder.html",
+            "events.html",
             title="Nyheder & begivenheder",
-            canonical=self.absolute(BEGIVENHEDER_URL),
-            current_url=BEGIVENHEDER_URL,
+            canonical=self.absolute(EVENTS_URL),
+            current_url=EVENTS_URL,
             upcoming_events=self.upcoming_events(),
             past_events=self.past_events()[:ARCHIVE_PAST_EVENTS],
             news=self.news()[:ARCHIVE_NEWS],
@@ -400,7 +400,7 @@ class Site:
         errors: Mapping[str, str] | None = None,
     ) -> str:
         url = "/" + spec.path
-        optagelse = self.pages_by_path.get("optagelse")
+        admissions_page = self.pages_by_path.get("optagelse")
         return self._render(
             "form.html",
             spec=spec,
@@ -410,7 +410,7 @@ class Site:
             action=url,
             values=values or {},
             errors=errors or {},
-            optagelse_url=self.page_url("optagelse") if optagelse else "",
+            admissions_url=self.page_url("optagelse") if admissions_page else "",
             turnstile_site_key=self.cfg.turnstile_site_key,
         )
 
@@ -429,7 +429,7 @@ class Site:
         entries: list[tuple[str, str]] = []
         for page in sorted(self.snapshot["pages"], key=lambda page: page["path"]):
             entries.append((self.absolute(self.page_url(page["path"])), da_date(page["updated_at"], "iso")))
-        entries.append((self.absolute(BEGIVENHEDER_URL), ""))
+        entries.append((self.absolute(EVENTS_URL), ""))
         entries.extend((self.absolute("/" + spec.path), "") for spec in SPECS)
         return environment().get_template("sitemap.xml").render(entries=entries)
 
@@ -451,7 +451,7 @@ class Site:
         for alias in FRONT_PAGE_ALIASES:
             if self.snapshot["redirects"].get(alias) == "" and alias not in self.pages_by_path:
                 out[page_file(alias)] = (out["index.html"][0], "/" + alias)
-        out[page_file("begivenheder")] = (self.begivenheder_html(), BEGIVENHEDER_URL)
+        out[page_file("begivenheder")] = (self.events_html(), EVENTS_URL)
         for spec in SPECS:
             out[page_file(spec.path)] = (self.form_html(spec), "/" + spec.path)
         out[page_file(SUCCESS_PATH)] = (self.success_html(), "/" + SUCCESS_PATH)
@@ -596,7 +596,7 @@ def preview_html(
     else:
         event = cast(Event, item)
         changed["events"] = [*(old for old in changed["events"] if old["id"] != event["id"]), event]
-    return Site(cfg, changed, today, media_base, site_pictures or {}).begivenheder_html()
+    return Site(cfg, changed, today, media_base, site_pictures or {}).events_html()
 
 
 def quote_path(url: str) -> str:
