@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """gahk.dk's FastCGI entry point: one long-lived process answers request after request.
 
 Installed into ~/public_html/cgi-bin/ from each release beside gahk.cgi (mode 755), and uploaded

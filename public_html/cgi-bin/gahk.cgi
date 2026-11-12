@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """gahk.dk's CGI entry point: hands a request to the active release of gahk_web, one process each.
 
 Installed into ~/public_html/cgi-bin/ from each release (mode 755), and uploaded once by hand for
@@ -15,7 +15,10 @@ Most requests reach the release through gahk.fcgi, a persistent FastCGI process;
 only POST /api/update, request bodies too large for FastCGI, and (with the operator's GAHK_CGI_ONLY
 switch) everything here. gahk.fcgi loads this file as a module and shares all of it but main(), so
 both stubs find the home, check the release and answer for a release that cannot run in the same
-way. Both stay standard library only: they must work before any release is installed.
+way. Both stay standard library only: they must work before any release is installed. Both name
+/usr/bin/python3, the webhost's python (CPython 3.13.5, checked 2026-11-12), not "env python3":
+the release's packages fit one python (vendor/.abi), so both stubs and the updater they start must
+run the same one, whatever PATH a CGI or FastCGI process gets.
 
 POST /api/update is handled here, before any release is imported: the stub checks the request's
 signature with the [sync] key from config.ini and runs the self-updater. That is how the first
