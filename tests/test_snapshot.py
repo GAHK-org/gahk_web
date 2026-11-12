@@ -36,6 +36,8 @@ def broken(**changes: object) -> dict[str, Any]:
         "static",
         "s",
         "intern/x",
+        "health",
+        "healthz",
         "404",
         "optagelse/ansoeg",
         "optagelse/fremlej",

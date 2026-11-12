@@ -16,7 +16,7 @@ from pathlib import Path
 _INTERN_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^/((?:intern|nyintern|admin|django-admin|wiki)(?:/.*)?)$"), r"/\1"),
     (re.compile(r"^/((?:photo-album|media)/.*)$"), r"/\1"),
-    (re.compile(r"^/health/?$"), "/health"),
+    (re.compile(r"^/health(z?)/?$"), r"/health\1"),
     (re.compile(r"^/(optagelse/(?:listansoegninger|eksport))/?$"), r"/\1"),
     (re.compile(r"^/(optagelse/(?:showAnsoegning|setasreceived|kasser)/.+)$"), r"/\1"),
 )

@@ -65,7 +65,8 @@ ErrorDocument 404 /404.html
   # keeping the query and the method).
   RewriteRule ^((?:intern|nyintern|admin|django-admin|wiki)(?:/.*)?)$ https://intern.gahk.dk/$1 [R=308,L]
   RewriteRule ^((?:photo-album|media)/.*)$ https://intern.gahk.dk/$1 [R=308,L]
-  RewriteRule ^health/?$ https://intern.gahk.dk/health [R=308,L]
+  # intern's health checks: /health (readiness) and /healthz (liveness), which a monitor may poll.
+  RewriteRule ^health(z?)/?$ https://intern.gahk.dk/health$1 [R=308,L]
   RewriteRule ^(optagelse/(?:listansoegninger|eksport))/?$ https://intern.gahk.dk/$1 [R=308,L]
   RewriteRule ^(optagelse/(?:showAnsoegning|setasreceived|kasser)/.+)$ https://intern.gahk.dk/$1 [R=308,L]
 

@@ -222,7 +222,7 @@ when no release is installed yet (bootstrap) or the active one is broken.
   The front page has path `""`. Pages without an address are not sent.
 - **Reserved paths** make gahk.dk refuse the snapshot, so intern refuses them as page paths too.
   - First segments: `admin`, `api`, `begivenheder`, `billeder`, `cgi-bin`, `django-admin`,
-    `favicon.ico`, `health`, `intern`, `kalender`, `media`, `nyintern`, `photo-album`,
+    `favicon.ico`, `health`, `healthz`, `intern`, `kalender`, `media`, `nyintern`, `photo-album`,
     `robots.txt`, `s`, `sitemap.xml`, `static`, `sw.js`, `wiki`, `404`.
   - Full paths: `optagelse/ansoeg`, `optagelse/fremlej`, `optagelse/send_rundvisning`,
     `optagelse/send_fremleje`, `optagelse/listansoegninger`, `optagelse/eksport`.

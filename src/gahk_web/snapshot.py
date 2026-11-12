@@ -47,6 +47,7 @@ RESERVED_FIRST_SEGMENTS = frozenset(
         "django-admin",
         "favicon.ico",
         "health",
+        "healthz",
         "intern",
         "kalender",
         "media",

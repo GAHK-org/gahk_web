@@ -48,6 +48,8 @@ def test_unknown_path_is_the_404_page(client: Client) -> None:
         ("/wiki/Forside", "https://intern.gahk.dk/wiki/Forside"),
         ("/wiki/index.php", "https://intern.gahk.dk/wiki/index.php"),
         ("/health", "https://intern.gahk.dk/health"),
+        ("/healthz", "https://intern.gahk.dk/healthz"),
+        ("/healthz/", "https://intern.gahk.dk/healthz"),
         ("/optagelse/listansoegninger", "https://intern.gahk.dk/optagelse/listansoegninger"),
         ("/optagelse/eksport", "https://intern.gahk.dk/optagelse/eksport"),
         ("/optagelse/showAnsoegning/12", "https://intern.gahk.dk/optagelse/showAnsoegning/12"),
@@ -101,6 +103,7 @@ def test_not_intranet() -> None:
     assert routing.intern_redirect("/administration") is None
     assert routing.intern_redirect("/internat") is None
     assert routing.intern_redirect("/nyinternet") is None
+    assert routing.intern_redirect("/healthy") is None
     assert routing.intern_redirect("/optagelse/") is None
 
 
