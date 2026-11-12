@@ -386,12 +386,17 @@ package without a wheel for the webhost's python fails there, not on the webhost
 again. A release with the same `requirements.lock` as a kept one installs without PyPI.
 
 **When Hetzner upgrades Python.** Packages with compiled parts (psycopg, Pillow, nh3, MarkupSafe)
-fit only the python they were installed for, so after an upgrade the site answers *"Siden
-opdateres"* (503), and `GET /api/health` says why. The next `POST /api/update` (at most 15 minutes,
-or **Opdatér gahk.dk nu**) reinstalls the running release's packages for the new python, runs its
-self-test, and the site is back; no new release is needed. The overview shows `reinstalled packages
-for cpython-314 (running <sha>)`. Should the new python have no wheels for a package yet, the site
-stays down until a release with a newer version of it (CI tests the next Python, 3.14, already).
+fit only the python they were installed for, so after an upgrade nothing that needs Python runs.
+Pages and pictures keep working, because Apache serves them as files. Everything that reaches the
+CGI app answers 503 instead: the forms (applications are refused until the repair, with *"Siden
+opdateres"*), the visit beacon, redirects of old addresses, 404s and the API, except
+`POST /api/update`. `GET /api/health` says why. The next `POST /api/update` (at most 15 minutes, or
+**Opdatér gahk.dk nu**) reinstalls the running release's packages for the new python, runs its
+self-test, and everything is back; no new release is needed. The overview shows `reinstalled
+packages for cpython-314 (running <sha>)`. Should the new python have no wheels for a package yet,
+no pin helps, since every release needs its packages for that python; the forms and the API stay
+down until a release with a newer version of that package (CI tests the next Python, 3.14,
+already).
 
 **Disk use.** A release's packages take about 50 MB (Pillow and psycopg's libpq most of it). The
 kept releases share them as hard links while their `requirements.lock` is the same, so three
@@ -455,10 +460,11 @@ them.
 | `/api/*` answers 503 `database unavailable` | The `[database]` settings, or the database host is down. |
 | The update result says `self-test failed` | The new release does not run on this python. The old one keeps running. See `update.log`. |
 | The update says `failed: pip is not available on the webhost` | `python3 -m pip` does not work on the account any more (Hetzner changed its python). Ask Hetzner support for pip for `/usr/bin/python3`; the old release keeps running meanwhile. |
-| The update says `failed: pip install: ERROR: Could not find a version that satisfies …` or `No matching distribution` | PyPI has no wheel of that package for the webhost's python (a new Python version, or a package dropped a platform). Pin a release that works (section 10) and bump or replace the package in the repo; CI's `bundle` job must pass for both Pythons. |
+| A new release's update says `failed: pip install: ERROR: Could not find a version that satisfies …` or `No matching distribution` | PyPI has no wheel of a package the new release changed for the webhost's python. The old release keeps running, so nothing is down: bump or replace the package in the repo and release again. A pin (section 10) only stops the retries every 15 minutes. |
+| After a Python upgrade (`/api/health` says `the release's packages are for …`), the update says `failed: pip install: … No matching distribution` | The new python has no wheel yet for one of the running release's packages. No pin helps: every release needs its packages for this python. Release a version with a package that has wheels for it; CI's `bundle` job must pass on that Python. Until then forms and the API answer 503 (pages keep working). |
 | The update says `failed: pip install:` with a network error, or `pip install took longer than 600 s` | PyPI was unreachable or slow. Nothing to do: the next nudge tries again, and the old release keeps running. |
 | The update says `failed: pip install: ERROR: THESE PACKAGES DO NOT MATCH THE HASHES …` | A downloaded file is not the one the release names (a broken download, or something between the webhost and PyPI). It is refused; the next nudge tries again. If it persists, find out why before anything else. |
-| Every page answers *"Siden opdateres"* and `/api/health` says `the release's packages are for …` | Hetzner upgraded python. Send `POST /api/update` (or press **Opdatér gahk.dk nu**); it reinstalls the packages for the new python (section 10). |
+| `/api/health` answers 503 `the release's packages are for …`; forms answer *"Siden opdateres"* | Hetzner upgraded python. Pages and pictures still work; forms, redirects, 404s and the API answer 503. Send `POST /api/update` (or press **Opdatér gahk.dk nu**); it reinstalls the packages for the new python (section 10). |
 | The update fails with `No space left on device` or `Disk quota exceeded` | The account's disk is full. Each release's packages take about 50 MB (section 10); delete old files in `~/www_logs` or images no longer used, then update again. |
 | Pages show a picture's original (no `srcset`) | Its WebP variants are not made yet (a big first publish: the visit beacon, the nightly rebuild and the next update make the rest), or it gets none (GIF, animation, unreadable): the `images` table's `variant_note` says which. Pages are re-rendered when they are made. |
 | The update says `an update is already running` | Another update holds the lock; it is released when that run ends. |

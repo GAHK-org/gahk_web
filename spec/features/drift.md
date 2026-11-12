@@ -16,8 +16,9 @@ The runbook is DEPLOY.md.
   - get its packages for the webhost's Python, each matching the checksum the release names,
   - pass its own self-test on the webhost's Python with those packages,
   - apply its database changes.
-- When Hetzner upgrades Python, the site shows "Siden opdateres" until the next update request,
-  which reinstalls the packages of the running version for the new Python.
+- When Hetzner upgrades Python, pages and pictures keep working, but the forms and everything else
+  that needs Python answer "Siden opdateres" until the next update request, which reinstalls the
+  packages of the running version for the new Python. Applications sent meanwhile are refused.
 - If any check fails, the running version stays live. The overview shows the error.
 - The switch to a new version is a single step, so visitors never meet half of an update. An update
   that takes long finishes after intern's request has been answered.
@@ -61,8 +62,9 @@ The runbook is DEPLOY.md.
 - **Packages are installed on the webhost, for its own Python.** A release carries its exact,
   checksummed package list, and the webhost fetches those packages from PyPI when it installs the
   release. Compiled packages (database driver, image processing) are allowed. When Hetzner upgrades
-  Python, the site pauses ("Siden opdateres") until the next update request reinstalls the packages
-  for the new Python; no new release is needed.
+  Python, the forms and the rest of what needs Python pause ("Siden opdateres") until the next
+  update request reinstalls the packages for the new Python; no new release is needed. Pages and
+  pictures are files and keep working.
 - **A release whose packages do not fit stays out.** CI installs every release's packages on the
   host's Python and the next one before it is published, and the webhost installs them before the
   switch. When PyPI is down, the running version stays live; a release that changes only code reuses
