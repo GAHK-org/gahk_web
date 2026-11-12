@@ -88,6 +88,35 @@ def test_first_install_bootstraps_everything(home: Path, dist: Path) -> None:
     assert "switched from nothing to" in (home / "gahk_web" / "var" / "update.log").read_text()
 
 
+def test_an_install_keeps_the_local_block_of_the_installed_htaccess(home: Path, dist: Path) -> None:
+    v2 = version(2)
+    template = "# {}\n# BEGIN LOCAL\n# END LOCAL\nRewriteEngine On\n"
+    release(dist, 1, htaccess=template.format("one"))
+    updater.run(home)
+    installed = home / "public_html" / ".htaccess"
+    local = "SetEnv GAHK_WEB_HOME /usr/home/gahk\n"
+    installed.write_text(installed.read_text().replace("# END LOCAL", local + "# END LOCAL"))
+    release(dist, 2, htaccess=template.format("two") + "# no local block in what the release ships\n")
+
+    assert updater.run(home).updated
+    assert current(home) == v2
+    assert installed.read_text() == (
+        f"# two\n# BEGIN LOCAL\n{local}# END LOCAL\nRewriteEngine On\n"
+        "# no local block in what the release ships\n"
+    )
+
+
+def test_keep_local_block() -> None:
+    new = b"a\n# BEGIN LOCAL (host)\n# END LOCAL\nb\n"
+    installed = b"x\n# BEGIN LOCAL (host)\nSetEnv A b\n# END LOCAL\ny\n"
+    assert (
+        updater.keep_local_block(new, installed) == b"a\n# BEGIN LOCAL (host)\nSetEnv A b\n# END LOCAL\nb\n"
+    )
+    assert updater.keep_local_block(new, None) == new
+    assert updater.keep_local_block(new, b"no block") == new
+    assert updater.keep_local_block(b"no block", installed) == b"no block"
+
+
 def test_unchanged_manifest_is_a_no_op(home: Path, dist: Path) -> None:
     v1 = version(1)
     release(dist, 1)

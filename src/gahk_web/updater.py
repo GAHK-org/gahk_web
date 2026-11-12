@@ -26,8 +26,9 @@ run(), holding an exclusive lock:
      4. unpack it safely into releases/<sha> (no absolute paths, no "..", no links or devices)
      5. run the release's selftest.py with this python, in a subprocess
      6. apply the database migrations with the NEW code
-     7. install public_html/static (new files only), cgi-bin/gahk.cgi and .htaccess; if the site then
-        answers 5xx and the previous .htaccess cures that, put it back and fail
+     7. install public_html/static (new files only), cgi-bin/gahk.cgi and .htaccess (keeping the
+        installed file's LOCAL block); if the site then answers 5xx and the previous .htaccess cures
+        that, put it back and fail
      8. switch CURRENT (written atomically)          <- the release goes live here
      9. take the release's bin/updater.py if it passes its own --selftest
     10. re-render the site with the new templates
@@ -90,6 +91,9 @@ MIN_PYTHON = (3, 11)
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 PYTHON_SPEC_RE = re.compile(r"^>=\s*([0-9]+)\.([0-9]+)$")
+# The block of host-specific lines in public_html/.htaccess that every install keeps from the installed
+# file (e.g. SetEnv GAHK_WEB_HOME with the account's login). Everything else comes from the release.
+LOCAL_BLOCK_RE = re.compile(rb"^# BEGIN LOCAL\b[^\n]*\n(.*?)^# END LOCAL\b", re.MULTILINE | re.DOTALL)
 # site.1a2b3c4d5e6f.css: the build gives css and js a content hash in their names.
 HASHED_STATIC_RE = re.compile(r"^.+\.[0-9a-f]{8,}\.[A-Za-z0-9]+$")
 
@@ -498,8 +502,18 @@ def static_files(static_root: Path) -> set[str]:
     return {path.relative_to(static_root).as_posix() for path in static_root.rglob("*") if path.is_file()}
 
 
-def install_public(layout: Layout, release: Path) -> None:
-    """Copy the release's public_html files into place: static files first, then the stub, .htaccess."""
+def keep_local_block(new: bytes, installed: bytes | None) -> bytes:
+    """The release's .htaccess with the installed file's LOCAL block in place of its own (empty) one."""
+    old = LOCAL_BLOCK_RE.search(installed or b"")
+    block = LOCAL_BLOCK_RE.search(new)
+    if old is None or block is None:
+        return new
+    return new[: block.start(1)] + old.group(1) + new[block.end(1) :]
+
+
+def install_public(layout: Layout, release: Path, installed_htaccess: bytes | None = None) -> None:
+    """Copy the release's public_html files into place: static files first, then the stub, .htaccess
+    (keeping the LOCAL block of the installed one)."""
     source = release / "public_html"
     for required in (".htaccess", "cgi-bin/gahk.cgi"):
         if not (source / required).is_file():
@@ -510,7 +524,8 @@ def install_public(layout: Layout, release: Path) -> None:
     cgi_bin.mkdir(parents=True, exist_ok=True)
     cgi_bin.chmod(0o755)  # suEXEC refuses a script in a group- or world-writable folder
     write_atomic(cgi_bin / "gahk.cgi", (source / "cgi-bin" / "gahk.cgi").read_bytes(), 0o755)
-    write_atomic(layout.public_html / ".htaccess", (source / ".htaccess").read_bytes())
+    htaccess = keep_local_block((source / ".htaccess").read_bytes(), installed_htaccess)
+    write_atomic(layout.public_html / ".htaccess", htaccess)
 
 
 def site_status(layout: Layout) -> int | None:
@@ -691,7 +706,7 @@ def _install(layout: Layout, target: str, manifest: Manifest | None, current: st
         previous_htaccess: bytes | None = (layout.public_html / ".htaccess").read_bytes()
     except FileNotFoundError:
         previous_htaccess = None
-    install_public(layout, release)
+    install_public(layout, release, previous_htaccess)
     check_htaccess(layout, previous_htaccess)
 
     write_atomic(layout.current_file, (target + "\n").encode("ascii"))

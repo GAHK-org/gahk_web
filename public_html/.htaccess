@@ -1,6 +1,9 @@
 # gahk.dk on Hetzner Webhosting (Apache + mod_rewrite, Python only as CGI).
 #
-# Installed into ~/public_html/ from each release; edit it here, never on the server.
+# Installed into ~/public_html/ by every release, which overwrites the whole file except the LOCAL
+# block below. Make every change here, in the repository, and let it release; a change made only on
+# the server is lost at the next install. Only host-specific lines go in the LOCAL block on the server.
+#
 # Every page is a pre-rendered file; Apache serves those without starting Python. Whatever has no
 # file goes to cgi-bin/gahk.cgi (the sync API, the forms, the visit beacon, the calendar
 # pass-through, redirects of old addresses and the 404 page).
@@ -17,9 +20,17 @@ AddDefaultCharset utf-8
 ErrorDocument 404 /404.html
 
 # [VERIFY ON HETZNER] Hetzner runs *.cgi under public_html as CGI out of the box. If gahk.cgi is
-# returned as text instead of run, uncomment these two lines (Options needs AllowOverride Options).
+# returned as text instead of run, uncomment these two lines here in the repository and let it
+# release (Options needs AllowOverride Options). For the very first install, upload the edited file
+# as the bootstrap htaccess. Uncommenting them only on the server lasts until the next install.
 # Options +ExecCGI
 # AddHandler cgi-script .cgi
+
+# Host-specific lines, edited on the server only (e.g. SetEnv GAHK_WEB_HOME /usr/home/<login>).
+# Every install keeps what stands between these two markers in the installed file; the release's own
+# block stays empty. Keep the marker lines as they are.
+# BEGIN LOCAL
+# END LOCAL
 
 <IfModule mod_rewrite.c>
   RewriteEngine On

@@ -60,7 +60,7 @@ What lives where on the webhost (`~` is the FTP home):
 ~/gahk_web/releases/<sha>/       the 3 most recently installed releases
 ~/gahk_web/state/                cache: image blobs, update.json (the last update's result)
 ~/gahk_web/var/                  update.log, the update lock, downloads in progress
-~/public_html/.htaccess          from the release
+~/public_html/.htaccess          from the release, overwritten by each install except its LOCAL block
 ~/public_html/cgi-bin/gahk.cgi   from the release (the stub that starts the active release)
 ~/public_html/static/            from the release (css with hashed names, fonts, icons)
 ~/public_html/billeder/          images, copied from intern's library
@@ -171,6 +171,11 @@ This is the only manual upload. Afterwards every update comes from GitHub by its
 3. Delete any placeholder Hetzner put in `~/public_html` (e.g. `index.html`).
 4. The CGI script must not be group- or world-writable, or suEXEC refuses to run it. The same goes
    for its folder.
+5. Every install overwrites `~/public_html/.htaccess` with the release's, keeping only the lines
+   between `# BEGIN LOCAL` and `# END LOCAL`. Put host-specific lines there (section 13 item 8).
+   Make any other change in the repository's `public_html/.htaccess` and let it release. If the
+   first install needs it (section 13 item 1), upload that edited file as the bootstrap `htaccess`.
+   A change made only on the server outside the LOCAL block is lost at the next install.
 
 The first install happens on the first signed `POST /api/update`. Normally that is intern's beat task
 (at most 15 minutes) or the **Opdatér gahk.dk nu** button. Before the DNS switch, though, intern's
@@ -370,6 +375,9 @@ them.
   versions, downloads, self-test and migration output, the switch, and failures. Read it with the
   file manager or SFTP.
 - `~/gahk_web/state/update.json` holds the last update's result, which intern's overview shows.
+- Fix `.htaccess` problems in the repository, not on the server: every install overwrites
+  `~/public_html/.htaccess` except its LOCAL block (section 4). A fix made only on the server breaks
+  again with the next release.
 - konsoleH → *Statistics / Logs* → **error log**: Apache's error log. Tracebacks from the CGI app go
   there, as do suEXEC complaints, such as "script is writable by others" or a wrong shebang.
   `~/www_logs/` holds the daily access logs (anonymised IPs).
@@ -395,7 +403,10 @@ These are assumptions that could not be tested before the site ran on the webhos
 are marked `[VERIFY ON HETZNER]` in `.htaccess` and `gahk.cgi`.
 
 1. `*.cgi` under `public_html` runs as CGI without `Options +ExecCGI`/`AddHandler`. If not, uncomment
-   those two lines in `.htaccess`. It runs as the account user (suEXEC) with `/usr/bin/env python3`.
+   those two lines in the repository's `public_html/.htaccess`, merge it and let it release. For the
+   first install, upload that edited file as the bootstrap `htaccess`. Uncommenting them only on the
+   server lasts until the next install, and then `POST /api/update` stops working too. It runs as
+   the account user (suEXEC) with `/usr/bin/env python3`.
 2. mod_rewrite supports the lookahead in the dot-file rule. `%{HTTPS}` is `on` for TLS requests, so
    the http→https rule does not loop.
 3. `RewriteCond %{REQUEST_FILENAME}/index.html -f` also matches the trailing-slash form, so both
@@ -406,7 +417,9 @@ are marked `[VERIFY ON HETZNER]` in `.htaccess` and `gahk.cgi`.
 6. mod_headers with `<If>` expressions works in `.htaccess`.
 7. HSTS is sent only once https works for `gahk.dk` and `www`.
 8. The stub finds the FTP home through the account's home directory, or the folder above
-   `public_html`. If neither works, add `SetEnv GAHK_WEB_HOME /usr/home/<login>` to `.htaccess`.
+   `public_html`. If neither works, add `SetEnv GAHK_WEB_HOME /usr/home/<login>` between the
+   `# BEGIN LOCAL` and `# END LOCAL` lines of `~/public_html/.htaccess` on the server. Installs keep
+   that block; anywhere else in the file the line is lost at the next install.
 9. `REMOTE_ADDR` is the real client (Varnish off).
 10. Outbound HTTPS works: GitHub for updates, Cloudflare Turnstile, and intern for the calendar feeds.
 11. The database is reachable with konsoleH's hostname, and `verify-full` works with `sqlca.pem`.
