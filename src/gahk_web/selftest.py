@@ -148,6 +148,7 @@ def check_sanitizer() -> None:
 
 def check_render() -> dict[str, tuple[str, str | None]]:
     from .config import Config, DatabaseConfig
+    from .images import Picture
     from .render import Site
     from .snapshot import validate
 
@@ -160,10 +161,15 @@ def check_render() -> dict[str, tuple[str, str | None]]:
             public_html=Path(scratch),
             state_dir=Path(scratch),
         )
-        files = Site(cfg, snapshot, date(2026, 11, 12)).files()
+        url = snapshot["images"][0]["url"]
+        variants = tuple((width, f"/billeder/0123456789abcdef/_{width}w.webp") for width in (480, 960))
+        pictures = {url: Picture(url, 960, 640, variants)}
+        files = Site(cfg, snapshot, date(2026, 11, 12), pictures=pictures).files()
     home, kokken = files["index.html"][0], files["faciliteter/kokken/index.html"][0]
     if "Forside" not in home or "Julefrokost" not in home or "Køkkenet &lt;&amp;&gt;" not in kokken:
         raise AssertionError("the pages did not render the sample snapshot")
+    if 'srcset="/billeder/0123456789abcdef/_480w.webp 480w' not in kokken:
+        raise AssertionError("the pages do not link the picture variants")
     return files
 
 

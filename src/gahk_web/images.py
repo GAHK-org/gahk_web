@@ -12,7 +12,7 @@ nothing uses, once they are an hour old (a blob PUT for a publish still in fligh
 Each JPEG, PNG and WebP image also gets responsive WebP variants (variants.py), kept next to its public
 copies as public_html/billeder/<sha16>/_<width>w.webp. A name that starts with "_" is never a
 snapshot name, so a variant cannot collide with an image. The images row records the image's upright
-size and which variant widths exist.
+size and which variant widths exist; pages link the variants instead of the original (render.py).
 Variants are cache: they are made when intern PUTs the image (one image per request spreads the work),
 and whatever is still missing is made, within a time budget, by the next publish, rebuild or
 housekeeping pass. They go with their blob. An image that fails gets none, and pages show the
@@ -159,6 +159,54 @@ def materialize(con: db.Connection, cfg: Config, snapshot: Snapshot) -> None:
 
 def variant_rel_path(sha256: str, width: int) -> str:
     return f"billeder/{sha256[:16]}/_{width}w.webp"
+
+
+@dataclass(frozen=True)
+class Picture:
+    """A published image with variants, as pages link it."""
+
+    url: str  # the original's /billeder/ URL
+    width: int  # upright size of the original, in pixels
+    height: int
+    variants: tuple[tuple[int, str], ...]  # (width, URL), narrowest first; never empty
+
+    @property
+    def src(self) -> str:
+        return self.variants[-1][1]
+
+    @property
+    def srcset(self) -> str:
+        return ", ".join(f"{url} {width}w" for width, url in self.variants)
+
+    def at_least(self, width: int) -> str:
+        """The narrowest variant at least this wide, else the widest."""
+        return next((url for variant_width, url in self.variants if variant_width >= width), self.src)
+
+
+def pictures(con: db.Connection, snapshot: Snapshot) -> dict[str, Picture]:
+    """The snapshot's images that have variants, by their original URL."""
+    shas = sorted({image["sha256"] for image in snapshot["images"]})
+    if not shas:
+        return {}
+    rows = {
+        row["sha256"]: row
+        for row in db.query(
+            con,
+            "SELECT sha256, width, height, variant_widths FROM images WHERE sha256 = ANY(:shas)"
+            " AND width IS NOT NULL AND height IS NOT NULL AND cardinality(variant_widths) > 0",
+            shas=shas,
+        )
+    }
+    out: dict[str, Picture] = {}
+    for image in snapshot["images"]:
+        row = rows.get(image["sha256"])
+        if row is None:
+            continue
+        variants = tuple(
+            (width, "/" + variant_rel_path(image["sha256"], width)) for width in sorted(row["variant_widths"])
+        )
+        out[image["url"]] = Picture(image["url"], row["width"], row["height"], variants)
+    return out
 
 
 def _variant_files_exist(cfg: Config, sha256: str, widths: Iterable[int]) -> bool:

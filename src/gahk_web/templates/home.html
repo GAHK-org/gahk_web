@@ -3,7 +3,7 @@
 {% block hero %}
   <section class="hero hero--home{% if not background %} hero--plain{% endif %}">
 {% if background %}
-    <img src="{{ background }}" alt="" class="hero__img">
+    {{ site.hero_img(background) }}
     <div class="hero__shade hero__shade--home"></div>
 {% endif %}
     <div class="hero__inner hero__inner--home">
@@ -16,7 +16,7 @@
 
 {% block content %}
 {% if page and page.body %}
-    <div class="prose-gahk">{{ site.body(page.body)|safe }}</div>
+    <div class="prose-gahk">{{ site.body(page.body, eager_first=True)|safe }}</div>
 {% endif %}
 
 {% if upcoming_events or latest_news %}

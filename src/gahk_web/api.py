@@ -144,8 +144,14 @@ def publish(api: Api, body: bytes) -> Response:
 
 def preview(api: Api, body: bytes) -> Response:
     request = validate_preview(_json(body))
+    snapshot = load_snapshot(api.con)
     page = preview_html(
-        api.cfg, load_snapshot(api.con), request["kind"], request["item"], request["media_base"]
+        api.cfg,
+        snapshot,
+        request["kind"],
+        request["item"],
+        request["media_base"],
+        images.pictures(api.con, snapshot) if snapshot else {},
     )
     return html(200, page, ("X-Robots-Tag", "noindex"))
 

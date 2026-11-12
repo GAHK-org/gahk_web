@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, TextIO
 from urllib.parse import unquote
 
-from . import api, db, forms, housekeeping, routing, stats
+from . import api, db, forms, housekeeping, images, routing, stats
 from .clock import copenhagen_today
 from .config import Config, ConfigError, load_config
 from .render import EMPTY_SNAPSHOT, Site, load_snapshot, page_file, quote_path
@@ -105,7 +105,8 @@ def handle_form(request: Request, ctx: Context, spec: forms.FormSpec) -> Respons
     if not state.has_snapshot:
         return unavailable(cfg)
     housekeeping.maybe_rebuild(con, cfg, state)
-    site = Site(cfg, load_snapshot(con) or EMPTY_SNAPSHOT, copenhagen_today())
+    snapshot = load_snapshot(con) or EMPTY_SNAPSHOT
+    site = Site(cfg, snapshot, copenhagen_today(), pictures=images.pictures(con, snapshot))
 
     if not forms.origin_ok(request.header("Origin"), request.header("Referer"), cfg.site_netloc):
         return html(403, site.form_html(spec, {}, {forms.NON_FIELD: forms.WRONG_ORIGIN}))

@@ -10,7 +10,8 @@ Every page of the site is a pre-rendered file that Apache serves without startin
     optagelse/ansoeg/success/index.html the thank-you page
     404.html, 503.html, sitemap.xml, robots.txt, sw.js
 
-Bodies are sanitised again before they are written (bodies.py).
+Bodies are sanitised again and their pictures link responsive variants (bodies.py); page
+backgrounds and the top pictures use the variants too (images.Picture).
 
 Each file is written to a temporary name and moved into place, so a visitor never sees half a page,
 and only when its content changed. The generated_files table lists what the last render wrote; a file
@@ -27,7 +28,7 @@ import os
 import re
 import tempfile
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from functools import cache
 from pathlib import Path
@@ -38,11 +39,13 @@ from . import db
 from .clock import copenhagen_today, now_utc, to_copenhagen
 from .config import Config
 from .forms import SPECS, SUCCESS_PATH, FormSpec
+from .images import Picture, pictures
 from .snapshot import Event, NewsItem, Page, Snapshot
 from .version import code_version
 
 if TYPE_CHECKING:
     import jinja2
+    from markupsafe import Markup
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = PACKAGE_DIR / "templates"
@@ -96,6 +99,13 @@ EMPTY_SNAPSHOT: Snapshot = {
 _MEDIA_ATTR_RE = re.compile(
     r"""((?:src|href|srcset|poster)\s*=\s*["']|url\(\s*["']?)/media/""", re.IGNORECASE
 )
+# What a background URL may hold to go into a <style> element unquoted-safe: a /billeder/ path, or in
+# a preview intern's /media/ path (snapshot.py checks both); never quotes, parentheses or "<".
+_CSS_URL_RE = re.compile(r"^(?:https?://[A-Za-z0-9.:-]+)?/[A-Za-z0-9._/-]+$")
+# Below this window width a page's background picture (cover over a tall, narrow page) uses a
+# variant at least this wide instead of the widest.
+PHONE_MAX_PX = 640
+PHONE_BACKGROUND_PX = 1600
 
 
 @cache
@@ -171,6 +181,7 @@ class Site:
     snapshot: Snapshot
     today: date
     preview_media_base: str = ""  # set for POST /api/preview
+    pictures: Mapping[str, Picture] = field(default_factory=dict)  # images with variants, by URL
 
     def __post_init__(self) -> None:
         front_page_id = self.snapshot["site"]["front_page_id"]
@@ -239,16 +250,49 @@ class Site:
 
     # --- HTML ---
 
-    def body(self, html: str) -> str:
-        """A body from the snapshot, sanitised again. In a preview, intern-only images load from intern."""
-        from .bodies import sanitize  # pages only
+    def body(self, html: str, *, eager_first: bool = False) -> str:
+        """A body from the snapshot, sanitised again, its pictures linking their variants. In a
+        preview, intern-only images load from intern."""
+        from .bodies import responsive_images, sanitize  # pages only: html.parser is not free to import
 
         html = sanitize(html)
         if self.preview:
-            return _MEDIA_ATTR_RE.sub(
+            html = _MEDIA_ATTR_RE.sub(
                 lambda match: match.group(1) + self.preview_media_base + "/media/", html
             )
-        return html
+        return responsive_images(html, self.pictures, eager_first=eager_first)
+
+    def picture(self, url: str) -> Picture | None:
+        return self.pictures.get(url)
+
+    def hero_img(self, url: str) -> "Markup":
+        """The top picture of a page: full width, loaded first."""
+        from markupsafe import Markup, escape
+
+        picture = self.picture(url)
+        if picture is None:
+            return Markup('<img src="{}" alt="" class="hero__img" fetchpriority="high">').format(url)
+        return Markup(
+            '<img src="{}" srcset="{}" sizes="100vw" alt="" class="hero__img" fetchpriority="high">'
+        ).format(escape(picture.src), escape(picture.srcset))
+
+    def background_css(self, url: str) -> "Markup":
+        """CSS for a page's full-page background picture (.page-stage--photo): the widest variant,
+        and a narrower one on a phone."""
+        from markupsafe import Markup
+
+        picture = self.picture(url)
+        wide = picture.src if picture else url
+        rules = [f".page-stage--photo{{background-image:url('{wide}')}}"]
+        if picture is not None:
+            phone = picture.at_least(PHONE_BACKGROUND_PX)
+            if phone != wide:
+                rules.append(
+                    f"@media (max-width:{PHONE_MAX_PX}px){{.page-stage--photo{{background-image:url('{phone}')}}}}"
+                )
+        if not all(_CSS_URL_RE.match(candidate) for candidate in (wide, url)):
+            return Markup("")
+        return Markup("\n".join(rules))  # noqa: S704 - checked against _CSS_URL_RE just above
 
     def image(self, url: str) -> str:
         if self.preview and url.startswith("/media/"):
@@ -469,7 +513,7 @@ def render_site(
 ) -> RenderResult:
     """Write the whole site into public_html and record it. With store_snapshot, the snapshot becomes
     the cached one in the same transaction that records the render."""
-    site = Site(cfg, snapshot, today or copenhagen_today())
+    site = Site(cfg, snapshot, today or copenhagen_today(), pictures=pictures(con, snapshot))
     files = site.files()
     written = sum(
         write_if_changed(cfg.public_html / rel, content.encode("utf-8"))
@@ -518,7 +562,12 @@ def load_snapshot(con: db.Connection) -> Snapshot | None:
 
 
 def preview_html(
-    cfg: Config, snapshot: Snapshot | None, kind: str, item: dict[str, Any], media_base: str
+    cfg: Config,
+    snapshot: Snapshot | None,
+    kind: str,
+    item: dict[str, Any],
+    media_base: str,
+    site_pictures: Mapping[str, Picture] | None = None,
 ) -> str:
     """One unsaved item rendered in the current site (menu, sidebar, lists). Never stored."""
     changed = cast(Snapshot, dict(snapshot or EMPTY_SNAPSHOT))
@@ -533,14 +582,14 @@ def preview_html(
             if old["id"] != page["id"] and (not page["path"] or old["path"] != page["path"])
         ]
         changed["pages"] = [*others, page]
-        return Site(cfg, changed, today, preview_media_base=media_base).page_html(page)
+        return Site(cfg, changed, today, media_base, site_pictures or {}).page_html(page)
     if kind == "news":
         news = cast(NewsItem, item)
         changed["news"] = [*(old for old in changed["news"] if old["id"] != news["id"]), news]
     else:
         event = cast(Event, item)
         changed["events"] = [*(old for old in changed["events"] if old["id"] != event["id"]), event]
-    return Site(cfg, changed, today, preview_media_base=media_base).begivenheder_html()
+    return Site(cfg, changed, today, media_base, site_pictures or {}).begivenheder_html()
 
 
 def quote_path(url: str) -> str:

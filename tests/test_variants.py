@@ -1,4 +1,4 @@
-"""Responsive WebP variants: how they are made, kept and cleaned up."""
+"""Responsive WebP variants: how they are made, kept, linked and cleaned up."""
 
 import hashlib
 import io
@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import Client, image, page, publish, snapshot
+from conftest import GANG, Client, image, page, publish, snapshot
 from PIL import Image, ImageCms
 
 from gahk_web import api, db, images, variants
@@ -252,6 +252,54 @@ def test_a_broken_image_is_kept_without_variants(client: Client, cfg: Config, co
     assert images.blob_path(cfg, BROKEN_SHA).read_bytes() == BROKEN
 
 
+def test_pages_link_the_variants(client: Client, cfg: Config) -> None:
+    put(client, PHOTO)
+    put(client, BROKEN)
+    publish(client, photo_snapshot())
+    gallery = image("galleri.jpg", PHOTO)["url"]
+    broken = image("broken.jpg", BROKEN)["url"]
+    folder = f"/billeder/{PHOTO_SHA[:16]}"
+
+    html = (cfg.public_html / "galleri/index.html").read_text()
+    assert (
+        f'<img src="{folder}/_2000w.webp" alt="" style="width: 420px; height: 210px;" width="2000"'
+        f' height="1000" srcset="{folder}/_480w.webp 480w, {folder}/_960w.webp 960w,'
+        f' {folder}/_1600w.webp 1600w, {folder}/_2000w.webp 2000w" sizes="(min-width: 468px) 420px,'
+        ' calc(100vw - 3rem)" loading="lazy" decoding="async">'
+    ) in html
+    assert f'<img src="{broken}">' in html  # no variants: the original, as it was
+    assert "<script>alert" not in html  # sanitised again
+    assert gallery not in html.split("<body>")[1]  # the original is no longer linked from the page
+    assert f".page-stage--photo{{background-image:url('{folder}/_2000w.webp')}}" in html
+    assert (cfg.public_html / gallery.lstrip("/")).read_bytes() == PHOTO  # still there for old links
+
+    home = (cfg.public_html / "index.html").read_text()
+    assert f'srcset="{folder}/_480w.webp 480w' in home and 'sizes="100vw"' in home
+    body = home.split('class="prose-gahk"')[1]
+    assert 'alt="Forsiden"' in body and "loading=" not in body.split("</div>")[0]  # first: eager
+
+    kontakt = (cfg.public_html / "kontakt/index.html").read_text()  # the default background
+    assert f"background-image:url('{image('gang.jpg', GANG)['url']}')" in kontakt  # no variants
+
+
+def test_a_phone_gets_a_narrower_background(client: Client, cfg: Config) -> None:
+    big = photo(3000, 2000)
+    for data_bytes in (big, PHOTO, BROKEN):
+        put(client, data_bytes)
+    data = photo_snapshot()
+    picture = image("stor.jpg", big)
+    data["images"].append(picture)
+    data["pages"][-1]["background"] = picture["url"]
+    publish(client, data)
+    folder = f"/billeder/{picture['sha256'][:16]}"
+    html = (cfg.public_html / "galleri/index.html").read_text()
+    assert f"background-image:url('{folder}/_2400w.webp')" in html
+    assert (
+        f"@media (max-width:640px){{.page-stage--photo{{background-image:url('{folder}/_1600w.webp')}}}}"
+        in html
+    )
+
+
 def test_missing_variant_files_are_made_again(client: Client, cfg: Config, con: db.Connection) -> None:
     put(client, PHOTO)
     put(client, BROKEN)
@@ -272,6 +320,8 @@ def test_variants_a_publish_had_no_time_for_come_with_housekeeping(
     monkeypatch.setattr(api, "PUBLISH_VARIANT_BUDGET", 0.0)
 
     publish(client, photo_snapshot())
+    page_file = cfg.public_html / "galleri/index.html"
+    assert "srcset" not in page_file.read_text()  # the original for now
     assert image_row(con, PHOTO_SHA)["variant_widths"] is None
 
     assert client.get("/findes-ikke").status == 404  # a visitor waiting for an answer: no time for it
@@ -279,6 +329,7 @@ def test_variants_a_publish_had_no_time_for_come_with_housekeeping(
     beacon = client.post("/s", b"/galleri", headers={"User-Agent": "Mozilla/5.0 (Macintosh)"})
     assert beacon.status == 204  # the visit beacon, which nobody waits for, does a little upkeep
     assert image_row(con, PHOTO_SHA)["variant_widths"] == [480, 960, 1600, 2000]
+    assert "srcset" in page_file.read_text()  # and the site was rendered again
 
 
 def test_an_image_that_keeps_dying_is_given_up(client: Client, cfg: Config, con: db.Connection) -> None:
@@ -306,6 +357,30 @@ def test_variants_go_with_their_image(client: Client, cfg: Config, con: db.Conne
     publish(client, snapshot(revision="c" * 64))
     assert not folder.exists()
     assert not images.blob_path(cfg, PHOTO_SHA).exists()
+
+
+def test_a_preview_keeps_intern_images_and_is_sanitised(client: Client) -> None:
+    put(client, PHOTO)
+    put(client, BROKEN)
+    publish(client, photo_snapshot())
+    gallery = image("galleri.jpg", PHOTO)["url"]
+    item = page(
+        7,
+        "ny",
+        "Ny",
+        f'<p><img src="/media/cms/ny.jpg" alt=""><img src="{gallery}" alt=""></p>'
+        '<p onclick="x()"><a href="javascript:x()">x</a></p>',
+        background="/media/cms/baggrund.jpg",
+    )
+    result = client.api(
+        "POST", "/api/preview", {"kind": "page", "item": item, "media_base": "https://intern.gahk.dk"}
+    )
+    assert result.status == 200
+    html = result.text
+    assert '<img src="https://intern.gahk.dk/media/cms/ny.jpg" alt="">' in html  # untouched
+    assert "background-image:url('https://intern.gahk.dk/media/cms/baggrund.jpg')" in html
+    assert f'srcset="/billeder/{PHOTO_SHA[:16]}/_480w.webp 480w' in html  # a published picture
+    assert "onclick" not in html and "javascript:" not in html
 
 
 def test_variant_names_never_collide_with_image_names() -> None:

@@ -8,7 +8,7 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parents[1] / "src"
 # Needed only by the requests that use them (publishing images, sanitising, rendering, the calendar
 # pass-through, the updater), never at start-up.
-HEAVY = ("PIL", "nh3", "jinja2", "urllib.request", "tarfile")
+HEAVY = ("PIL", "nh3", "jinja2", "urllib.request", "tarfile", "html.parser", "markupsafe")
 
 
 def test_starting_the_app_imports_only_what_every_request_needs() -> None:

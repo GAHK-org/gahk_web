@@ -1,10 +1,15 @@
 {% extends "base.html" %}
 
 {# The page's picture fills the whole content area; there is no separate top band. #}
+{% block head %}
+{% if background %}
+  <style>{{ site.background_css(background) }}</style>
+{% endif %}
+{% endblock %}
 {% block hero %}{% endblock %}
 
 {% block body_main %}
-  <div class="page-stage{% if not background %} page-stage--plain{% endif %}"{% if background %} style="background-image:url('{{ background }}')"{% endif %}>
+  <div class="page-stage {{ 'page-stage--photo' if background else 'page-stage--plain' }}">
     <div class="page-stage__shade"></div>
     <div class="page-stage__inner">
       <h1 class="font-display page-title">{{ page.title }}</h1>

@@ -210,6 +210,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--green); out
   background-repeat: no-repeat;
 }
 .page-stage--plain { background-image: linear-gradient(160deg, var(--emerald-800), var(--emerald-900)); }
+/* .page-stage--photo: the page's own picture, set in a <style> in the page's head (render.py). */
 .page-stage__shade { position: absolute; inset: 0; background: rgba(0,0,0,.6); }
 .page-stage--plain .page-stage__shade { background: rgba(0,0,0,.15); }
 .page-stage__inner { position: relative; max-width: var(--page-wide); margin: 0 auto; padding: 2.5rem 1rem; }
