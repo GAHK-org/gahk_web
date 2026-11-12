@@ -501,6 +501,9 @@ class Run:
         run("docker", "rm", "-f", self.web, self.db, check=False)
         run("docker", "network", "rm", self.network, check=False)
 
+    def pip_source(self) -> str:
+        return "the wheelhouse" if self.args.wheelhouse else "PyPI"
+
     def config_ini(self, pin: str = "") -> bytes:
         text = f"""; written by scripts/fake_webhost/e2e.py, as the operator would (DEPLOY.md section 3)
 [database]
@@ -574,7 +577,7 @@ manifest_url = {MANIFEST_URL}
     ) -> None:
         steps: list[tuple[str, Callable[[], None]]] = [
             ("bootstrap: the operator's upload (four files and config.ini), as by SFTP", lambda: self.bootstrap(host, dist)),
-            ("first install: POST /api/update outlives a 2 s CGI timeout, pip from PyPI", lambda: self.first_install(host, first)),
+            (f"first install: POST /api/update outlives a 2 s CGI timeout, pip from {self.pip_source()}", lambda: self.first_install(host, first)),
             ("publish: images (small through FastCGI, large through CGI), variants, snapshot", lambda: self.publish(host, snapshot, pictures)),
             ("static files: served by Apache, cache headers, both slash forms", lambda: self.static(host, snapshot)),
             ("the app: redirects, 404, a POST to a page", lambda: self.dynamic(host)),
@@ -673,6 +676,8 @@ manifest_url = {MANIFEST_URL}
         expect(
             f"GET /download/{first.name}" in release_log and " 302 " in release_log, "no redirect followed"
         )
+        offline = "Looking in links: /wheelhouse" in host.read(f"{APP}/var/update.log", user=LOGIN).decode()
+        expect(offline == bool(self.args.wheelhouse), f"pip did not install from {self.pip_source()}")
         vendor = host.exec("ls", f"{APP}/releases/{first.version}/vendor", user=LOGIN)
         expect("flask" in vendor and "psycopg" in vendor and "PIL" in vendor, f"vendor/: {vendor}")
         mode = host.exec("stat", "-c", "%a %U", f"{PUBLIC_HTML}/cgi-bin/gahk.fcgi").strip()
