@@ -7,7 +7,8 @@ minutes.
 ## What is counted
 
 - Every page view of a page that exists, per Copenhagen day and page: the **views** and the
-  **unique visitors**.
+  **unique visitors**. A page counts under its own address, whichever it was opened at: either
+  slash form, and `/velkommen` as the front page.
 - The whole site is counted once more as a total, so a visitor who reads five pages is one visitor
   of the site that day, not five.
 - Not counted: unknown addresses (404s), redirects, previews on intern, visitors without JavaScript,

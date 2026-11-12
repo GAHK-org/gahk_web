@@ -213,6 +213,8 @@ def test_the_front_pages_old_address_answers_with_the_front_page(
         for answer in (dev.get(path, query="x=1"), client.get(path, query="x=1")):
             assert (answer.status, answer.text) == (200, front), path
     assert "/velkommen" not in client.get("/sitemap.xml").text
+    # Its views count as the front page's: the page names its own address in the beacon.
+    assert 'navigator.sendBeacon("/s", "/")' in front
     # Only that fixed alias: any other redirect to the front page stays a redirect.
     assert not (cfg.public_html / "forside").exists()
     result = client.get("/forside")

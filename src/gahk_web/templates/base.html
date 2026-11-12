@@ -84,8 +84,8 @@
       if (/(?:^|;\s*)gahk_redaktoer=1(?:;|$)/.test(document.cookie)) {
         document.getElementById("rediger").hidden = false;
       }
-{% if beacon %}
-      if (navigator.sendBeacon) { navigator.sendBeacon("/s", location.pathname); }
+{% if beacon %}{# the page's own address, not the one it was opened at: /velkommen counts as the front page #}
+      if (navigator.sendBeacon) { navigator.sendBeacon("/s", {% if current_url %}{{ current_url|tojson }}{% else %}location.pathname{% endif %}); }
 {% endif %}
     })();
   </script>
