@@ -44,7 +44,8 @@ def home(tmp_path: Path, release_template: Path, db_config: DatabaseConfig, con:
     release = home / "gahk_web" / "releases" / SHA
     (release / "vendor").mkdir(parents=True)
     (release / "src").symlink_to(release_template / "src", target_is_directory=True)
-    for packages in site.getsitepackages():
+    # Debian's and Ubuntu's pythons list a .../local/lib/pythonX.Y/dist-packages that may not exist.
+    for packages in filter(os.path.isdir, site.getsitepackages()):
         for entry in Path(packages).iterdir():
             if not (release / "vendor" / entry.name).exists():
                 (release / "vendor" / entry.name).symlink_to(entry)
