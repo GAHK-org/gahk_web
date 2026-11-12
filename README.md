@@ -62,8 +62,11 @@ ved hvert commit. Kør manuelt på alt med `uv run prek run --all-files`. De sam
 (`.github/workflows/ci.yml`): `lint`, `typecheck`, `test` (Python 3.13 med PostgreSQL 15 og 3.14 med
 17), `bundle` og `security`. Et merge til `main` udgiver derefter en ny bundle (`release`).
 
-Afhængighederne, som siden kører med, skal være ren Python: de pakkes ind i bundlen uden kompilerede
-moduler, og `bundle`-jobbet fejler, hvis en af dem ikke kan importeres uden.
+Bundlen indeholder ikke selve afhængighederne, kun `requirements.lock` (eksporteret fra `uv.lock`,
+hver fil låst med sin sha256). Webhotellets updater installerer dem med pip for sin egen Python, når
+den installerer en release. Derfor skal hver afhængighed have færdigbyggede wheels til CPython 3.13
+og 3.14 på Linux (manylinux, x86_64); `bundle`-jobbet installerer dem præcis som webhotellet og
+fejler, hvis en mangler eller ikke kan indlæses.
 
 ## Branches og pull requests
 

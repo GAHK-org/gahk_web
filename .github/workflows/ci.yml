@@ -56,9 +56,13 @@ jobs:
         with: { enable-cache: true }
       - run: uv run pytest -q
 
-  # Builds the release bundle and tries it the way the webhost will: both self-tests with only the
-  # bundle on sys.path on 3.13 and 3.14, then a first install through the CGI stub from the three
-  # bootstrap files, a publish, and an update that must change nothing (scripts/smoke_bundle.py).
+  # Builds the release bundle and tries it the way the webhost will, on x86_64 Linux like the host.
+  # For 3.13 and 3.14 each: pip installs requirements.lock from PyPI with exactly the updater's
+  # command (bin/updater.py packages), so a missing wheel or a compiled package that will not load
+  # fails here, not in production; then both self-tests run with only the bundle and those packages
+  # on sys.path. Then a first install through the CGI stub from the three bootstrap files, a
+  # publish, an update that must change nothing, and the repair after a python upgrade
+  # (scripts/smoke_bundle.py).
   bundle:
     runs-on: ubuntu-latest
     services:

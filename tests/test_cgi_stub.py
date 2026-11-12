@@ -1,5 +1,8 @@
-"""The cgi-bin stub: finds the active release, and handles POST /api/update itself (the bootstrap)."""
+"""The cgi-bin stub: finds the active release, runs it with only its own packages, and handles
+POST /api/update itself (the bootstrap, and the repair after a python upgrade)."""
 
+import importlib.machinery
+import importlib.util
 import json
 import os
 import shutil
@@ -10,15 +13,23 @@ from pathlib import Path
 import pytest
 from bundles import STUB, UPDATER_SOURCE, make_bundle, publish, version, write_config
 
-from gahk_web import signing
+from gahk_web import signing, updater
 
 KEY = "k" * 40
 
 
-def cgi(home: Path, method: str, path: str, body: bytes = b"", headers: dict[str, str] | None = None):  # noqa: ANN201
+def cgi(  # noqa: ANN201
+    home: Path,
+    method: str,
+    path: str,
+    body: bytes = b"",
+    headers: dict[str, str] | None = None,
+    stub: Path = STUB,
+):
     """Run the stub as Apache would; returns (status, headers, body)."""
     env = {
         "PATH": os.environ.get("PATH", ""),
+        "GAHK_WEB_PIP_FIND_LINKS": os.environ.get("GAHK_WEB_PIP_FIND_LINKS", ""),
         "GAHK_WEB_HOME": str(home),
         "REQUEST_METHOD": method,
         "REQUEST_URI": path,
@@ -34,7 +45,7 @@ def cgi(home: Path, method: str, path: str, body: bytes = b"", headers: dict[str
     for name, value in (headers or {}).items():
         env["HTTP_" + name.upper().replace("-", "_")] = value
     done = subprocess.run(
-        [sys.executable, str(STUB)], input=body, env=env, capture_output=True, timeout=60, check=False
+        [sys.executable, str(stub)], input=body, env=env, capture_output=True, timeout=60, check=False
     )
     head, _, content = done.stdout.partition(b"\r\n\r\n")
     lines = head.decode().split("\r\n")
@@ -43,7 +54,7 @@ def cgi(home: Path, method: str, path: str, body: bytes = b"", headers: dict[str
 
 
 @pytest.fixture
-def home(tmp_path: Path) -> Path:
+def home(tmp_path: Path, offline_pip: Path) -> Path:
     home = tmp_path / "home"
     (home / "public_html").mkdir(parents=True)
     (tmp_path / "dist").mkdir()
@@ -109,3 +120,76 @@ def test_without_config_the_update_is_refused(home: Path) -> None:
     status, _, body = cgi(home, "POST", "/api/update", b"{}", signed())
     assert status == 401
     assert json.loads(body) == {"error": "signing is not configured"}
+
+
+def install(home: Path, tmp_path: Path) -> tuple[str, Path]:
+    """Install a fake release through the stub; returns its sha and the real stub, put in place
+    (the fake release ships a dummy gahk.cgi) beside the site's 503 page."""
+    v1 = version(1)
+    publish(tmp_path / "dist", make_bundle(tmp_path / "dist", v1))
+    status, _, body = cgi(home, "POST", "/api/update", b"{}", signed())
+    assert status == 200 and json.loads(body)["updated"], body
+    stub = home / "public_html" / "cgi-bin" / "gahk.cgi"
+    shutil.copyfile(STUB, stub)
+    (home / "public_html" / "503.html").write_text("<h1>Siden opdateres</h1>", encoding="utf-8")
+    return v1, stub
+
+
+def test_the_release_runs_with_only_its_own_src_and_packages(home: Path, tmp_path: Path) -> None:
+    v1, stub = install(home, tmp_path)
+    release = home / "gahk_web" / "releases" / v1
+
+    status, _, body = cgi(home, "GET", "/faciliteter", stub=stub)
+
+    assert status == 200, body
+    seen = json.loads(body)
+    assert seen["sys_path"][:2] == [str(release / "src"), str(release / "vendor")]
+    assert not [entry for entry in seen["sys_path"] if "site-packages" in entry]
+    assert str(stub.parent) not in seen["sys_path"]
+    assert Path(seen["gahkfake"]).is_relative_to(release / "vendor")
+
+
+def test_packages_for_another_python_are_not_imported_until_an_update_reinstalls_them(
+    home: Path, tmp_path: Path
+) -> None:
+    v1, stub = install(home, tmp_path)
+    abi = home / "gahk_web" / "releases" / v1 / "vendor" / ".abi"
+    abi.write_text("cpython-399 .cpython-399-elsewhere.so elsewhere\n")
+
+    status, headers, body = cgi(home, "GET", "/api/health", stub=stub)
+    assert status == 503
+    assert headers["Content-Type"] == "application/json"
+    health = json.loads(body)
+    assert health["ok"] is False and health["version"] == v1 and health["revision"] is None
+    assert "cpython-399" in health["error"] and "POST /api/update reinstalls them" in health["error"]
+
+    status, headers, body = cgi(home, "GET", "/faciliteter", stub=stub)
+    assert status == 503
+    assert headers["Retry-After"] == "300"
+    assert body.decode().startswith("<h1>Siden opdateres</h1>")
+
+    status, _, body = cgi(home, "POST", "/api/update", b"{}", signed(), stub=stub)
+    assert status == 200, body
+    assert json.loads(body)["detail"] == f"reinstalled packages for {updater.python_tag()} (running {v1})"
+
+    assert cgi(home, "GET", "/faciliteter", stub=stub)[0] == 200
+
+
+def test_a_release_without_packages_answers_503(home: Path, tmp_path: Path) -> None:
+    v1, stub = install(home, tmp_path)
+    shutil.rmtree(home / "gahk_web" / "releases" / v1 / "vendor")
+
+    status, _, body = cgi(home, "GET", "/api/health", stub=stub)
+
+    assert status == 503
+    assert "not installed" in json.loads(body)["error"]
+
+
+def test_the_stub_and_the_updater_agree_on_the_python() -> None:
+    loader = importlib.machinery.SourceFileLoader("gahk_cgi_stub", str(STUB))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+
+    assert module.interpreter_abi() == updater.interpreter_abi()

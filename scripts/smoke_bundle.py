@@ -3,18 +3,26 @@
 
     --python 3.13 --python 3.14   interpreters to test with (versions uv can find, or paths)
     --database postgres://...     also do a full bootstrap install against this (scratch!) database
+    --find-links DIR              take the wheels from DIR instead of PyPI (offline runs)
 
-For each python it unpacks dist/gahk_web-<sha>.tar.gz into a temporary folder and runs
-`python -I selftest.py` and `python -I bin/updater.py --selftest` there. With --database it then
-plays the webhost: a fresh home with config.ini and the three bootstrap files from dist/
-(updater.py, gahk.cgi, htaccess), a signed POST /api/update through the CGI stub (installs the
-bundle from a file:// manifest), GET /api/health, a signed GET /api/status, a signed publish of a
-small snapshot (renders the pages with the release's templates), a page fetched through the stub's
-fallback, and a second POST /api/update that must change nothing. The database's tables are
-dropped first: never point it at anything but a throwaway database.
+It needs the network: the packages come from PyPI, installed by real pip exactly as the webhost's
+updater installs them (unless --find-links names a folder of wheels).
+
+For each python it unpacks dist/gahk_web-<sha>.tar.gz into a temporary folder, installs the
+release's requirements.lock with `python -I bin/updater.py packages <release>` (the updater's own
+pip command), and runs `python -I selftest.py` and `python -I bin/updater.py --selftest` there.
+With --database it then plays the webhost: a fresh home with config.ini and the three bootstrap
+files from dist/ (updater.py, gahk.cgi, htaccess), a signed POST /api/update through the CGI stub
+(installs the bundle from a file:// manifest, packages from PyPI), GET /api/health, a signed GET
+/api/status, a signed publish of a small snapshot (renders the pages with the release's
+templates), a page fetched through the stub's fallback, a second POST /api/update that must change
+nothing, and finally a python "upgrade" (vendor/.abi made foreign): the site answers 503 until the
+next POST /api/update reinstalls the packages. The database's tables are dropped first: never
+point it at anything but a throwaway database.
 """
 
 import argparse
+import fcntl
 import hashlib
 import hmac
 import importlib.util
@@ -32,6 +40,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
+FIND_LINKS_ENV = "GAHK_WEB_PIP_FIND_LINKS"  # as in gahk_web/updater.py
+INSTALL_WAIT = 900  # seconds an install may take once the update request has answered
 
 
 class SmokeError(Exception):
@@ -64,15 +74,33 @@ def load_updater(path: Path) -> ModuleType:
 
 
 def check(python: str, *args: str, cwd: Path) -> str:
-    done = subprocess.run([python, *args], cwd=cwd, capture_output=True, text=True, check=False)  # noqa: S603
+    done = subprocess.run(  # noqa: S603
+        [python, *args], cwd=cwd, capture_output=True, text=True, check=False, env=base_env()
+    )
     if done.returncode != 0:
         raise SmokeError(f"{python} {' '.join(args)}: {(done.stderr or done.stdout).strip()}")
     return done.stdout.strip()
 
 
+def base_env() -> dict[str, str]:
+    env = {"PATH": os.environ.get("PATH", "")}
+    if os.environ.get(FIND_LINKS_ENV):
+        env[FIND_LINKS_ENV] = os.environ[FIND_LINKS_ENV]
+    return env
+
+
+def tree_size(folder: Path) -> int:
+    return sum(path.stat().st_size for path in folder.rglob("*") if path.is_file() and not path.is_symlink())
+
+
 def selftests(python: str, bundle: Path, updater: ModuleType, scratch: Path) -> None:
+    """Install the packages as the updater does, then both self-tests (with only the release on sys.path)."""
     release = scratch / "unpacked"
     updater.unpack(bundle, release)
+    started = time.monotonic()
+    print(f"  {check(python, '-I', 'bin/updater.py', 'packages', str(release), cwd=release)}")
+    size = tree_size(release / "vendor") / 1e6
+    print(f"  packages: {size:.1f} MB in vendor/, {time.monotonic() - started:.0f} s")
     print(f"  {check(python, '-I', 'selftest.py', cwd=release)}")
     print(f"  {check(python, '-I', 'bin/updater.py', '--selftest', cwd=release)}")
 
@@ -115,7 +143,7 @@ def cgi(
     python: str, home: Path, method: str, path: str, body: bytes = b"", key: str = ""
 ) -> tuple[int, bytes]:
     env = {
-        "PATH": os.environ.get("PATH", ""),
+        **base_env(),
         "GAHK_WEB_HOME": str(home),
         "REQUEST_METHOD": method,
         "REQUEST_URI": path,
@@ -135,7 +163,7 @@ def cgi(
             env["HTTP_" + name.upper().replace("-", "_")] = value
     stub = home / "public_html" / "cgi-bin" / "gahk.cgi"
     done = subprocess.run(  # noqa: S603 - as Apache runs it: the stub's own shebang interpreter
-        [python, str(stub)], input=body, env=env, capture_output=True, timeout=120, check=False
+        [python, str(stub)], input=body, env=env, capture_output=True, timeout=180, check=False
     )
     head, _, content = done.stdout.partition(b"\r\n\r\n")
     status_line = next((line for line in head.decode().splitlines() if line.startswith("Status: ")), "")
@@ -185,6 +213,27 @@ SNAPSHOT: dict[str, Any] = {
 }
 
 
+def update(python: str, home: Path, key: str, what: str) -> dict[str, Any]:
+    """A signed POST /api/update; when the install outlasts the request, wait for how it ends."""
+    result: dict[str, Any] = expect_json(cgi(python, home, "POST", "/api/update", b"{}", key), 200, what)
+    if "still running" not in str(result.get("detail")):
+        return result
+    print(f"  {what}: still running after the request, waiting")
+    state_file = home / "gahk_web" / "state" / "update.json"
+    lock = home / "gahk_web" / "var" / "update.lock"
+    deadline = time.monotonic() + INSTALL_WAIT
+    while time.monotonic() < deadline:
+        time.sleep(2)
+        with lock.open("a") as handle:  # free again once the detached update has ended
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                continue
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        return {**state, "updated": state["last_result"] == "updated"}
+    raise SmokeError(f"{what}: still running after {INSTALL_WAIT} s")
+
+
 def install(python: str, dist: Path, version: str, database: str, scratch: Path) -> None:
     home = scratch / "home"
     key = secrets.token_urlsafe(48)
@@ -202,10 +251,11 @@ def install(python: str, dist: Path, version: str, database: str, scratch: Path)
     code, _ = cgi(python, home, "GET", "/")
     if code != 503:
         raise SmokeError(f"before the install / answered {code}, expected 503")
-    result = expect_json(cgi(python, home, "POST", "/api/update", b"{}", key), 200, "first update")
+    started = time.monotonic()
+    result = update(python, home, key, "first update")
     if not result.get("updated") or result.get("version") != version:
         raise SmokeError(f"first update did not install {version}: {result}")
-    print(f"  bootstrap: {result['detail']}")
+    print(f"  bootstrap: {result['detail']} ({time.monotonic() - started:.0f} s)")
 
     health = expect_json(cgi(python, home, "GET", "/api/health"), 200, "health")
     if health != {"ok": True, "version": version, "revision": None}:
@@ -231,10 +281,27 @@ def install(python: str, dist: Path, version: str, database: str, scratch: Path)
     if code != 200 or "Røgtest".encode() not in content:
         raise SmokeError(f"the stub's fallback did not serve the page: {code}")
 
-    again = expect_json(cgi(python, home, "POST", "/api/update", b"{}", key), 200, "second update")
+    again = update(python, home, key, "second update")
     if again.get("updated") or not str(again.get("detail", "")).startswith("already running"):
         raise SmokeError(f"second update was not a no-op: {again}")
     print(f"  second update: {again['detail']}")
+
+    # Hetzner upgrades python: the installed packages no longer fit, so the stub stops importing
+    # the release until the next update has reinstalled them.
+    abi = home / "gahk_web" / "releases" / version / "vendor" / ".abi"
+    abi.write_text("cpython-399 .cpython-399-elsewhere.so elsewhere\n", encoding="utf-8")
+    sick = expect_json(cgi(python, home, "GET", "/api/health"), 503, "health with foreign packages")
+    if sick.get("ok") is not False or "POST /api/update" not in str(sick.get("error")):
+        raise SmokeError(f"unexpected health with foreign packages: {sick}")
+    if cgi(python, home, "GET", "/faciliteter/")[0] != 503:
+        raise SmokeError("a page did not answer 503 with foreign packages")
+    repaired = update(python, home, key, "update after the python upgrade")
+    if not str(repaired.get("detail", "")).startswith("reinstalled packages for"):
+        raise SmokeError(f"the update did not reinstall the packages: {repaired}")
+    expect_json(cgi(python, home, "GET", "/api/health"), 200, "health after the reinstall")
+    print(f"  python upgrade: {repaired['detail']}")
+    size = tree_size(home / "gahk_web" / "releases" / version / "vendor") / 1e6
+    print(f"  installed release: {size:.1f} MB of packages")
 
 
 def reset_database(python: str, database: str, release: Path) -> None:
@@ -268,7 +335,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--dist", type=Path, default=ROOT / "dist")
     parser.add_argument("--python", action="append", default=[], help="repeat for each interpreter")
     parser.add_argument("--database", default="", help="a THROWAWAY database for the install test")
+    parser.add_argument("--find-links", type=Path, help="a folder of wheels to use instead of PyPI")
     args = parser.parse_args(argv)
+    if args.find_links:
+        os.environ[FIND_LINKS_ENV] = str(args.find_links.resolve())
     dist: Path = args.dist
     manifest = json.loads((dist / "manifest.json").read_text(encoding="utf-8"))
     bundle = dist / manifest["bundle"]

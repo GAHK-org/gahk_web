@@ -21,28 +21,39 @@ seconds; a slower install carries on after the HTTP request has been answered.
 run(), holding an exclusive lock:
 
      1. read the manifest (manifest_url, or manifest-<pin>.json for a pinned version)
-     2. same version as ~/gahk_web/CURRENT: nothing to do
+     2. same version as ~/gahk_web/CURRENT: nothing to do, unless that release's packages were
+        installed for another python (Hetzner upgraded it): then steps 5-6 for it, and swap them in
      3. download the bundle (redirects followed, size capped), check its size and sha256
      4. unpack it safely into releases/<sha> (no absolute paths, no "..", no links or devices)
-     5. run the release's selftest.py with this python, in a subprocess
-     6. apply the database migrations with the NEW code
-     7. install public_html/static (new files only), cgi-bin/gahk.cgi and .htaccess (keeping the
+     5. install the release's packages (requirements.lock, every file pinned by its sha256) for this
+        python with pip, from PyPI, into a new folder; when a kept release has the identical lock
+        and was installed for this python, copy its packages (hard links) instead of running pip
+     6. run the release's selftest.py with this python and the new packages, then make them its
+        vendor/ (vendor/.abi records the python they are for)
+     7. apply the database migrations with the NEW code
+     8. install public_html/static (new files only), cgi-bin/gahk.cgi and .htaccess (keeping the
         installed file's LOCAL block); if the site then answers 5xx and the previous .htaccess cures
         that, put it back and fail
-     8. switch CURRENT (written atomically)          <- the release goes live here
-     9. take the release's bin/updater.py if it passes its own --selftest
-    10. re-render the site with the new templates
-    11. delete hashed static files neither this nor the previous release uses; keep 3 releases
+     9. switch CURRENT (written atomically)          <- the release goes live here
+    10. take the release's bin/updater.py if it passes its own --selftest
+    11. re-render the site with the new templates
+    12. delete hashed static files neither this nor the previous release uses; keep 3 releases
 
-Any failure before step 8 leaves the old release running and untouched (migrations excepted: they
-must keep working with the previous release). Steps 9-11 are repeated or done lazily by the next
+Any failure before step 9 leaves the old release running and untouched (migrations excepted: they
+must keep working with the previous release). Steps 10-12 are repeated or done lazily by the next
 update or request, so an interrupted run never leaves a half-switched site. The outcome goes to
 <state_dir>/update.json, which GET /api/status reports, and every step to ~/gahk_web/var/update.log.
+Temporary files live in ~/gahk_web/tmp and in .tmp-* folders, which every run clears first.
 
 Usage (no SSH on the webhost, so these are for development, tests and CI):
 
     python3 -I updater.py run [--home DIR]    update now; prints the result as JSON
+    python3 -I updater.py packages RELEASE    install an unpacked release's packages for this
+                                              python with pip, as step 5 does (CI, smoke tests)
     python3 -I updater.py --selftest          check that this file works with this python
+
+$GAHK_WEB_PIP_FIND_LINKS (tests, offline smoke runs) makes pip take the wheels from that folder
+instead of PyPI; the hashes in requirements.lock are checked all the same.
 """
 
 from __future__ import annotations
@@ -51,6 +62,7 @@ import configparser
 import contextlib
 import fcntl
 import hashlib
+import importlib.machinery
 import io
 import json
 import os
@@ -84,9 +96,16 @@ DOWNLOAD_DEADLINE = 300  # seconds for a whole download
 SELFTEST_TIMEOUT = 120
 MIGRATE_TIMEOUT = 300
 RENDER_TIMEOUT = 300
+PIP_TIMEOUT = 600  # seconds for the whole pip install
+PIP_LOG_LINES = 40  # the last lines of pip's output that go to update.log
 NUDGE_WAIT = 45  # how long the HTTP request waits for the update before it answers
 LOG_MAX_BYTES = 1024 * 1024
 MIN_PYTHON = (3, 13)
+
+REQUIREMENTS = "requirements.lock"  # in the bundle's root: uv export of uv.lock, with sha256 hashes
+ABI_FILE = ".abi"  # in vendor/: the python the packages were installed for (interpreter_abi())
+PIP_MODULE = "pip"
+FIND_LINKS_ENV = "GAHK_WEB_PIP_FIND_LINKS"
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -97,9 +116,11 @@ LOCAL_BLOCK_RE = re.compile(rb"^# BEGIN LOCAL\b[^\n]*\n(.*?)^# END LOCAL\b", re.
 # site.1a2b3c4d5e6f.css: the build gives css and js a content hash in their names.
 HASHED_STATIC_RE = re.compile(r"^.+\.[0-9a-f]{8,}\.[A-Za-z0-9]+$")
 
-# Runs a command of the release (python -m gahk_web <command>) with only its own code on sys.path.
+# Runs a command of the release (python -m gahk_web <command>) with only its own code and packages
+# on sys.path: no site-packages of the host's python, which could shadow them.
 RELEASE_RUNNER = (
-    "import sys;r=sys.argv.pop(1);sys.path[:0]=[r+'/src',r+'/vendor'];"
+    "import sys;r=sys.argv.pop(1);sys.path[:]=[r+'/src',r+'/vendor']+[p for p in sys.path "
+    "if 'site-packages' not in p and 'dist-packages' not in p];"
     "from gahk_web.__main__ import main;sys.exit(main(sys.argv[1:]))"
 )
 
@@ -144,6 +165,10 @@ class Layout:
     @property
     def var(self) -> Path:
         return self.app / "var"
+
+    @property
+    def tmp(self) -> Path:
+        return self.app / "tmp"
 
     @property
     def log_file(self) -> Path:
@@ -456,7 +481,7 @@ def _subprocess_env(layout: Layout) -> dict[str, str]:
     env = {
         key: value
         for key, value in os.environ.items()
-        if key in ("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR", "SYSTEMROOT")
+        if key in ("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR", "SYSTEMROOT", FIND_LINKS_ENV)
     }
     env["HOME"] = os.environ.get("HOME", str(layout.home))
     env["GAHK_WEB_HOME"] = str(layout.home)
@@ -491,6 +516,208 @@ def run_step(layout: Layout, what: str, args: list[str], timeout: int, cwd: Path
 
 def run_release(layout: Layout, release: Path, what: str, command: str, timeout: int) -> None:
     run_step(layout, what, ["-c", RELEASE_RUNNER, str(release), command], timeout)
+
+
+# --- the release's packages (vendor/) ---
+
+
+def interpreter_abi() -> str:
+    """Which compiled packages this python can load: interpreter, extension-module ABI, machine.
+
+    Like "cpython-313 .cpython-313-x86_64-linux-gnu.so x86_64". The cgi-bin stub computes the same
+    string, cheaply, on every request; keep the two in step."""
+    tag = sys.implementation.cache_tag or sys.implementation.name
+    return f"{tag} {importlib.machinery.EXTENSION_SUFFIXES[0]} {os.uname().machine}"
+
+
+def python_tag() -> str:
+    return sys.implementation.cache_tag or sys.implementation.name
+
+
+def vendor_abi(vendor: Path) -> str:
+    try:
+        return (vendor / ABI_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def packages_ok(release: Path) -> bool:
+    """Whether the release's vendor/ was installed for this python."""
+    return vendor_abi(release / "vendor") == interpreter_abi()
+
+
+def pip_command(requirements: Path, target: Path) -> list[str]:
+    command = [
+        sys.executable,
+        "-I",
+        "-m",
+        PIP_MODULE,
+        "install",
+        "--target",
+        str(target),
+        "--require-hashes",
+        "--only-binary=:all:",
+        "--no-deps",
+        "--no-cache-dir",
+        "--disable-pip-version-check",
+        "--no-input",
+        "--no-warn-script-location",
+        "--progress-bar",
+        "off",
+        "--timeout",
+        "30",
+        "--retries",
+        "2",
+        "-r",
+        str(requirements),
+    ]
+    find_links = os.environ.get(FIND_LINKS_ENV, "")
+    if find_links:
+        command += ["--no-index", "--find-links", find_links]
+    return command
+
+
+def run_pip(layout: Layout, requirements: Path, target: Path) -> None:
+    """pip install the requirements into target, isolated from any pip configuration of the host."""
+    shutil.rmtree(layout.tmp, ignore_errors=True)
+    layout.tmp.mkdir(parents=True, exist_ok=True)
+    env = _subprocess_env(layout)
+    env.update(TMPDIR=str(layout.tmp), PIP_CONFIG_FILE=os.devnull)
+    started = time.monotonic()
+    try:
+        done = subprocess.run(  # noqa: S603 - our own interpreter with fixed arguments
+            pip_command(requirements, target),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=PIP_TIMEOUT,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        _log_pip(layout, (exc.stdout or b"") + (exc.stderr or b""))
+        raise UpdateError(f"pip install took longer than {PIP_TIMEOUT} s") from exc
+    except OSError as exc:
+        raise UpdateError(f"pip install could not start: {exc}") from exc
+    finally:
+        shutil.rmtree(layout.tmp, ignore_errors=True)
+    lines = _log_pip(layout, done.stdout + done.stderr)
+    if done.returncode != 0:
+        if any(f"No module named {PIP_MODULE}" in line for line in lines):
+            raise UpdateError("pip is not available on the webhost")
+        errors = [line.strip() for line in lines if line.startswith("ERROR:")] or lines[-1:]
+        reason = " ".join(errors[-3:]) or f"exit status {done.returncode}"
+        raise UpdateError(f"pip install: {reason[:500]}")
+    log(layout, f"pip install took {time.monotonic() - started:.0f} s")
+
+
+def _log_pip(layout: Layout, output: bytes) -> list[str]:
+    """The last lines of pip's output to update.log; returns all of them."""
+    lines = output.decode("utf-8", "replace").strip().splitlines()
+    log(layout, "pip install: " + "\n".join(lines[-PIP_LOG_LINES:]))
+    return lines
+
+
+def copy_linked(source: Path, target: Path) -> None:
+    """Copy a folder tree, hard-linking the files where the file system allows (no extra disk).
+
+    A linked file is shared, so nothing may write into one in place: Python replaces its .pyc files
+    atomically, and vendor/.abi is left out here and written anew."""
+
+    def link(src: str, dst: str) -> None:
+        try:
+            os.link(src, dst)
+        except OSError:
+            shutil.copy2(src, dst)
+
+    shutil.copytree(
+        source, target, symlinks=True, copy_function=link, ignore=shutil.ignore_patterns(ABI_FILE)
+    )
+
+
+def install_packages(layout: Layout, release: Path, donors: list[Path]) -> Path:
+    """Install the release's requirements.lock for this python into a new folder in the release.
+
+    Returns the folder. The caller self-tests the release with it and then swaps it in with
+    use_packages(); nothing the running site uses is touched. A donor (a kept release) whose lock
+    is identical and whose packages are for this python is copied instead of running pip, so a
+    release that changes only code needs neither PyPI nor time."""
+    lock = release / REQUIREMENTS
+    if not lock.is_file():
+        raise UpdateError(f"the release has no {REQUIREMENTS}")
+    wanted = lock.read_bytes()
+    work = Path(tempfile.mkdtemp(prefix=".tmp-vendor-", dir=release))
+    try:
+        donor = next((d for d in donors if d != release and _same_packages(d, wanted)), None)
+        if donor is not None:
+            work.rmdir()
+            copy_linked(donor / "vendor", work)
+            how = f"copied the packages of {donor.name}"
+        else:
+            log(layout, f"{release.name}: installing packages for {python_tag()} with pip")
+            run_pip(layout, lock, work)
+            how = f"installed packages for {python_tag()}"
+        write_atomic(work / ABI_FILE, (interpreter_abi() + "\n").encode("utf-8"))
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    log(layout, f"{release.name}: {how}")
+    return work
+
+
+def _same_packages(donor: Path, lock: bytes) -> bool:
+    try:
+        return packages_ok(donor) and (donor / REQUIREMENTS).read_bytes() == lock
+    except OSError:
+        return False
+
+
+def use_packages(release: Path, packages: Path) -> None:
+    """Make packages the release's vendor/ (two renames; the old vendor/ is deleted)."""
+    vendor = release / "vendor"
+    old = None
+    if vendor.exists():
+        old = Path(tempfile.mkdtemp(prefix=".tmp-old-vendor-", dir=release))
+        vendor.replace(old / "vendor")
+    packages.replace(vendor)
+    if old is not None:
+        shutil.rmtree(old, ignore_errors=True)
+
+
+def kept_releases(layout: Layout, first: str = "") -> list[Path]:
+    """The installed releases, `first` (the running one) first, then the most recently installed."""
+    if not layout.releases.is_dir():
+        return []
+    found = [entry for entry in layout.releases.iterdir() if entry.is_dir() and SHA_RE.match(entry.name)]
+    found.sort(key=lambda entry: (entry.name != first, -entry.stat().st_mtime))
+    return found
+
+
+def ready_release(layout: Layout, release: Path, current: str) -> None:
+    """Packages for this python (unless the release has them already), and the release's self-test
+    with them. The packages become the release's vendor/ only once the self-test passed."""
+    selftest = [str(release / "selftest.py")]
+    if packages_ok(release):
+        run_step(layout, "self-test", selftest, SELFTEST_TIMEOUT, cwd=release)
+        return
+    packages = install_packages(layout, release, kept_releases(layout, current))
+    try:
+        run_step(layout, "self-test", [*selftest, "--vendor", str(packages)], SELFTEST_TIMEOUT, cwd=release)
+        use_packages(release, packages)
+    finally:
+        shutil.rmtree(packages, ignore_errors=True)  # gone already when it became vendor/
+
+
+def clean_leftovers(layout: Layout) -> None:
+    """Delete what an interrupted run left behind: ~/gahk_web/tmp and the .tmp-* folders."""
+    shutil.rmtree(layout.tmp, ignore_errors=True)
+    if not layout.releases.is_dir():
+        return
+    for entry in layout.releases.iterdir():
+        if entry.name.startswith(".tmp-"):
+            shutil.rmtree(entry, ignore_errors=True)
+        elif entry.is_dir() and SHA_RE.match(entry.name):
+            for inner in entry.glob(".tmp-*"):
+                shutil.rmtree(inner, ignore_errors=True)
 
 
 # --- installing ---
@@ -700,7 +927,7 @@ def _install(layout: Layout, target: str, manifest: Manifest | None, current: st
         if not python_ok(manifest.python):
             raise UpdateError(f"{target} needs Python {manifest.python}, this is {sys.version.split()[0]}")
         release = prepare_release(layout, manifest)
-    run_step(layout, "self-test", [str(release / "selftest.py")], SELFTEST_TIMEOUT, cwd=release)
+    ready_release(layout, release, current)
     run_release(layout, release, "migrations", "migrate", MIGRATE_TIMEOUT)
     try:
         previous_htaccess: bytes | None = (layout.public_html / ".htaccess").read_bytes()
@@ -733,6 +960,18 @@ def _install(layout: Layout, target: str, manifest: Manifest | None, current: st
         log(layout, f"removed old releases: {', '.join(gone)}")
     detail = f"installed {target}" + (f" (was {current})" if current else "")
     return Result(True, target, None, "; ".join([detail, *notes]))
+
+
+def _reinstall_packages(layout: Layout, current: str) -> Result:
+    """The running release's packages are for another python (Hetzner upgraded it, so the site
+    answers 503): install them for this one, self-test, swap them in. No new version needed."""
+    release = layout.releases / current
+    installed = vendor_abi(release / "vendor") or "none"
+    log(layout, f"{current}: its packages are for {installed}, this is {interpreter_abi()}")
+    ready_release(layout, release, current)
+    note = refresh_updater(layout, release)
+    detail = f"reinstalled packages for {python_tag()} (running {current})"
+    return Result(True, current, None, f"{detail}; {note}" if note else detail)
 
 
 def run(home: Path | str | None = None) -> Result:
@@ -768,6 +1007,7 @@ def _run_locked(layout: Layout) -> Result:
     current = read_current(layout)
     available: str | None = None
     try:
+        clean_leftovers(layout)
         if not layout.config.is_file():
             raise UpdateError(f"{layout.config} is missing")
         if layout.pin and not SHA_RE.match(layout.pin):
@@ -781,11 +1021,17 @@ def _run_locked(layout: Layout) -> Result:
             kept = release_ok(layout.releases / target, target)
             manifest = None if kept else fetch_manifest(layout, target)
         if target == current and release_ok(layout.releases / current, current):
-            note = refresh_updater(layout, layout.releases / current)  # heals an interrupted run
-            pinned = f" (pinned; {available} is available)" if layout.pin and layout.pin != available else ""
-            result = Result(False, current, available, f"already running {current}{pinned}")
-            if note:
-                result.detail += f"; {note}"
+            if packages_ok(layout.releases / current):
+                note = refresh_updater(layout, layout.releases / current)  # heals an interrupted run
+                pinned = (
+                    f" (pinned; {available} is available)" if layout.pin and layout.pin != available else ""
+                )
+                result = Result(False, current, available, f"already running {current}{pinned}")
+                if note:
+                    result.detail += f"; {note}"
+            else:
+                result = _reinstall_packages(layout, current)
+                result.available_version = available
         else:
             log(layout, f"updating {current or 'nothing'} -> {target}")
             result = _install(layout, target, manifest, current)
@@ -900,7 +1146,25 @@ def selftest() -> list[str]:
     return problems
 
 
+def install_release_packages(release: Path) -> int:
+    """updater.py packages RELEASE: step 5 of an update for an unpacked release (CI, smoke tests)."""
+    with tempfile.TemporaryDirectory(prefix="gahk_web-packages-") as scratch:
+        root = Path(scratch)
+        layout = Layout(root, root / "config.ini", root / "public_html", root / "state")
+        try:
+            use_packages(release, install_packages(layout, release, []))
+        except UpdateError as exc:
+            with contextlib.suppress(OSError):
+                print(layout.log_file.read_text(encoding="utf-8"), file=sys.stderr)
+            print(f"packages: {exc}", file=sys.stderr)
+            return 1
+    print(f"installed packages for {python_tag()} into {release / 'vendor'}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    if len(argv) == 2 and argv[0] == "packages":
+        return install_release_packages(Path(argv[1]).resolve())
     if argv == ["--selftest"]:
         problems = selftest()
         for problem in problems:

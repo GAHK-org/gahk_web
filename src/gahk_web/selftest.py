@@ -1,10 +1,12 @@
-"""Self-test of a release: does this code run with this python, with nothing but what the release ships?
+"""Self-test of a release: does this code run with this python and the packages installed for it?
 
-The release's selftest.py puts only <release>/src and <release>/vendor on sys.path and calls main().
-The updater runs it with the webhost's python3 before it switches to a release, and CI runs it on
-Python 3.13 and 3.14 for every bundle. It needs no database, no config file and no network: it
-imports every module, checks that the vendored dependencies are pure Python, renders a sample
-snapshot with the release's templates into memory, and checks the static files the pages link to.
+The release's selftest.py puts only <release>/src and the packages (<release>/vendor, or the folder
+the updater has just installed them into) on sys.path and calls main(). The updater runs it with the
+webhost's python3 before it switches to a release, and CI runs it on Python 3.13 and 3.14 for every
+bundle. It needs no database, no config file and no network: it imports every module and package,
+checks that the packages are the ones installed for this python (compiled parts included), renders
+a sample snapshot with the release's templates into memory, and checks the static files the pages
+link to.
 """
 
 import importlib
@@ -21,7 +23,7 @@ import gahk_web
 
 MIN_PYTHON = (3, 13)
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-COMPILED_SUFFIXES = (".so", ".pyd", ".dylib")
+# The runtime dependencies, by import name (pyproject.toml's [project] dependencies).
 DEPENDENCIES = ("jinja2", "markupsafe", "pg8000")
 
 
@@ -84,16 +86,20 @@ def check_imports() -> None:
         raise AssertionError("markupsafe does not escape")
 
 
-def check_pure_python(release: Path | None) -> None:
-    """No compiled extension may be loaded, or shipped in vendor/: the webhost's python changes."""
-    for name, module in list(sys.modules.items()):
-        file = getattr(module, "__file__", None) or ""
-        if file.endswith(COMPILED_SUFFIXES) and (release is None or Path(file).is_relative_to(release)):
-            raise AssertionError(f"{name} is a compiled extension ({file})")
-    if release is not None:
-        compiled = [path for path in (release / "vendor").rglob("*") if path.suffix in COMPILED_SUFFIXES]
-        if compiled:
-            raise AssertionError(f"vendor/ holds compiled files: {compiled[0]}")
+def check_packages(vendor: Path | None) -> None:
+    """The packages come from vendor/, were installed for this python, and their compiled parts load."""
+    importlib.import_module("markupsafe._speedups")  # MarkupSafe's C escaping, not the slow fallback
+    if vendor is None:
+        return
+    from .updater import ABI_FILE, interpreter_abi
+
+    installed = (vendor / ABI_FILE).read_text(encoding="utf-8").strip()
+    if installed != interpreter_abi():
+        raise AssertionError(f"the packages are for {installed!r}, this python is {interpreter_abi()!r}")
+    for name in DEPENDENCIES:
+        file = getattr(sys.modules[name], "__file__", None) or ""
+        if not Path(file).resolve().is_relative_to(vendor.resolve()):
+            raise AssertionError(f"{name} was imported from {file}, not from {vendor}")
 
 
 def check_render() -> dict[str, tuple[str, str | None]]:
@@ -136,7 +142,12 @@ def check_release(release: Path | None) -> None:
     version = (release / "VERSION").read_text(encoding="utf-8").strip()
     if not SHA_RE.match(version):
         raise AssertionError(f"VERSION is not a git sha: {version!r}")
-    for required in ("public_html/.htaccess", "public_html/cgi-bin/gahk.cgi", "bin/updater.py"):
+    for required in (
+        "public_html/.htaccess",
+        "public_html/cgi-bin/gahk.cgi",
+        "bin/updater.py",
+        "requirements.lock",
+    ):
         if not (release / required).is_file():
             raise AssertionError(f"the release has no {required}")
 
@@ -148,7 +159,7 @@ def check_migrations() -> None:
         raise AssertionError("no database migrations found")
 
 
-def main(release: Path | None = None) -> int:
+def main(release: Path | None = None, vendor: Path | None = None) -> int:
     rendered: dict[str, tuple[str, str | None]] = {}
 
     def render() -> None:
@@ -157,7 +168,7 @@ def main(release: Path | None = None) -> int:
     checks: list[tuple[str, Callable[[], None]]] = [
         ("python", check_python),
         ("imports", check_imports),
-        ("pure python", lambda: check_pure_python(release)),
+        ("packages", lambda: check_packages(vendor)),
         ("release files", lambda: check_release(release)),
         ("migrations", check_migrations),
         ("render", render),

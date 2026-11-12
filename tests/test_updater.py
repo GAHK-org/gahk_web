@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from bundles import css_name, make_bundle, publish, version, write_config
+from bundles import BAD_LOCK, LOCK, css_name, make_bundle, publish, version, write_config
 
 from gahk_web import updater
 
@@ -21,7 +21,7 @@ KEY = "k" * 40
 
 
 @pytest.fixture
-def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, offline_pip: Path) -> Path:
     monkeypatch.delenv("GAHK_WEB_CONFIG", raising=False)
     monkeypatch.delenv("GAHK_WEB_HOME", raising=False)
     home = tmp_path / "home"
@@ -60,6 +60,31 @@ def releases(home: Path) -> set[str]:
     return {entry.name for entry in (home / "gahk_web" / "releases").iterdir()}
 
 
+def vendor(home: Path, sha: str) -> Path:
+    return home / "gahk_web" / "releases" / sha / "vendor"
+
+
+def update_log(home: Path) -> str:
+    return (home / "gahk_web" / "var" / "update.log").read_text()
+
+
+FOREIGN_ABI = "cpython-399 .cpython-399-elsewhere.so elsewhere\n"
+
+
+@pytest.fixture
+def pip_runs(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Counts the updater's pip runs (each still runs, offline)."""
+    runs: list[str] = []
+    real = updater.run_pip
+
+    def counting(layout: updater.Layout, requirements: Path, target: Path) -> None:
+        runs.append(requirements.parent.name)
+        real(layout, requirements, target)
+
+    monkeypatch.setattr(updater, "run_pip", counting)
+    return runs
+
+
 def test_first_install_bootstraps_everything(home: Path, dist: Path) -> None:
     v1 = version(1)
     release(dist, 1)
@@ -85,7 +110,185 @@ def test_first_install_bootstraps_everything(home: Path, dist: Path) -> None:
     assert state(home)["last_result"] == "updated"
     assert state(home)["available_version"] == v1
     assert state(home)["last_error"] is None
-    assert "switched from nothing to" in (home / "gahk_web" / "var" / "update.log").read_text()
+    assert "switched from nothing to" in update_log(home)
+
+
+def test_a_fresh_install_installs_the_packages_with_pip(home: Path, dist: Path, pip_runs: list[str]) -> None:
+    v1 = version(1)
+    release(dist, 1)
+
+    assert updater.run(home).updated
+
+    assert pip_runs == [v1]
+    assert (vendor(home, v1) / "gahkfake" / "__init__.py").is_file()
+    assert (vendor(home, v1) / ".abi").read_text() == updater.interpreter_abi() + "\n"
+    assert f"{v1}: installed packages for {updater.python_tag()}" in update_log(home)
+    assert "pip install: " in update_log(home)
+    leftovers = [p.name for p in (home / "gahk_web" / "releases" / v1).iterdir() if p.name.startswith(".")]
+    assert leftovers == []
+    assert not (home / "gahk_web" / "tmp").exists()
+
+
+def test_the_pip_command_is_isolated_and_hash_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(updater.FIND_LINKS_ENV, raising=False)
+    command = updater.pip_command(tmp_path / "requirements.lock", tmp_path / "vendor")
+
+    assert command[:5] == [sys.executable, "-I", "-m", "pip", "install"]
+    for flag in ("--require-hashes", "--only-binary=:all:", "--no-deps", "--no-cache-dir", "--no-input"):
+        assert flag in command
+    assert "--no-index" not in command  # PyPI in production
+
+
+def test_an_identical_lock_reuses_the_packages_without_pip(
+    home: Path, dist: Path, pip_runs: list[str]
+) -> None:
+    v1, v2 = version(1), version(2)
+    release(dist, 1)
+    updater.run(home)
+    release(dist, 2)
+
+    result = updater.run(home)
+
+    assert result.updated, result.detail
+    assert pip_runs == [v1]  # not again for v2
+    assert f"{v2}: copied the packages of {v1}" in update_log(home)
+    old, new = vendor(home, v1) / "gahkfake" / "__init__.py", vendor(home, v2) / "gahkfake" / "__init__.py"
+    assert new.read_text() == old.read_text()
+    assert new.stat().st_ino == old.stat().st_ino  # a hard link: no extra disk
+    old_abi, new_abi = vendor(home, v1) / ".abi", vendor(home, v2) / ".abi"
+    assert new_abi.stat().st_ino != old_abi.stat().st_ino  # never shared: it is rewritten
+    assert (vendor(home, v2) / ".abi").read_text() == updater.interpreter_abi() + "\n"
+
+
+def test_a_changed_lock_runs_pip(home: Path, dist: Path, pip_runs: list[str]) -> None:
+    v1, v2 = version(1), version(2)
+    release(dist, 1)
+    updater.run(home)
+    release(dist, 2, requirements=LOCK + "# bumped\n")
+
+    assert updater.run(home).updated
+
+    assert pip_runs == [v1, v2]
+
+
+def test_a_pip_failure_leaves_the_old_release_running(home: Path, dist: Path) -> None:
+    v1, v2 = version(1), version(2)
+    release(dist, 1)
+    updater.run(home)
+    release(dist, 2, requirements=BAD_LOCK)
+
+    result = updater.run(home)
+
+    assert not result.updated
+    assert result.error is not None
+    assert result.error.startswith("pip install: ERROR: THESE PACKAGES DO NOT MATCH THE HASHES")
+    assert result.detail == f"failed: {result.error}"
+    assert current(home) == v1
+    assert f"{v2[:7]} migrate" not in calls(home)
+    assert state(home)["last_result"] == "failed"
+    assert state(home)["last_error"] == result.error
+    assert not vendor(home, v2).exists()
+    assert not list((home / "gahk_web" / "releases" / v2).glob(".tmp-*"))
+    assert "THESE PACKAGES DO NOT MATCH THE HASHES" in update_log(home)
+
+
+def test_without_pip_the_update_says_so(home: Path, dist: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(updater, "PIP_MODULE", "gahk_no_such_pip")
+    release(dist, 1)
+
+    result = updater.run(home)
+
+    assert result.error == "pip is not available on the webhost"
+    assert result.detail == "failed: pip is not available on the webhost"
+    assert current(home) == ""
+
+
+def test_a_python_upgrade_reinstalls_the_packages_on_the_next_nudge(
+    home: Path, dist: Path, pip_runs: list[str]
+) -> None:
+    v1 = version(1)
+    release(dist, 1)
+    updater.run(home)
+    (vendor(home, v1) / ".abi").write_text(FOREIGN_ABI)  # installed for the python Hetzner replaced
+
+    result = updater.run(home)
+
+    assert result.updated and result.error is None, result.detail
+    assert result.detail == f"reinstalled packages for {updater.python_tag()} (running {v1})"
+    assert result.available_version == v1
+    assert pip_runs == [v1, v1]
+    assert updater.packages_ok(home / "gahk_web" / "releases" / v1)
+    assert calls(home) == [f"{v1[:7]} migrate", f"{v1[:7]} rebuild"]  # nothing else ran
+    assert state(home)["last_result"] == "updated"
+    assert "its packages are for cpython-399" in update_log(home)
+    assert updater.run(home).detail == f"already running {v1}"
+
+
+def test_a_failed_reinstall_leaves_the_packages_as_they_were(
+    home: Path, dist: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    v1 = version(1)
+    release(dist, 1)
+    updater.run(home)
+    (vendor(home, v1) / ".abi").write_text(FOREIGN_ABI)
+    monkeypatch.setattr(updater, "PIP_MODULE", "gahk_no_such_pip")
+
+    result = updater.run(home)
+
+    assert result.error == "pip is not available on the webhost"
+    assert (vendor(home, v1) / ".abi").read_text() == FOREIGN_ABI
+    assert current(home) == v1
+
+
+def test_a_pin_back_to_a_release_with_foreign_packages_reinstalls_them(
+    home: Path, dist: Path, pip_runs: list[str]
+) -> None:
+    v1, v2 = version(1), version(2)
+    release(dist, 1)
+    updater.run(home)
+    release(dist, 2)
+    updater.run(home)
+    (vendor(home, v1) / ".abi").write_text(FOREIGN_ABI)
+    write_config(home, (dist / "manifest.json").as_uri(), KEY, pin=v1)
+
+    result = updater.run(home)
+
+    assert result.updated, result.detail
+    assert current(home) == v1
+    assert updater.packages_ok(home / "gahk_web" / "releases" / v1)
+    assert pip_runs == [v1]  # copied from v2, which has the same lock and fits this python
+    assert f"{v1}: copied the packages of {v2}" in update_log(home)
+
+
+def test_leftovers_of_an_interrupted_run_are_deleted(home: Path, dist: Path) -> None:
+    v1 = version(1)
+    release(dist, 1)
+    updater.run(home)
+    leftovers = [
+        home / "gahk_web" / "tmp" / "pip-build",
+        home / "gahk_web" / "releases" / v1 / ".tmp-vendor-x" / "gahkfake",
+        home / "gahk_web" / "releases" / ".tmp-y" / "release",
+    ]
+    for path in leftovers:
+        path.mkdir(parents=True)
+
+    updater.run(home)
+
+    assert not any(path.parent.exists() for path in leftovers)
+    assert (vendor(home, v1) / "gahkfake").is_dir()
+
+
+def test_the_packages_command_installs_like_an_update(dist: Path, tmp_path: Path, offline_pip: Path) -> None:
+    manifest = make_bundle(dist, version(1))
+    target = tmp_path / "release"
+    updater.unpack(dist / manifest["bundle"], target)
+
+    assert updater.main(["packages", str(target)]) == 0
+
+    assert (target / "vendor" / "gahkfake").is_dir()
+    assert updater.packages_ok(target)
 
 
 def test_an_install_keeps_the_local_block_of_the_installed_htaccess(home: Path, dist: Path) -> None:

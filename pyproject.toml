@@ -5,8 +5,9 @@ description = "gahk.dk: the public site of G. A. Hagemanns Kollegium, rendered f
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 requires-python = ">=3.13"
-# Runtime dependencies must stay pure Python: the webhost runs plain CGI with the system python3
-# and the bundle vendors them.
+# Runtime dependencies. The bundle carries them as requirements.lock (uv.lock, hash-pinned), and the
+# webhost's updater pip-installs that for its own python3. Each needs binary wheels for CPython 3.13
+# and 3.14 on manylinux x86_64: the CI bundle job installs them just as the webhost does.
 dependencies = [
     "jinja2>=3.1.4",
     "markupsafe>=2.1",
@@ -16,6 +17,8 @@ dependencies = [
 [dependency-groups]
 dev = [
     "mypy>=1.13",
+    # The updater installs each release's packages with `python -m pip`; its tests run real pip.
+    "pip>=25",
     "pip-audit>=2.7",
     "prek>=0.2",
     "pytest>=8.3",

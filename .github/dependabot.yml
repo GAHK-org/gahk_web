@@ -3,9 +3,9 @@ version: 2
 # ignore target-branch and always open against main (the default branch); they are hotfixes, and
 # sync-main-to-dev.yml carries them back to dev.
 updates:
-  # Python dependencies (pyproject.toml + uv.lock). The runtime ones are vendored into the bundle
-  # and must stay pure Python: the bundle job fails on one that will not import without its
-  # compiled extension.
+  # Python dependencies (pyproject.toml + uv.lock). The runtime ones reach the webhost as the
+  # bundle's hash-pinned requirements.lock, which its updater installs with pip; the bundle job fails
+  # on one without a binary wheel for the host's python, or whose compiled parts will not load.
   - package-ecosystem: "uv"
     directory: "/"
     target-branch: "dev"

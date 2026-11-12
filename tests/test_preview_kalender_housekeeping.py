@@ -9,10 +9,11 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
+import jinja2
 import pytest
 from conftest import SYNC_KEY, Client, page, publish, snapshot, upload_images
 
-from gahk_web import db, kalender, render
+from gahk_web import db, kalender, render, updater
 from gahk_web.clock import copenhagen_today
 from gahk_web.config import Config
 from gahk_web.snapshot import validate
@@ -221,6 +222,12 @@ def test_cgi_stub_runs_the_current_release(tmp_path: Path, cfg: Config, con: db.
     release = tmp_path / "gahk_web" / "releases" / "abc1234"
     release.mkdir(parents=True)
     (release / "src").symlink_to(REPO / "src")
+    # The packages as the updater installs them: this virtualenv's, for this python.
+    vendor = release / "vendor"
+    vendor.mkdir()
+    for entry in Path(jinja2.__file__).parents[1].iterdir():
+        (vendor / entry.name).symlink_to(entry)
+    (vendor / updater.ABI_FILE).write_text(updater.interpreter_abi() + "\n")
     (tmp_path / "gahk_web" / "CURRENT").write_text("abc1234\n")
     database = cfg.database
     (tmp_path / "gahk_web" / "config.ini").write_text(

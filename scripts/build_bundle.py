@@ -9,17 +9,20 @@
 The bundle, with no absolute paths, no links and fixed owners, dates and modes:
 
     VERSION                         the git sha
+    requirements.lock               the runtime dependencies from uv.lock: every version pinned, with
+                                    the sha256 of every wheel for every platform
     selftest.py                     python3 -I selftest.py: may this release go live?
     bin/updater.py                  the self-updater (a copy of src/gahk_web/updater.py)
     src/gahk_web/                   the package; its static/ holds only static-manifest.json
-    vendor/                         runtime dependencies from uv.lock, pure Python only
     public_html/.htaccess
     public_html/cgi-bin/gahk.cgi
     public_html/static/             site assets: css/js with content-hashed names, the rest as they are
 
-Dependencies are installed for CPython 3.13 (the webhost's python), then every compiled
-extension is deleted: MarkupSafe falls back to its pure-Python code, and a package that cannot is a
-build error. Finally the bundle's own selftest.py runs on the staged tree. Needs uv on PATH.
+The bundle holds no dependencies. The webhost's updater installs requirements.lock with pip for its
+own python into <release>/vendor; pip picks the wheels for that python and checks their hashes. CI
+installs the same file the same way on Python 3.13 and 3.14 and self-tests the release with it
+(scripts/smoke_bundle.py). The build is reproducible: the same commit and uv.lock give the same
+bytes. Needs uv on PATH.
 """
 
 import argparse
@@ -40,7 +43,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = ROOT / "src" / "gahk_web"
 HASHED_SUFFIXES = (".css", ".js")
-COMPILED_SUFFIXES = (".so", ".pyd", ".dylib")
 SKIP_NAMES = ("__pycache__", ".DS_Store")
 PYTHON_REQUIREMENT = ">=3.13"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -108,17 +110,11 @@ def build_static(stage: Path) -> dict[str, str]:
     return manifest
 
 
-def find_python(version: str) -> str:
-    """A base interpreter (not the project's virtualenv): a path as it is, else uv finds the version."""
-    if os.sep in version:
-        return version
-    return run("uv", "python", "find", "--system", version, capture=True).strip()
+def requirements_lock() -> str:
+    """The runtime dependencies as pip reads them: pinned, hashed, environment markers kept.
 
-
-def build_vendor(stage: Path, python: str, scratch: Path) -> None:
-    vendor = stage / "vendor"
-    requirements = scratch / "requirements.txt"
-    run(
+    Exported to stdout, so the header names no temporary path and the file depends on uv.lock only."""
+    lock = run(
         "uv",
         "export",
         "--frozen",
@@ -126,48 +122,14 @@ def build_vendor(stage: Path, python: str, scratch: Path) -> None:
         "--no-emit-project",
         "--format",
         "requirements-txt",
-        "--output-file",
-        str(requirements),
         capture=True,
     )
-    run(
-        "uv",
-        "pip",
-        "install",
-        "--quiet",
-        "--target",
-        str(vendor),
-        "--python",
-        python,
-        "--no-deps",
-        "--only-binary",
-        ":all:",
-        "--require-hashes",
-        "--requirement",
-        str(requirements),
-        capture=True,
-    )
-    for path in sorted(vendor.rglob("*"), reverse=True):
-        if path.is_dir() and (path.name in SKIP_NAMES or path == vendor / "bin"):
-            shutil.rmtree(path)
-        elif path.is_file() and (path.suffix in COMPILED_SUFFIXES or path.suffix == ".pyc"):
-            print(f"removing compiled file {path.relative_to(vendor)}")
-            path.unlink()
-    # Every top-level module must import from vendor/ alone (-S: no site-packages at all).
-    modules = sorted(
-        {
-            path.stem if path.is_file() else path.name
-            for path in vendor.iterdir()
-            if (path.is_dir() and (path / "__init__.py").is_file())
-            or (path.is_file() and path.suffix == ".py")
-        }
-    )
-    check = "import importlib,sys;sys.path.insert(0,sys.argv[1]);[importlib.import_module(m) for m in sys.argv[2:]]"
-    run(python, "-I", "-S", "-B", "-c", check, str(vendor), *modules, capture=True)
-    print(f"vendored and imported: {', '.join(modules)}")
+    if "--hash=sha256:" not in lock:
+        raise BuildError("uv export gave no hashes")
+    return lock
 
 
-def stage_release(stage: Path, version: str, python: str, scratch: Path) -> None:
+def stage_release(stage: Path, version: str) -> None:
     copy_tree(PACKAGE, stage / "src" / "gahk_web", skip=("static",))
     build_static(stage)
     for rel in (".htaccess", "cgi-bin/gahk.cgi"):
@@ -178,7 +140,7 @@ def stage_release(stage: Path, version: str, python: str, scratch: Path) -> None
     shutil.copyfile(PACKAGE / "updater.py", stage / "bin" / "updater.py")
     shutil.copyfile(ROOT / "bundle" / "selftest.py", stage / "selftest.py")
     (stage / "VERSION").write_text(version + "\n", encoding="ascii")
-    build_vendor(stage, python, scratch)
+    (stage / "requirements.lock").write_text(requirements_lock(), encoding="utf-8")
 
 
 EXECUTABLES = {"selftest.py", "bin/updater.py", "public_html/cgi-bin/gahk.cgi"}
@@ -223,24 +185,19 @@ def main(argv: list[str]) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--out", type=Path, default=ROOT / "dist", help="output folder (default dist/)")
-    parser.add_argument("--python", default="3.13", help="python to vendor for and self-test with")
     args = parser.parse_args(argv)
 
     version, committed_at = git_version()
     if not SHA_RE.match(version):
         raise BuildError(f"not a git sha: {version}")
-    python = find_python(args.python)
     out: Path = args.out
     out.mkdir(parents=True, exist_ok=True)
     for old in [*out.glob("gahk_web-*.tar.gz"), *out.glob("manifest*.json")]:
         old.unlink()  # dist/ holds exactly one release, for CI's upload step
     with tempfile.TemporaryDirectory(prefix="gahk_web-bundle-") as tmp:
-        scratch = Path(tmp)
-        stage = scratch / "release"
+        stage = Path(tmp) / "release"
         stage.mkdir()
-        stage_release(stage, version, python, scratch)
-        # -B: no __pycache__ in the staged tree (the webhost compiles on first use).
-        print(run(python, "-I", "-B", str(stage / "selftest.py"), capture=True).strip())
+        stage_release(stage, version)
 
         bundle_name = f"gahk_web-{version}.tar.gz"
         bundle = out / bundle_name

@@ -1,13 +1,17 @@
 """Fake release bundles for the updater and cgi-bin stub tests.
 
 A fake release has the layout of a real one, but its gahk_web package only records which commands
-the updater ran (in <home>/calls.log), so the tests need neither a database nor a real build.
+the updater ran (in <home>/calls.log), so the tests need neither a database nor a real build. Its
+requirements.lock names one tiny wheel, gahkfake, which real pip installs from a local folder
+(write_wheelhouse; the updater's $GAHK_WEB_PIP_FIND_LINKS points pip there), so no test needs PyPI.
 """
 
+import base64
 import hashlib
 import io
 import json
 import tarfile
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +29,8 @@ FAILING = {failing!r}
 
 
 def main(argv):
+    import gahkfake  # the release's package, from its vendor/
+
     with (Path(os.environ["GAHK_WEB_HOME"]) / "calls.log").open("a") as log:
         log.write(VERSION[:7] + " " + " ".join(argv) + "\\n")
     if argv[0] in FAILING:
@@ -32,6 +38,63 @@ def main(argv):
         return 1
     return 0
 """
+
+# The self-test: the packages it is given (--vendor) must import.
+FAKE_SELFTEST = """\
+import sys
+from pathlib import Path
+
+vendor = sys.argv[2] if sys.argv[1:2] == ["--vendor"] else str(Path(__file__).resolve().parent / "vendor")
+sys.path.insert(0, vendor)
+import gahkfake
+
+print("selftest ok with", gahkfake.__file__)
+"""
+
+# What the cgi-bin stub runs for a page: it reports the sys.path the release got.
+FAKE_CGI_ENTRY = """\
+import json
+import sys
+
+
+def main():
+    import gahkfake
+
+    body = json.dumps({"sys_path": sys.path, "gahkfake": gahkfake.__file__})
+    sys.stdout.write("Status: 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n" + body)
+"""
+
+
+def _wheel(name: str, version: str) -> bytes:
+    """A minimal pure-Python wheel, byte for byte the same on every run (so its hash is fixed)."""
+    files = {
+        f"{name}/__init__.py": b"VALUE = 1\n",
+        f"{name}-{version}.dist-info/METADATA": f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n".encode(),
+        f"{name}-{version}.dist-info/WHEEL": b"Wheel-Version: 1.0\nGenerator: tests\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+    }
+    record = "".join(
+        f"{path},sha256={base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b'=').decode()},{len(data)}\n"
+        for path, data in files.items()
+    )
+    files[f"{name}-{version}.dist-info/RECORD"] = (record + f"{name}-{version}.dist-info/RECORD,,\n").encode()
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as wheel:
+        for path, data in files.items():
+            wheel.writestr(zipfile.ZipInfo(path, (2026, 1, 1, 0, 0, 0)), data)
+    return buffer.getvalue()
+
+
+WHEELS = {"gahkfake-1.0-py3-none-any.whl": _wheel("gahkfake", "1.0")}
+LOCK = f"gahkfake==1.0 \\\n    --hash=sha256:{hashlib.sha256(WHEELS['gahkfake-1.0-py3-none-any.whl']).hexdigest()}\n"
+# A lock pip refuses: the hash does not match the wheel.
+BAD_LOCK = f"gahkfake==1.0 \\\n    --hash=sha256:{'0' * 64}\n"
+
+
+def write_wheelhouse(folder: Path) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, data in WHEELS.items():
+        (folder / name).write_bytes(data)
+    return folder
 
 
 def version(n: int) -> str:
@@ -57,6 +120,7 @@ def make_bundle(
     failing: tuple[str, ...] = (),
     updater_source: str = UPDATER_SOURCE,
     htaccess: str = "",
+    requirements: str = LOCK,
     extra: list[tarfile.TarInfo] | None = None,
 ) -> dict[str, Any]:
     """Write dist/gahk_web-<sha>.tar.gz and dist/manifest-<sha>.json; returns the manifest.
@@ -65,10 +129,12 @@ def make_bundle(
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
         _file(tar, "VERSION", f"{sha}\n".encode())
+        _file(tar, "requirements.lock", requirements.encode())
         selftest = "import sys\nprint('selftest broke')\nsys.exit(1)\n" if "selftest" in failing else ""
-        _file(tar, "selftest.py", (selftest or "print('ok')\n").encode(), 0o755)
+        _file(tar, "selftest.py", (selftest or FAKE_SELFTEST).encode(), 0o755)
         _file(tar, "src/gahk_web/__init__.py", b"")
         _file(tar, "src/gahk_web/__main__.py", FAKE_MAIN.format(version=sha, failing=failing).encode())
+        _file(tar, "src/gahk_web/cgi_entry.py", FAKE_CGI_ENTRY.encode())
         _file(tar, "bin/updater.py", updater_source.encode(), 0o755)
         _file(tar, "public_html/.htaccess", (htaccess or f"# {sha}\n").encode())
         _file(tar, "public_html/cgi-bin/gahk.cgi", f"#!/usr/bin/env python3\n# {sha}\n".encode(), 0o755)

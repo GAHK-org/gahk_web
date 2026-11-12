@@ -32,7 +32,7 @@
 
 - [ ] A schema change is a new file in `src/gahk_web/migrations/` and still works with the previous release (the updater migrates before it switches)
 - [ ] A change to the sync API or the snapshot is matched in gahk_intern and in `docs/protocol.md`
-- [ ] Runtime dependencies stay pure Python (the bundle job checks this)
+- [ ] A new runtime dependency has binary wheels for CPython 3.13 and 3.14 on manylinux x86_64 (the bundle job checks this)
 - [ ] No secrets committed — configuration lives in `config.ini` on the webhost, never in git
 - [ ] Docs updated if behaviour, config or deploy changed (README / DEPLOY.md / spec)
 - [ ] User-facing text is in Danish

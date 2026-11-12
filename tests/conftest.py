@@ -67,6 +67,21 @@ def con(db_config: DatabaseConfig) -> Iterator[db.Connection]:
     connection.close()
 
 
+@pytest.fixture(scope="session")
+def wheelhouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The wheels the fake releases of tests/bundles.py need."""
+    from bundles import write_wheelhouse
+
+    return write_wheelhouse(tmp_path_factory.mktemp("wheelhouse"))
+
+
+@pytest.fixture
+def offline_pip(wheelhouse: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The updater's pip installs from the wheelhouse instead of PyPI (still checking the hashes)."""
+    monkeypatch.setenv("GAHK_WEB_PIP_FIND_LINKS", str(wheelhouse))
+    return wheelhouse
+
+
 @pytest.fixture
 def cfg(tmp_path: Path, db_config: DatabaseConfig) -> Config:
     public_html = tmp_path / "public_html"

@@ -55,5 +55,12 @@ The runbook is DEPLOY.md.
   install code of its own.
 - **Self-test on the real host before switching.** The webhost's Python changes with Hetzner's
   upgrades, so each release proves it runs on the Python it lands on.
-- **Pure-Python dependencies only.** Nothing compiled, so an upgrade of the host's Python cannot
-  break a release that is already installed.
+- **Packages are installed on the webhost, for its own Python.** A release carries its exact,
+  checksummed package list, and the webhost fetches those packages from PyPI when it installs the
+  release. Compiled packages (database driver, image processing) are allowed. When Hetzner upgrades
+  Python, the site pauses ("Siden opdateres") until the next update request reinstalls the packages
+  for the new Python; no new release is needed.
+- **A release whose packages do not fit stays out.** CI installs every release's packages on the
+  host's Python and the next one before it is published, and the webhost installs them before the
+  switch. When PyPI is down, the running version stays live; a release that changes only code reuses
+  the packages it already has and needs no PyPI.

@@ -7,12 +7,18 @@ this stub rarely changes:
 
     ~/gahk_web/CURRENT                 the active release (a git sha)
     ~/gahk_web/releases/<sha>/src      the gahk_web package
-    ~/gahk_web/releases/<sha>/vendor   its pure-Python dependencies
+    ~/gahk_web/releases/<sha>/vendor   its packages, installed by the updater for this python
+                                       (vendor/.abi says which python)
     ~/gahk_web/bin/updater.py          the self-updater (standard library only)
 
 POST /api/update is handled here, before any release is imported: the stub checks the request's
 signature with the [sync] key from config.ini and runs the self-updater. That is how the first
 release gets installed (bootstrap), and how a broken release gets replaced.
+
+The release runs with only its own src/ and vendor/ on sys.path; the host python's site-packages
+could shadow them. When vendor/ was installed for another python (Hetzner upgraded it), the stub does
+not import the release: GET /api/health answers 503 with the reason, other requests the 503 page,
+and the next POST /api/update reinstalls the packages.
 
 Standard library only: it must work before any release is installed.
 """
@@ -20,6 +26,7 @@ Standard library only: it must work before any release is installed.
 import configparser
 import hashlib
 import hmac
+import importlib.machinery
 import importlib.util
 import json
 import os
@@ -32,6 +39,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 UPDATE_PATH = "/api/update"
+HEALTH_PATH = "/api/health"
 MAX_UPDATE_BODY = 1024 * 1024
 MAX_SKEW_SECONDS = 300  # as gahk_web/signing.py
 MIN_KEY_LENGTH = 32  # as gahk_web/config.py
@@ -156,6 +164,39 @@ def handle_update(home: Path, app_home: Path, release: Path | None) -> None:
     json_reply("200 OK", result)
 
 
+def interpreter_abi() -> str:
+    """The python vendor/ must be installed for; the same string as gahk_web/updater.py's."""
+    tag = sys.implementation.cache_tag or sys.implementation.name
+    return f"{tag} {importlib.machinery.EXTENSION_SUFFIXES[0]} {os.uname().machine}"
+
+
+def packages_problem(release: Path) -> str:
+    try:
+        installed = (release / "vendor" / ".abi").read_text(encoding="utf-8").strip()
+    except OSError:
+        return "the release's packages are not installed"
+    if installed != interpreter_abi():
+        return f"the release's packages are for {installed}, not for this python ({interpreter_abi()})"
+    return ""
+
+
+def unavailable(sha: str, problem: str) -> None:
+    """The release cannot run on this python until POST /api/update has reinstalled its packages."""
+    print(f"gahk.cgi: {problem}", file=sys.stderr)
+    if request_path() == HEALTH_PATH:
+        reason = f"{problem}; POST /api/update reinstalls them"
+        json_reply(
+            "503 Service Unavailable", {"ok": False, "version": sha, "revision": None, "error": reason}
+        )
+        return
+    try:  # the site's own 503 page, which the release renders into public_html
+        page = (Path(__file__).absolute().parent.parent / "503.html").read_text(encoding="utf-8")
+    except OSError:
+        plain("503 Service Unavailable", "Siden opdateres. Prøv igen om lidt.")
+        return
+    respond("503 Service Unavailable", "text/html; charset=utf-8", page)
+
+
 def main() -> None:
     home = find_home()
     os.environ["GAHK_WEB_HOME"] = str(home)
@@ -175,7 +216,17 @@ def main() -> None:
         plain("503 Service Unavailable", "gahk.dk er ved at blive installeret. Prøv igen om lidt.")
         return
 
-    sys.path[:0] = [str(release / "src"), str(release / "vendor")]
+    problem = packages_problem(release)
+    if problem:
+        unavailable(sha, problem)
+        return
+
+    here = str(Path(__file__).absolute().parent)
+    sys.path[:] = [str(release / "src"), str(release / "vendor")] + [
+        entry
+        for entry in sys.path
+        if entry != here and "site-packages" not in entry and "dist-packages" not in entry
+    ]
     from gahk_web.cgi_entry import main as run  # only importable once sys.path is set
 
     run()

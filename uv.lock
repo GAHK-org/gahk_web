@@ -285,6 +285,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "mypy" },
+    { name = "pip" },
     { name = "pip-audit" },
     { name = "prek" },
     { name = "pytest" },
@@ -301,6 +302,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "mypy", specifier = ">=1.13" },
+    { name = "pip", specifier = ">=25" },
     { name = "pip-audit", specifier = ">=2.7" },
     { name = "prek", specifier = ">=0.2" },
     { name = "pytest", specifier = ">=8.3" },
