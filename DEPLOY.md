@@ -73,7 +73,8 @@ What lives where on the webhost (`~` is the FTP home):
 ~/public_html/.htaccess          from the release, overwritten by each install except its LOCAL block
 ~/public_html/cgi-bin/gahk.cgi   from the release (the stub that starts the active release)
 ~/public_html/static/            from the release (css with hashed names, fonts, icons)
-~/public_html/billeder/          images, copied from intern's library
+~/public_html/billeder/          images, copied from intern's library, and their WebP variants
+                                 (`<sha16>/_<width>w.webp`), made here; both are cache
 ~/public_html/…                  the rendered pages: index.html, <path>/index.html, 404.html, …
 ```
 
@@ -392,6 +393,9 @@ stays down until a release with a newer version of it (CI tests the next Python,
 kept releases share them as hard links while their `requirements.lock` is the same, so three
 releases usually take about 50 MB, at most about 150 MB, plus about 50 MB while an install runs.
 Interrupted installs leave folders named `.tmp-*` and `~/gahk_web/tmp`; the next update deletes them.
+The images take their size twice: the blob in `~/gahk_web/state/images` (hard-linked into
+`~/public_html/billeder` where hard links work) and the WebP variants beside it, which add about as
+much again (the old site's 66 pictures: 18 MB of originals, 20 MB of variants).
 
 **Rollback.** Add a pin to `~/gahk_web/config.ini` with the file manager:
 
@@ -452,6 +456,7 @@ them.
 | The update says `failed: pip install: ERROR: THESE PACKAGES DO NOT MATCH THE HASHES …` | A downloaded file is not the one the release names (a broken download, or something between the webhost and PyPI). It is refused; the next nudge tries again. If it persists, find out why before anything else. |
 | Every page answers *"Siden opdateres"* and `/api/health` says `the release's packages are for …` | Hetzner upgraded python. Send `POST /api/update` (or press **Opdatér gahk.dk nu**); it reinstalls the packages for the new python (section 10). |
 | The update fails with `No space left on device` or `Disk quota exceeded` | The account's disk is full. Each release's packages take about 50 MB (section 10); delete old files in `~/www_logs` or images no longer used, then update again. |
+| Pages show a picture's original (no `srcset`) | Its WebP variants are not made yet (a big first publish: the visit beacon, the nightly rebuild and the next update make the rest), or it gets none (GIF, animation, unreadable): the `images` table's `variant_note` says which. Pages are re-rendered when they are made. |
 | The update says `an update is already running` | Another update holds the lock; it is released when that run ends. |
 | The update says `failed: cannot take the update lock: …` | The file system refuses the lock on `~/gahk_web/var/update.lock` (permissions, or no lock support). No update installs until that is fixed. |
 | The update says `the new .htaccess breaks the site` | Apache rejected the release's `.htaccess` (a syntax error, or a directive Hetzner does not allow), so the updater put the previous one back. Fix `public_html/.htaccess` in the repo; the next release installs. |
@@ -490,3 +495,6 @@ the home is `/usr/home/<login>` with `public_html` directly under it.
     on. In tests an install takes a few seconds, plus the pip download on the first install.
 12. One Python process per request is fast enough. Pages are static, so only API calls, forms,
     beacons, 404s and redirects start Python.
+13. A CGI process may use the memory Pillow needs for the WebP variants: about 50 MB above the
+    process for a 2400 px picture (what intern sends), about 200 MB for a 10 MP one. If Hetzner
+    kills it, the image gets no variants after three tries and pages show its original.

@@ -38,6 +38,23 @@ intern or its storage is down.
 - An unknown address gets the site's own 404 page, with the menu. Before intern has published
   anything, every page says *"Siden opdateres"* (503).
 
+## Pictures
+
+- Every picture on a page is shown in a size that fits the screen: gahk.dk makes smaller copies of
+  each photo (480, 960, 1600 and 2400 px wide, never larger than the photo itself) in the WebP
+  format, and the browser picks the smallest one that is sharp on its screen. A phone loads a
+  fraction of what the full photo weighs.
+- The copies carry no hidden information from the camera: no GPS position, no camera details, no
+  colour profile (the colours are converted instead). Photos taken on their side are shown upright.
+  Transparent PNGs stay transparent.
+- Pictures further down a page load only when the visitor scrolls near them; the first picture on
+  the front page and the big picture at the top load at once.
+- The page keeps its layout: a picture takes the size the editor gave it, and its space is reserved
+  before it has loaded.
+- GIFs, animations and files that cannot be read are shown as they are. So are new pictures for the
+  few minutes until their copies are ready.
+- The original picture keeps its address, so old links to it keep working.
+
 ## Speed and caching
 
 - Pages, pictures and the stylesheet are plain files that the web server sends directly. Only forms,
@@ -69,3 +86,14 @@ intern or its storage is down.
   when published; the site's code holds only the logo, icons and fonts. The old pictures were moved
   into the library once, and their old addresses redirect.
 - **No trailing-slash redirects.** The old site served both forms, and links to both exist.
+- **Smaller copies are made on the webhost, not on intern.** They are cache: gahk.dk can make them
+  again from the picture it already has, and intern needs no knowledge of how the site shows
+  pictures. They are made when intern sends a picture, one picture per request, so even the first
+  publish with every old picture stays within a web request; anything left over is made a few
+  seconds at a time afterwards.
+- **WebP only, quality 80, four widths.** Every browser in use shows WebP, and four steps cover
+  phones to large high-resolution screens. The original is no longer linked from pages, so nothing
+  of what the camera wrote reaches a visitor, even if a picture slipped through intern unstripped.
+- **Texts are cleaned on gahk.dk too.** intern removes scripts and the like before it saves a text;
+  gahk.dk removes them again, with exactly the same rules, before it shows one. Nothing an editor
+  can do on intern is lost by it.

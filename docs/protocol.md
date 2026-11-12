@@ -96,7 +96,9 @@ gahk.dk does not have.
 
 Body: the image's raw bytes, with `Content-Type` set to `image/jpeg`, `image/png`, `image/gif` or
 `image/webp`. → `204`. It answers `400` if the bytes do not hash to `<sha256>`, are over 15 MB, or
-have another type.
+have another type. Before answering, gahk.dk makes the image's responsive WebP variants (a fraction
+of a second for a picture of 2400 px; see the snapshot's images below), so intern uploads one image
+per request.
 
 ### POST /api/publish
 
@@ -219,6 +221,10 @@ when no release is installed yet (bootstrap) or the active one is broken.
     gif, webp) and size (≤ 15 MB). Page and default backgrounds must be `/billeder/` URLs listed
     there.
   - These URLs are immutable. gahk.dk serves them with a one-year cache.
+  - gahk.dk adds WebP variants of each JPEG, PNG and WebP image next to it, as
+    `/billeder/<sha16>/_<width>w.webp`, and its pages link those instead of the original. A name
+    starting with `_` never matches an image name above, so the two cannot collide. The original
+    stays at its URL. This changes nothing intern sends.
 - **`legacy_images`** maps old public image URLs (`/static/legacy/image/<rest>`) to their
   `/billeder/` URL. gahk.dk answers `/static/legacy/image/<rest>` and `/public/image/<rest>` with a
   301 to the new URL.
