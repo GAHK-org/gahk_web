@@ -57,7 +57,7 @@ def test_sanitising_is_a_fixed_point() -> None:
 @pytest.mark.parametrize(
     ("dirty", "clean"),
     [
-        # intern's own sanitiser tests (gahk_intern app/tests/test_hjemmeside_services.py).
+        # intern's own sanitiser tests (gahk_intern app/tests/test_cms_services.py).
         (
             '<p>Hej</p><script>alert(1)</script><a href="javascript:x()">x</a>',
             '<p>Hej</p><a rel="noopener noreferrer">x</a>',
