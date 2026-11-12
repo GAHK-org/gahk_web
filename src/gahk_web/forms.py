@@ -1,7 +1,9 @@
 """The two optagelse forms: request a tour (rundvisning) and apply for a sublet (fremleje).
 
 The fields, labels, limits and choices mirror intern's admissions forms and Application model exactly,
-because intern pulls each submission from the outbox and validates it again as a form post. A valid
+because intern pulls each submission from the outbox and validates it again as a form post. Only the
+heard_about_us values differ: the outbox carries English codes, which intern maps to the values it
+stores (docs/protocol.md, GET /api/outbox). A valid
 submission is stored here (the applications outbox) and answered with a redirect to the thank-you
 page; an invalid one gets the form back with the errors and the values, status 400.
 
@@ -74,13 +76,13 @@ class Field:
 GENDER_CHOICES = (("male", "Mand"), ("female", "Kvinde"), ("other", "Andet"))
 HEARD_CHOICES = (
     ("", "— Vælg —"),
-    ("sociale medier", "På sociale medier (Facebook eller Instagram)"),
-    ("hjemmeside", "På en hjemmeside"),
-    ("beboere", "Fra beboere der fortalte om kollegiet"),
-    ("avis", "Annonce i avis"),
-    ("anbefaling", "Anbefalet af en jeg kender"),
-    ("plakat", "Set en plakat"),
-    ("selv", "Selv fundet frem til det"),
+    ("social_media", "På sociale medier (Facebook eller Instagram)"),
+    ("website", "På en hjemmeside"),
+    ("residents", "Fra beboere der fortalte om kollegiet"),
+    ("newspaper", "Annonce i avis"),
+    ("recommendation", "Anbefalet af en jeg kender"),
+    ("poster", "Set en plakat"),
+    ("self", "Selv fundet frem til det"),
 )
 
 _FULL_NAME = Field("full_name", "Fulde navn", "text", required=True, max_length=255)

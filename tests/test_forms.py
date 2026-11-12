@@ -1,5 +1,7 @@
 import io
 import json
+import re
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
@@ -21,7 +23,7 @@ VALID = {
     "year_left": "3",
     "university": "DTU",
     "field_of_study": "Byggeteknologi",
-    "heard_about_us": "beboere",
+    "heard_about_us": "residents",
     "motivation": "Jeg vil gerne bo i et fællesskab.",
     "website": "",
 }
@@ -41,7 +43,7 @@ def test_form_pages_render_the_fields(client: Client, cfg: Config) -> None:
     assert '<form method="post" action="/optagelse/ansoeg"' in html
     assert '<label for="id_study_year">Antal år studeret</label>' in html
     assert 'name="motivation" id="id_motivation" rows="5" maxlength="500"' in html
-    assert '<option value="sociale medier">På sociale medier (Facebook eller Instagram)</option>' in html
+    assert '<option value="social_media">På sociale medier (Facebook eller Instagram)</option>' in html
     assert 'type="hidden" name="website"' in html
     assert "Udfyld formularen for at anmode om en rundvisning." in html
     assert 'href="/optagelse/"' in html  # "Før du søger" points at the optagelse page
@@ -90,6 +92,23 @@ def test_missing_and_invalid_fields_rerender_with_values(client: Client, con: Se
     assert 'value="&lt;b&gt;22&lt;/b&gt;"' in result.text
     assert 'value="ikke-en-mail"' in result.text
     assert applications(con) == []
+
+
+def test_heard_about_us_codes_are_the_protocols() -> None:
+    """Every answer is an English code from docs/protocol.md's table, which maps each one to what
+    intern stores; the table lists no code the form lacks."""
+    table = (Path(__file__).parents[1] / "docs" / "protocol.md").read_text(encoding="utf-8")
+    documented = dict(re.findall(r"^  \| `([a-z_]+)` +\| `([^`]+)` +\|$", table, re.MULTILINE))
+    codes = [code for code, _label in forms.HEARD_CHOICES if code]
+    assert codes == ["social_media", "website", "residents", "newspaper", "recommendation", "poster", "self"]
+    assert list(documented) == codes
+    assert len(set(documented.values())) == len(codes)  # one stored value per code
+
+
+def test_heard_about_us_refuses_the_stored_values() -> None:
+    """intern's stored Danish values are not codes: the form takes only the codes."""
+    _cleaned, errors = forms.validate(forms.TOUR, VALID | {"heard_about_us": "beboere"})
+    assert errors == {"heard_about_us": forms.INVALID_CHOICE}
 
 
 def test_motivation_of_exactly_500_is_fine() -> None:

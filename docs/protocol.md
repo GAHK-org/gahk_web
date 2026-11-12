@@ -154,6 +154,19 @@ it renders as an ordinary page and leaves the front page alone. Previews are nev
   `heard_about_us`, `motivation`. A `tour` adds `study_year`, `year_left`, `university` and
   `field_of_study`; a `sublet` adds `occupation`. intern stores a `tour` as its application type
   `rundvisning` and a `sublet` as `fremleje`, and refuses any other kind.
+- `heard_about_us` is one of the codes below. The form shows a Danish label for each; intern stores
+  the value it has always stored for that answer, and refuses any other code.
+
+  | Code             | intern stores    |
+  | ---------------- | ---------------- |
+  | `social_media`   | `sociale medier` |
+  | `website`        | `hjemmeside`     |
+  | `residents`      | `beboere`        |
+  | `newspaper`      | `avis`           |
+  | `recommendation` | `anbefaling`     |
+  | `poster`         | `plakat`         |
+  | `self`           | `selv`           |
+
 - `visits`: every day not yet acknowledged, today included, though today is still counting. `path`
   is the page path without slashes (`""` is the front page), and `"*"` is the whole site that day.
   `visitors` are unique per day.

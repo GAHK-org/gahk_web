@@ -964,7 +964,7 @@ manifest_url = {MANIFEST_URL}
             "email": "ada@example.org",
             "gender": "female",
             "age": "24",
-            "heard_about_us": "hjemmeside",
+            "heard_about_us": "website",
             "motivation": "Fællesskabet",
         }
         body = "&".join(f"{name}={quote(value)}" for name, value in fields.items()).encode()
@@ -985,7 +985,10 @@ manifest_url = {MANIFEST_URL}
         expect(outbox.status == 200, outbox.text)
         applications = outbox.json()["applications"]
         expect(
-            len(applications) == 1 and applications[0]["fields"]["full_name"] == "Ada Lovelace",
+            len(applications) == 1
+            and applications[0]["kind"] == "tour"
+            and applications[0]["fields"]["full_name"] == "Ada Lovelace"
+            and applications[0]["fields"]["heard_about_us"] == "website",
             f"outbox applications: {applications}",
         )
         visits = {(visit["path"], visit["views"]) for visit in outbox.json()["visits"]}
