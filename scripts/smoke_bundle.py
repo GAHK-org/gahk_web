@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Smoke-test a built bundle the way the webhost will use it: python scripts/smoke_bundle.py
 
-    --python 3.11 --python 3.13   interpreters to test with (versions uv can find, or paths)
+    --python 3.13 --python 3.14   interpreters to test with (versions uv can find, or paths)
     --database postgres://...     also do a full bootstrap install against this (scratch!) database
 
 For each python it unpacks dist/gahk_web-<sha>.tar.gz into a temporary folder and runs
@@ -275,7 +275,7 @@ def main(argv: list[str]) -> int:
     if hashlib.sha256(bundle.read_bytes()).hexdigest() != manifest["sha256"]:
         raise SmokeError("the bundle does not match manifest.json")
     updater = load_updater(dist / "updater.py")
-    for version in args.python or ["3.11"]:
+    for version in args.python or ["3.13"]:
         python = find_python(version)
         print(f"{python}:")
         with tempfile.TemporaryDirectory(prefix="gahk_web-smoke-") as tmp:

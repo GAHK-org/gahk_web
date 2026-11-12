@@ -482,14 +482,14 @@ def test_nudge_answers_before_a_slow_update_ends(home: Path, dist: Path) -> None
 
 def test_manifest_validation() -> None:
     good = {"version": "a" * 40, "bundle": f"gahk_web-{'a' * 40}.tar.gz", "sha256": "b" * 64, "size": 10}
-    assert updater.parse_manifest(json.dumps(good).encode()).python == ">=3.11"
+    assert updater.parse_manifest(json.dumps(good).encode()).python == ">=3.13"
     for bad in (
         {**good, "version": "abc"},
         {**good, "bundle": "../evil.tar.gz"},
         {**good, "sha256": "xyz"},
         {**good, "size": updater.BUNDLE_MAX_BYTES + 1},
         {**good, "size": True},
-        {**good, "python": "3.11"},
+        {**good, "python": "3.13"},
     ):
         with pytest.raises(updater.UpdateError):
             updater.parse_manifest(json.dumps(bad).encode())

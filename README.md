@@ -14,10 +14,9 @@ intern), optagelsesformularerne, besøgstælleren, kalender-feeds og omdirigerin
 Ansøgninger og besøgstal ligger kun på webhotellet, indtil intern henter dem (hvert andet minut).
 Webhotellet gemmer altså intet permanent, og det har hverken adgang til interns database eller til S3.
 
-Siden kører på Hetzner Webhosting (Apache med CGI, Python 3.11 – 3.13 efter Hetzners opdatering i
-2026). Webhotellet opdaterer sig selv: når intern beder om det (hvert kvarter, eller med knappen
-*Opdatér gahk.dk nu*), henter det den nyeste bundle, som CI har lagt på GitHub-releasen `production`.
-Der bruges ikke noget cron-job. Opsætning og drift er beskrevet i [DEPLOY.md](DEPLOY.md), kontrakten
+Siden kører på Hetzner Webhosting (Apache med CGI og systemets Python 3.13). Webhotellet opdaterer
+sig selv: når intern beder om det (hvert kvarter, eller med knappen *Opdatér gahk.dk nu*), henter det
+den nyeste bundle, som CI har lagt på GitHub-releasen `production`. Der bruges ikke noget cron-job. Opsætning og drift er beskrevet i [DEPLOY.md](DEPLOY.md), kontrakten
 med intern i [docs/protocol.md](docs/protocol.md) og opførslen i [spec/features/](spec/features/).
 
 ## Kom i gang (udvikling)
@@ -41,7 +40,7 @@ skrev ud (nøglen står også i `local/config.ini`), og gem en side under *Hjemm
 ```sh
 task db:create   # opret test-databasen (én gang)
 task test        # kør testsuiten mod Postgres, som CI
-task bundle      # byg release-bundlen i dist/ og røgtest den på Python 3.11 og 3.13
+task bundle      # byg release-bundlen i dist/ og røgtest den på Python 3.13 og 3.14
 ```
 
 Testene genskaber skemaet i test-databasen (`gahk_web_test`) ved hver kørsel.
@@ -60,7 +59,7 @@ task hooks        # installér prek git pre-commit hooks (kør én gang)
 `task hooks` installerer [prek](https://github.com/j178/prek) (en hurtig, pre-commit-kompatibel
 runner) via `.pre-commit-config.yaml`. Derefter kører **ruff** (check + format) og **mypy** automatisk
 ved hvert commit. Kør manuelt på alt med `uv run prek run --all-files`. De samme tjek håndhæves i CI
-(`.github/workflows/ci.yml`): `lint`, `typecheck`, `test` (Python 3.11 med PostgreSQL 15 og 3.13 med
+(`.github/workflows/ci.yml`): `lint`, `typecheck`, `test` (Python 3.13 med PostgreSQL 15 og 3.14 med
 17), `bundle` og `security`. Et merge til `main` udgiver derefter en ny bundle (`release`).
 
 Afhængighederne, som siden kører med, skal være ren Python: de pakkes ind i bundlen uden kompilerede

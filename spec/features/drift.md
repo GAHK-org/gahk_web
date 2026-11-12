@@ -54,6 +54,6 @@ The runbook is DEPLOY.md.
   the shared key, an update request can only make the webhost fetch the official release, never
   install code of its own.
 - **Self-test on the real host before switching.** The webhost's Python changes with Hetzner's
-  upgrades (3.11 to 3.13 in 2026), so each release proves it runs on the Python it lands on.
+  upgrades, so each release proves it runs on the Python it lands on.
 - **Pure-Python dependencies only.** Nothing compiled, so an upgrade of the host's Python cannot
   break a release that is already installed.

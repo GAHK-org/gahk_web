@@ -12,13 +12,13 @@ import ssl
 from collections.abc import Iterator
 from contextlib import contextmanager
 from importlib import resources
-from typing import Any, TypeAlias
+from typing import Any
 
 import pg8000.native
 
 from .config import DatabaseConfig
 
-Connection: TypeAlias = pg8000.native.Connection
+type Connection = pg8000.native.Connection
 Row = dict[str, Any]
 
 # Advisory lock keys (pg_advisory_lock takes a bigint). "gahk" in hex, then a purpose.

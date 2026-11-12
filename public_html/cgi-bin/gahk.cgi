@@ -14,7 +14,7 @@ POST /api/update is handled here, before any release is imported: the stub check
 signature with the [sync] key from config.ini and runs the self-updater. That is how the first
 release gets installed (bootstrap), and how a broken release gets replaced.
 
-Standard library only, and Python 3.11 compatible (the webhost's python3; 3.13 after its update).
+Standard library only: it must work before any release is installed.
 """
 
 import configparser

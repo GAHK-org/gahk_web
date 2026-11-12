@@ -2,7 +2,7 @@
 """Self-test of this gahk_web release: python3 -I selftest.py
 
 The updater runs it with the webhost's python3 before it switches to the release, and CI runs it on
-Python 3.11 and 3.13 for every bundle. Only the release's own src/ and vendor/ are on sys.path (any
+Python 3.13 and 3.14 for every bundle. Only the release's own src/ and vendor/ are on sys.path (any
 site-packages or dist-packages folder is removed), so it proves the release needs nothing installed.
 Exit status 0 means the release may go live.
 """

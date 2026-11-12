@@ -3,7 +3,7 @@ version: '3'
 # Dev task runner for gahk_web, the public site gahk.dk.
 #   task dev       -> the development server at http://127.0.0.1:8810 (it emulates .htaccess)
 #   task test      -> the test suite (against PostgreSQL; `task db:create` once first)
-#   task bundle    -> build the release bundle into dist/ and smoke-test it on Python 3.11 and 3.13
+#   task bundle    -> build the release bundle into dist/ and smoke-test it on Python 3.13 and 3.14
 #
 # Any PostgreSQL will do; the default is gahk_intern's dev container (localhost:5432, user gahk,
 # password gahk). Point elsewhere with: task dev PG=postgres://user:pass@host:port
@@ -78,11 +78,11 @@ tasks:
     cmds: ['uv run mypy']
 
   bundle:
-    desc: Build the release bundle into dist/ and smoke-test it on Python 3.11 and 3.13 (add -- --database URL for the install test)
+    desc: Build the release bundle into dist/ and smoke-test it on Python 3.13 and 3.14 (add -- --database URL for the install test)
     cmds:
-      - 'uv python install 3.11 3.13'
+      - 'uv python install 3.13 3.14'
       - 'uv run python scripts/build_bundle.py'
-      - 'uv run python scripts/smoke_bundle.py --python 3.11 --python 3.13 {{.CLI_ARGS}}'
+      - 'uv run python scripts/smoke_bundle.py --python 3.13 --python 3.14 {{.CLI_ARGS}}'
 
   hooks:
     desc: Install the prek git pre-commit hooks (ruff + mypy run on commit)

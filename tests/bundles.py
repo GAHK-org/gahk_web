@@ -83,7 +83,7 @@ def make_bundle(
         "sha256": hashlib.sha256(data).hexdigest(),
         "size": len(data),
         "built_at": "2026-11-12T00:00:00+00:00",
-        "python": ">=3.11",
+        "python": ">=3.13",
     }
     (dist / manifest["bundle"]).write_bytes(data)
     (dist / f"manifest-{sha}.json").write_text(json.dumps(manifest))

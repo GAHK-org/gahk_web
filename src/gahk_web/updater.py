@@ -86,7 +86,7 @@ MIGRATE_TIMEOUT = 300
 RENDER_TIMEOUT = 300
 NUDGE_WAIT = 45  # how long the HTTP request waits for the update before it answers
 LOG_MAX_BYTES = 1024 * 1024
-MIN_PYTHON = (3, 11)
+MIN_PYTHON = (3, 13)
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -286,7 +286,7 @@ class Manifest:
     bundle: str
     sha256: str
     size: int
-    python: str = ">=3.11"
+    python: str = ">=3.13"
 
 
 def parse_manifest(data: bytes) -> Manifest:
@@ -297,7 +297,7 @@ def parse_manifest(data: bytes) -> Manifest:
     if not isinstance(raw, dict):
         raise UpdateError("the manifest is not a JSON object")
     version, bundle, sha256, size = raw.get("version"), raw.get("bundle"), raw.get("sha256"), raw.get("size")
-    python = raw.get("python", ">=3.11")
+    python = raw.get("python", ">=3.13")
     if not isinstance(version, str) or not SHA_RE.match(version):
         raise UpdateError("the manifest's version is not a full git sha")
     if bundle != f"gahk_web-{version}.tar.gz":
@@ -307,12 +307,12 @@ def parse_manifest(data: bytes) -> Manifest:
     if not isinstance(size, int) or isinstance(size, bool) or not 0 < size <= BUNDLE_MAX_BYTES:
         raise UpdateError(f"the manifest's bundle size is missing or over {BUNDLE_MAX_BYTES} bytes")
     if not isinstance(python, str) or not PYTHON_SPEC_RE.match(python):
-        raise UpdateError("the manifest's python requirement is not like >=3.11")
+        raise UpdateError("the manifest's python requirement is not like >=3.13")
     return Manifest(version, bundle, sha256, size, python)
 
 
 def python_ok(spec: str, version: tuple[int, ...] = tuple(sys.version_info[:2])) -> bool:
-    """Whether this python satisfies the manifest's requirement (">=3.11")."""
+    """Whether this python satisfies the manifest's requirement (">=3.13")."""
     match = PYTHON_SPEC_RE.match(spec)
     if not match:
         return False

@@ -17,7 +17,7 @@ The bundle, with no absolute paths, no links and fixed owners, dates and modes:
     public_html/cgi-bin/gahk.cgi
     public_html/static/             site assets: css/js with content-hashed names, the rest as they are
 
-Dependencies are installed for CPython 3.11 (the webhost's oldest python), then every compiled
+Dependencies are installed for CPython 3.13 (the webhost's python), then every compiled
 extension is deleted: MarkupSafe falls back to its pure-Python code, and a package that cannot is a
 build error. Finally the bundle's own selftest.py runs on the staged tree. Needs uv on PATH.
 """
@@ -42,7 +42,7 @@ PACKAGE = ROOT / "src" / "gahk_web"
 HASHED_SUFFIXES = (".css", ".js")
 COMPILED_SUFFIXES = (".so", ".pyd", ".dylib")
 SKIP_NAMES = ("__pycache__", ".DS_Store")
-PYTHON_REQUIREMENT = ">=3.11"
+PYTHON_REQUIREMENT = ">=3.13"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -223,7 +223,7 @@ def main(argv: list[str]) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--out", type=Path, default=ROOT / "dist", help="output folder (default dist/)")
-    parser.add_argument("--python", default="3.11", help="python to vendor for and self-test with")
+    parser.add_argument("--python", default="3.13", help="python to vendor for and self-test with")
     args = parser.parse_args(argv)
 
     version, committed_at = git_version()

@@ -5,10 +5,10 @@ on:
     branches: [main]
   pull_request:
 
-# The webhost runs the system python3 as CGI: 3.11 today, 3.13 after Hetzner's 2026 OS update. The
-# lint and type jobs use the oldest; `test` and `bundle` run on both.
+# The webhost runs the system python3 as CGI: 3.13 today (verified 2026-11-12). The lint and type
+# jobs use it; `test` and `bundle` also run on 3.14, the next Python a Hetzner upgrade would bring.
 env:
-  UV_PYTHON: "3.11"
+  UV_PYTHON: "3.13"
 
 jobs:
   lint:
@@ -28,8 +28,8 @@ jobs:
         with: { enable-cache: true }
       - run: uv run mypy
 
-  # Hetzner's PostgreSQL is 15 today and 17 after the same update; each pairing is tested as it
-  # will run (old python with old database, new with new).
+  # Hetzner's PostgreSQL is 15 today and 17 after its next update; each pairing is tested as it
+  # will run (today's python with today's database, the next with the next).
   test:
     name: test (Python ${{ matrix.python }}, PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest
@@ -37,8 +37,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { python: "3.11", postgres: "15" }
-          - { python: "3.13", postgres: "17" }
+          - { python: "3.13", postgres: "15" }
+          - { python: "3.14", postgres: "17" }
     services:
       postgres:
         image: postgres:${{ matrix.postgres }}
@@ -57,7 +57,7 @@ jobs:
       - run: uv run pytest -q
 
   # Builds the release bundle and tries it the way the webhost will: both self-tests with only the
-  # bundle on sys.path on 3.11 and 3.13, then a first install through the CGI stub from the three
+  # bundle on sys.path on 3.13 and 3.14, then a first install through the CGI stub from the three
   # bootstrap files, a publish, and an update that must change nothing (scripts/smoke_bundle.py).
   bundle:
     runs-on: ubuntu-latest
@@ -73,10 +73,10 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with: { enable-cache: true }
-      - run: uv python install 3.11 3.13
+      - run: uv python install 3.13 3.14
       - run: uv run python scripts/build_bundle.py
       - run: >-
-          uv run python scripts/smoke_bundle.py --python 3.11 --python 3.13
+          uv run python scripts/smoke_bundle.py --python 3.13 --python 3.14
           --database postgres://gahk:gahk@localhost:5432/gahk_web_smoke
       - name: Bundle size
         run: |
@@ -130,9 +130,9 @@ jobs:
       - if: steps.tip.outputs.result == 'true'
         name: Build and self-test the bundle
         run: |
-          uv python install 3.11 3.13
+          uv python install 3.13 3.14
           uv run python scripts/build_bundle.py
-          uv run python scripts/smoke_bundle.py --python 3.11 --python 3.13
+          uv run python scripts/smoke_bundle.py --python 3.13 --python 3.14
 
       - if: steps.tip.outputs.result == 'true'
         name: Create the release if it is missing

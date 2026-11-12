@@ -4,9 +4,9 @@ version = "0.1.0"
 description = "gahk.dk: the public site of G. A. Hagemanns Kollegium, rendered from intern.gahk.dk's snapshot"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 # Runtime dependencies must stay pure Python: the webhost runs plain CGI with the system python3
-# (3.11 today, 3.13 after Hetzner's 2026 update) and the bundle vendors them.
+# and the bundle vendors them.
 dependencies = [
     "jinja2>=3.1.4",
     "markupsafe>=2.1",
@@ -31,7 +31,7 @@ testpaths = ["tests"]
 addopts = "-ra"
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 mypy_path = "src"
 # The package, the build scripts, the release's selftest.py and the CGI stub (Python without .py).
 files = ["src/gahk_web", "scripts", "bundle", "public_html/cgi-bin/gahk.cgi"]

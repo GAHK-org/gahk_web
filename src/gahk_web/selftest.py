@@ -2,7 +2,7 @@
 
 The release's selftest.py puts only <release>/src and <release>/vendor on sys.path and calls main().
 The updater runs it with the webhost's python3 before it switches to a release, and CI runs it on
-Python 3.11 and 3.13 for every bundle. It needs no database, no config file and no network: it
+Python 3.13 and 3.14 for every bundle. It needs no database, no config file and no network: it
 imports every module, checks that the vendored dependencies are pure Python, renders a sample
 snapshot with the release's templates into memory, and checks the static files the pages link to.
 """
@@ -19,7 +19,7 @@ from typing import Any
 
 import gahk_web
 
-MIN_PYTHON = (3, 11)
+MIN_PYTHON = (3, 13)
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 COMPILED_SUFFIXES = (".so", ".pyd", ".dylib")
 DEPENDENCIES = ("jinja2", "markupsafe", "pg8000")
@@ -70,7 +70,7 @@ def sample_snapshot() -> dict[str, Any]:
 
 def check_python() -> None:
     if sys.version_info < MIN_PYTHON:
-        raise AssertionError(f"Python {sys.version.split()[0]} is older than 3.11")
+        raise AssertionError(f"Python {sys.version.split()[0]} is older than {MIN_PYTHON[0]}.{MIN_PYTHON[1]}")
 
 
 def check_imports() -> None:
