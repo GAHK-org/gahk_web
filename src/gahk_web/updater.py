@@ -26,7 +26,8 @@ run(), holding an exclusive lock:
      4. unpack it safely into releases/<sha> (no absolute paths, no "..", no links or devices)
      5. run the release's selftest.py with this python, in a subprocess
      6. apply the database migrations with the NEW code
-     7. install public_html/static (new files only), cgi-bin/gahk.cgi and .htaccess
+     7. install public_html/static (new files only), cgi-bin/gahk.cgi and .htaccess; if the site then
+        answers 5xx and the previous .htaccess cures that, put it back and fail
      8. switch CURRENT (written atomically)          <- the release goes live here
      9. take the release's bin/updater.py if it passes its own --selftest
     10. re-render the site with the new templates
@@ -69,6 +70,7 @@ from typing import IO, Any
 from urllib.parse import urljoin, urlsplit
 
 DEFAULT_MANIFEST_URL = "https://github.com/GAHK-org/gahk_web/releases/download/production/manifest.json"
+DEFAULT_BASE_URL = "https://gahk.dk"
 
 KEEP_RELEASES = 3
 MANIFEST_MAX_BYTES = 64 * 1024
@@ -76,6 +78,7 @@ BUNDLE_MAX_BYTES = 50 * 1024 * 1024
 UNPACKED_MAX_BYTES = 300 * 1024 * 1024
 MAX_MEMBERS = 20000
 HTTP_TIMEOUT = 30  # seconds per network operation
+SITE_CHECK_TIMEOUT = 15  # seconds for the request to the site's own /api/health
 DOWNLOAD_DEADLINE = 300  # seconds for a whole download
 SELFTEST_TIMEOUT = 120
 MIGRATE_TIMEOUT = 300
@@ -116,6 +119,7 @@ class Layout:
     state_dir: Path
     manifest_url: str = DEFAULT_MANIFEST_URL
     pin: str = ""
+    base_url: str = DEFAULT_BASE_URL
 
     @property
     def app(self) -> Path:
@@ -163,7 +167,7 @@ def config_path(home: Path) -> Path:
 
 
 def load_layout(home: Path | str | None = None) -> Layout:
-    """Paths from config.ini ([paths], [update]); defaults when the file or a key is missing."""
+    """Paths from config.ini ([paths], [update], [site]); defaults when the file or a key is missing."""
     root = home_dir(home)
     config = config_path(root)
     parser = configparser.ConfigParser(interpolation=None)
@@ -180,6 +184,7 @@ def load_layout(home: Path | str | None = None) -> Layout:
         state_dir=Path(get("paths", "state_dir") or root / "gahk_web" / "state"),
         manifest_url=get("update", "manifest_url") or DEFAULT_MANIFEST_URL,
         pin=get("update", "pin").lower(),
+        base_url=(get("site", "base_url") or DEFAULT_BASE_URL).rstrip("/"),
     )
 
 
@@ -508,6 +513,46 @@ def install_public(layout: Layout, release: Path) -> None:
     write_atomic(layout.public_html / ".htaccess", (source / ".htaccess").read_bytes())
 
 
+def site_status(layout: Layout) -> int | None:
+    """The HTTP status of the site's own GET /api/health, or None when it cannot be reached."""
+    url = layout.base_url + "/api/health"
+    if urlsplit(url).scheme not in ("http", "https"):
+        return None
+    request = urllib.request.Request(url, headers={"User-Agent": "gahk_web-updater"})  # noqa: S310
+    try:
+        with urllib.request.urlopen(request, timeout=SITE_CHECK_TIMEOUT) as response:  # noqa: S310
+            return int(response.status)
+    except urllib.error.HTTPError as exc:
+        return exc.code
+    except (urllib.error.URLError, OSError) as exc:
+        log(layout, f"site check: {url}: {exc}")
+        return None
+
+
+def check_htaccess(layout: Layout, previous: bytes | None) -> None:
+    """After install_public: when the site answers 5xx and the previous .htaccess cures that, put the
+    previous one back and fail the update, so the CGI stub (and with it POST /api/update) keeps working.
+
+    Apache answers 500 for every URL under an .htaccess it rejects. A 5xx that the previous file does
+    not cure (the database is down, say) is not the .htaccess's fault, so the new one stays. Skipped
+    on the first install, where the operator is watching, and when the file did not change."""
+    target = layout.public_html / ".htaccess"
+    new = target.read_bytes()
+    if previous is None or previous == new:
+        return
+    status = site_status(layout)
+    if status is None or status < 500:
+        return
+    write_atomic(target, previous)
+    restored = site_status(layout)
+    if restored is not None and restored < 500:
+        raise UpdateError(
+            f"the new .htaccess breaks the site (HTTP {status}); put back the previous .htaccess"
+        )
+    log(layout, f"site check: HTTP {status} with the new .htaccess and {restored} with the old one")
+    write_atomic(target, new)
+
+
 def prune_static(layout: Layout, keep: set[str]) -> list[str]:
     """Delete content-hashed static files that no kept release ships. Unhashed ones are only replaced."""
     root = layout.public_html / "static"
@@ -642,7 +687,12 @@ def _install(layout: Layout, target: str, manifest: Manifest | None, current: st
         release = prepare_release(layout, manifest)
     run_step(layout, "self-test", [str(release / "selftest.py")], SELFTEST_TIMEOUT, cwd=release)
     run_release(layout, release, "migrations", "migrate", MIGRATE_TIMEOUT)
+    try:
+        previous_htaccess: bytes | None = (layout.public_html / ".htaccess").read_bytes()
+    except FileNotFoundError:
+        previous_htaccess = None
     install_public(layout, release)
+    check_htaccess(layout, previous_htaccess)
 
     write_atomic(layout.current_file, (target + "\n").encode("ascii"))
     os.utime(release)  # "newest" for prune_releases means most recently installed

@@ -56,6 +56,7 @@ def make_bundle(
     *,
     failing: tuple[str, ...] = (),
     updater_source: str = UPDATER_SOURCE,
+    htaccess: str = "",
     extra: list[tarfile.TarInfo] | None = None,
 ) -> dict[str, Any]:
     """Write dist/gahk_web-<sha>.tar.gz and dist/manifest-<sha>.json; returns the manifest.
@@ -69,7 +70,7 @@ def make_bundle(
         _file(tar, "src/gahk_web/__init__.py", b"")
         _file(tar, "src/gahk_web/__main__.py", FAKE_MAIN.format(version=sha, failing=failing).encode())
         _file(tar, "bin/updater.py", updater_source.encode(), 0o755)
-        _file(tar, "public_html/.htaccess", f"# {sha}\n".encode())
+        _file(tar, "public_html/.htaccess", (htaccess or f"# {sha}\n").encode())
         _file(tar, "public_html/cgi-bin/gahk.cgi", f"#!/usr/bin/env python3\n# {sha}\n".encode(), 0o755)
         _file(tar, f"public_html/static/{css_name(sha)}", f"/* {sha} */".encode())
         _file(tar, "public_html/static/fonts/ubuntu.woff2", b"font")
@@ -94,11 +95,16 @@ def publish(dist: Path, manifest: dict[str, Any]) -> None:
     (dist / "manifest.json").write_text(json.dumps(manifest))
 
 
-def write_config(home: Path, manifest_url: str, key: str, pin: str = "") -> Path:
+# Nothing listens on port 1, so the updater's check of the site after a new .htaccess finds no site
+# (and leaves the .htaccess alone) instead of asking the real gahk.dk.
+NO_SITE = "http://127.0.0.1:1"
+
+
+def write_config(home: Path, manifest_url: str, key: str, pin: str = "", base_url: str = NO_SITE) -> Path:
     config = home / "gahk_web" / "config.ini"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(
-        f"[sync]\nkey = {key}\n\n[update]\nmanifest_url = {manifest_url}\n"
+        f"[sync]\nkey = {key}\n\n[site]\nbase_url = {base_url}\n\n[update]\nmanifest_url = {manifest_url}\n"
         + (f"pin = {pin}\n" if pin else ""),
         encoding="utf-8",
     )

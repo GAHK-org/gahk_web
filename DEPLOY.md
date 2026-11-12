@@ -322,7 +322,9 @@ release. The webhost installs it on intern's next nudge (at most 15 minutes) or 
 2. unpacks it into `releases/<sha>`, refusing absolute paths, `..`, links and devices;
 3. runs the release's `selftest.py` with the webhost's `python3`;
 4. applies database migrations with the new code;
-5. installs the new static files, `cgi-bin/gahk.cgi` and `.htaccess`;
+5. installs the new static files, `cgi-bin/gahk.cgi` and `.htaccess`. When the `.htaccess` changed,
+   it asks `{base_url}/api/health`; if that answers 5xx and the previous `.htaccess` cures it, it puts
+   the previous one back and fails the update;
 6. switches `CURRENT`. Up to this point the old release kept running untouched;
 7. takes the release's `bin/updater.py` if it passes its own self-test, re-renders the site, deletes
    hashed static files that neither this nor the previous release uses, and keeps 3 releases.
@@ -383,6 +385,8 @@ them.
 | The update result says `self-test failed` | The new release does not run on this python. The old one keeps running. See `update.log`. |
 | The update says `an update is already running` | Another update holds the lock; it is released when that run ends. |
 | The update says `failed: cannot take the update lock: …` | The file system refuses the lock on `~/gahk_web/var/update.lock` (permissions, or no lock support). No update installs until that is fixed. |
+| The update says `the new .htaccess breaks the site` | Apache rejected the release's `.htaccess` (a syntax error, or a directive Hetzner does not allow), so the updater put the previous one back. Fix `public_html/.htaccess` in the repo; the next release installs. |
+| The whole site, `/api/update` included, answers 500 right after an update | The new `.htaccess` breaks the site and the check did not catch it (it could not reach the site). Upload the previous release's `htaccess` asset to `~/public_html/.htaccess` by SFTP, then fix it in the repo. |
 | `gahk.cgi` is shown as text, or 500 with "Premature end of script headers" | The CGI mode or permissions (section 4), or see section 13 item 1. |
 
 ## 13. Things to verify on Hetzner

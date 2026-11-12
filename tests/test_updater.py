@@ -362,6 +362,66 @@ def test_downloads_follow_redirects(home: Path, dist: Path, http_dist: str) -> N
     assert current(home) == version(1)
 
 
+class _Site(SimpleHTTPRequestHandler):
+    """Plays Apache for GET /api/health: 500 while public_html/.htaccess holds "Broken", like an
+    .htaccess Apache rejects, and STATUS (as set by the test) otherwise."""
+
+    public_html: Path
+    status = 200
+
+    def do_GET(self) -> None:
+        broken = "Broken" in (self.public_html / ".htaccess").read_text()
+        self.send_response(500 if broken else self.status)
+        self.end_headers()
+
+    def log_message(self, *args: object) -> None:
+        pass
+
+
+@pytest.fixture
+def site(home: Path) -> Iterator[type[_Site]]:
+    handler = type("Site", (_Site,), {"public_html": home / "public_html"})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    manifest_url = (home.parent / "dist").as_uri() + "/manifest.json"
+    write_config(home, manifest_url, KEY, base_url=f"http://127.0.0.1:{server.server_address[1]}")
+    yield handler
+    server.shutdown()
+
+
+def test_an_htaccess_that_breaks_the_site_is_put_back(home: Path, dist: Path, site: type[_Site]) -> None:
+    v1, v2 = version(1), version(2)
+    release(dist, 1)
+    updater.run(home)
+    release(dist, 2, htaccess="Broken\n")
+
+    result = updater.run(home)
+
+    assert result.error is not None and "the new .htaccess breaks the site (HTTP 500)" in result.error
+    assert (home / "public_html" / ".htaccess").read_text() == f"# {v1}\n"
+    assert current(home) == v1  # the old release keeps running
+    assert calls(home)[-1] == f"{v2[:7]} migrate"  # not switched, so not re-rendered
+    assert state(home)["last_result"] == "failed"
+
+
+def test_a_5xx_the_old_htaccess_does_not_cure_keeps_the_new_one(
+    home: Path, dist: Path, site: type[_Site]
+) -> None:
+    """The database is down, say: not the .htaccess's fault, so the update goes through."""
+    v2 = version(2)
+    release(dist, 1)
+    updater.run(home)
+    release(dist, 2)
+    site.status = 503
+
+    result = updater.run(home)
+
+    assert result.updated, result.detail
+    assert current(home) == v2
+    assert (home / "public_html" / ".htaccess").read_text() == f"# {v2}\n"
+
+
 def test_nudge_runs_the_update_in_its_own_process(home: Path, dist: Path) -> None:
     release(dist, 1)
 
