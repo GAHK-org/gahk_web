@@ -1,8 +1,9 @@
 """Daily upkeep without a cron job (the webhost runs none, by decision).
 
-The site's day decides which events are "upcoming". When a request reaches the CGI app (a page view
-beacon, a form, a 404) and the site was last rendered on an earlier Copenhagen day, or by other code,
-it re-renders from the cached snapshot first. A try-lock makes sure only one request does it while
+The site's day decides which events are "upcoming". When a request reaches the app (a page view
+beacon, a form, a 404) and the site was last rendered on an earlier Copenhagen day, or by other code
+(the first request a new release answers), it re-renders from the cached snapshot first. The check
+is a query per request, so it works the same in a FastCGI process that lives for hours. A try-lock makes sure only one request does it while
 the others carry on. intern also sends POST /api/rebuild every night, so the site is right even on a
 day nobody visits it. The same pass purges rate-limit rows older than a day and visitor hashes older
 than two days.

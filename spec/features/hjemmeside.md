@@ -61,7 +61,7 @@ intern or its storage is down.
 ## Speed and caching
 
 - Pages, pictures and the stylesheet are plain files that the web server sends directly. Only forms,
-  the visit count and redirects start a program.
+  the visit count and redirects need a program, which keeps running between requests (see *drift*).
 - Browsers keep a page for a minute, so an edit shows within about a minute of saving it on intern.
 - Pictures and the stylesheet carry a fingerprint in their address, so browsers keep them for a year
   and never see a stale one.
@@ -81,8 +81,9 @@ intern or its storage is down.
 
 ## Decisions
 
-- **Static files, not a CMS on the webhost.** The webhost runs Python only as CGI, a new process per
-  request. Pre-rendering makes the site fast and lets it keep running while intern is down.
+- **Static files, not a CMS on the webhost.** Apache sends pages and pictures as files; Python only
+  answers forms, the visit count, redirects and intern's requests. Pre-rendering makes the site fast
+  and lets it keep running while intern is down.
 - **Editing happens only on intern.** One editor, one place for roles and the audit log. gahk.dk has
   no login of its own.
 - **All pictures are content.** They live in intern's image library and are copied to the webhost

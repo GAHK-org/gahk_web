@@ -22,10 +22,27 @@ The runbook is DEPLOY.md.
 - If any check fails, the running version stays live. The overview shows the error.
 - The switch to a new version is a single step, so visitors never meet half of an update. An update
   that takes long finishes after intern's request has been answered.
+- Right after the switch the update asks the site which version answers. If the new version does
+  not answer within a few seconds and the previous one does, the previous one goes back and the
+  update counts as failed.
 - The Hjemmeside overview shows the version gahk.dk runs, the newest one available, and how the last
   update went.
 - An administrator can hold the site at an earlier version (rollback) with one line in the webhost's
   configuration. The last three versions stay on the webhost, and the last five on GitHub.
+
+## How Python runs
+
+- Forms, the visit count, redirects and intern's requests are answered by a program that keeps
+  running between requests, so they take milliseconds. The web server starts more of it when
+  requests overlap.
+- It restarts by itself after an update, after a change to the webhost's configuration, after 500
+  requests and after an hour. The first request after an update may still get the previous version.
+- Update requests and large uploads (pictures, publications) start a new program each time, so an
+  update can always repair a broken version.
+- When the running version cannot start, those requests get *"Siden opdateres"*, and the program
+  tries again every 30 seconds, without the web server ever giving up on it.
+- An operator can send everything to a new program per request with one line in the webhost's
+  configuration, should the running program misbehave.
 
 ## Independence
 
@@ -47,7 +64,7 @@ The runbook is DEPLOY.md.
 - If the webhost is lost, intern republishes everything automatically within minutes of a new
   install. The only loss is form submissions and visit counts from the last couple of minutes,
   before intern collected them.
-- Bringing it back takes a database, the configuration file, and three files uploaded once. The
+- Bringing it back takes a database, the configuration file, and four files uploaded once. The
   first update installs the rest.
 
 ## Decisions
@@ -69,3 +86,16 @@ The runbook is DEPLOY.md.
   host's Python and the next one before it is published, and the webhost installs them before the
   switch. When PyPI is down, the running version stays live; a release that changes only code reuses
   the packages it already has and needs no PyPI.
+- **A program that keeps running (FastCGI), with a new program per request (CGI) as the rescue
+  channel.** Starting Python, its libraries and a database connection for every form or page view
+  cost more than answering it; the webhost keeps a FastCGI program running for free. Updates stay on
+  CGI, which needs nothing but the standard library, so they work when the running version or
+  FastCGI does not.
+- **Large uploads go through CGI.** The webhost's FastCGI module refuses request bodies over 128 KiB,
+  and that limit cannot be raised from the site.
+- **A restart is a fresh process, never a reload inside one.** A process ends after a response that
+  saw a new version or configuration, so no code or setting of two versions ever mixes.
+- **Flask and flup.** With a program that keeps running, start-up time no longer argues for a
+  hand-written web layer. flup is old but small, pure Python, and works on the webhost's Python and
+  the next one; its one unsafe corner (an error page that shows tracebacks when debugging) is
+  replaced.

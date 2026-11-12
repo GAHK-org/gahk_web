@@ -10,8 +10,8 @@ One file, three places:
 
     src/gahk_web/updater.py         in the repository and in every release
     <release>/bin/updater.py        the same file; each successful update copies it to
-    ~/gahk_web/bin/updater.py       where the cgi-bin stub runs it from. Uploaded once by hand, it is
-                                    also the bootstrap: it installs the very first release.
+    ~/gahk_web/bin/updater.py       where the cgi-bin stub gahk.cgi runs it from. Uploaded once by
+                                    hand, it is also the bootstrap: it installs the first release.
 
 The cgi-bin stub checks the request's signature itself and then calls nudge() from
 ~/gahk_web/bin/updater.py, so an update works before any release is installed and when the active
@@ -1004,7 +1004,7 @@ def save_state(layout: Layout, result: Result) -> None:
 
 
 def _install(layout: Layout, target: str, manifest: Manifest | None, current: str) -> Result:
-    """Steps 3-11 for a version that differs from the running one. Without a manifest, the release
+    """Steps 3-12 for a version that differs from the running one. Without a manifest, the release
     must already be unpacked (a pin back to a release that is still kept)."""
     if manifest is None:
         release = layout.releases / target

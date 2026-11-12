@@ -14,7 +14,9 @@ intern), optagelsesformularerne, besøgstælleren, kalender-feeds og omdirigerin
 Ansøgninger og besøgstal ligger kun på webhotellet, indtil intern henter dem (hvert andet minut).
 Webhotellet gemmer altså intet permanent, og det har hverken adgang til interns database eller til S3.
 
-Siden kører på Hetzner Webhosting (Apache med CGI og systemets Python 3.13). Webhotellet opdaterer
+Siden kører på Hetzner Webhosting (Apache og systemets Python 3.13). Python-delen er en Flask-app, som
+kører i en vedvarende FastCGI-proces (`cgi-bin/gahk.fcgi`); kun opdateringer og store uploads går
+gennem CGI (`cgi-bin/gahk.cgi`), som også er reserveløsningen, hvis FastCGI svigter. Webhotellet opdaterer
 sig selv: når intern beder om det (hvert kvarter, eller med knappen *Opdatér gahk.dk nu*), henter det
 den nyeste bundle, som CI har lagt på GitHub-releasen `production`, og installerer dens
 Python-pakker fra PyPI med pip. Der bruges ikke noget cron-job. Opsætning og drift er beskrevet i [DEPLOY.md](DEPLOY.md), kontrakten
@@ -30,7 +32,9 @@ task dev         # udviklingsserver → http://127.0.0.1:8810
 `task dev` skriver første gang `local/config.ini` med nye hemmeligheder, opretter databaserne og
 kører migreringerne. Den bruger som standard gahk_interns Postgres-container (`localhost:5432`,
 bruger og kodeord `gahk`); brug en anden med `task dev PG=postgres://bruger:kode@vært:port`.
-Udviklingsserveren efterligner `.htaccess` og skriver siderne til `var/public_html`.
+Udviklingsserveren er Werkzeugs med genstart, når en `.py`-fil ændres. Den efterligner `.htaccess`
+(også hvilke forespørgsler der går til FastCGI-processen, og hvilke til CGI) og skriver siderne til
+`var/public_html`.
 
 Indtil der er publiceret indhold, svarer siden "Siden opdateres" (503). Indhold kommer fra en lokal
 intern: sæt `GAHK_WEB_URL` og `GAHK_WEB_KEY` i gahk_interns `app/.env` til de værdier, `task config`
@@ -46,7 +50,7 @@ task bundle      # byg release-bundlen i dist/ og røgtest den på Python 3.13 o
 
 Testene genskaber skemaet i test-databasen (`gahk_web_test`) ved hver kørsel.
 `task bundle -- --database postgres://…/en_smid_vaek_database` prøver også den første installation
-gennem CGI-scriptet, ligesom CI gør. Den sletter alle tabeller i databasen, så brug kun en til formålet.
+gennem CGI-scriptet og forespørgsler til FastCGI-scriptet, ligesom CI gør. Den sletter alle tabeller i databasen, så brug kun en til formålet.
 
 ## Code Quality: lint + typer + pre-commit
 

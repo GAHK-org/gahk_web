@@ -5,7 +5,7 @@ Every page of the site is a pre-rendered file that Apache serves without startin
     index.html                          the front page
     <path>/index.html                   each page (path has one or two segments)
     begivenheder/index.html             news and events
-    optagelse/ansoeg/index.html         the tour form       (POSTs go to the CGI app)
+    optagelse/ansoeg/index.html         the tour form       (POSTs go to the app)
     optagelse/fremlej/index.html        the sublet form
     optagelse/ansoeg/success/index.html the thank-you page
     404.html, 503.html, sitemap.xml, robots.txt, sw.js
