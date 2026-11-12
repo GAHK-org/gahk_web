@@ -679,7 +679,14 @@ manifest_url = {MANIFEST_URL}
         offline = "Looking in links: /wheelhouse" in host.read(f"{APP}/var/update.log", user=LOGIN).decode()
         expect(offline == bool(self.args.wheelhouse), f"pip did not install from {self.pip_source()}")
         vendor = host.exec("ls", f"{APP}/releases/{first.version}/vendor", user=LOGIN)
-        expect("flask" in vendor and "psycopg" in vendor and "PIL" in vendor, f"vendor/: {vendor}")
+        packages = set(vendor.split())
+        expect({"flask", "psycopg", "PIL", "sqlalchemy", "alembic"} <= packages, f"vendor/: {vendor}")
+        # The updater made the schema with the release's Alembic migrations.
+        tables = run(
+            "docker", "exec", self.db, "psql", "-U", "gahk", "-d", "gahk_web", "-Atc",
+            "SELECT version_num FROM alembic_version; SELECT count(*) FROM site_state",
+        ).split()  # fmt: skip
+        expect(len(tables) == 2 and tables[0].isdigit() and tables[1] == "1", f"database: {tables}")
         mode = host.exec("stat", "-c", "%a %U", f"{PUBLIC_HTML}/cgi-bin/gahk.fcgi").strip()
         expect(mode == f"755 {LOGIN}", f"gahk.fcgi installed as {mode}")
 
