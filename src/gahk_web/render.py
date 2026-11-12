@@ -100,8 +100,9 @@ _MEDIA_ATTR_RE = re.compile(
     r"""((?:src|href|srcset|poster)\s*=\s*["']|url\(\s*["']?)/media/""", re.IGNORECASE
 )
 # What a background URL may hold to go into a <style> element unquoted-safe: a /billeder/ path, or in
-# a preview intern's /media/ path (snapshot.py checks both); never quotes, parentheses or "<".
-_CSS_URL_RE = re.compile(r"^(?:https?://[A-Za-z0-9.:-]+)?/[A-Za-z0-9._/-]+$")
+# a preview intern's percent-encoded /media/cms/ path (snapshot.py checks both); never quotes,
+# parentheses or "<".
+_CSS_URL_RE = re.compile(r"^(?:https?://[A-Za-z0-9.:-]+)?/[A-Za-z0-9._~%/-]+$")
 # Below this window width a page's background picture (cover over a tall, narrow page) uses a
 # variant at least this wide instead of the widest.
 PHONE_MAX_PX = 640

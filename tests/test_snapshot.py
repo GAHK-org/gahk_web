@@ -154,3 +154,45 @@ def test_preview_may_use_intern_media() -> None:
         validate_preview({"kind": "page", "item": item, "media_base": "javascript:x"})
     with pytest.raises(SnapshotError):
         validate_preview({"kind": "other", "item": item, "media_base": "https://intern.gahk.dk"})
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/media/cms/2026/11/k%C3%B8kken.jpg",  # intern sends quote(name, safe="/")
+        "/media/cms/K%C3%B8kken%20og%20bad.JPG",
+        "/media/cms/a~b_c-d.e.png",
+        "/media/cms/%FF.jpg",  # not UTF-8: a broken picture, but nothing dangerous
+    ],
+)
+def test_preview_media_names_may_be_percent_encoded(url: str) -> None:
+    item = snapshot()["pages"][1] | {"background": url}
+    preview = validate_preview({"kind": "page", "item": item, "media_base": "https://intern.gahk.dk"})
+    assert preview["item"]["background"] == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/media/other/x.jpg",  # only intern's CMS library
+        "/media/cms",
+        "/media/cms/",
+        "/media/cms//x.jpg",
+        "/media/cms/../x.jpg",
+        "/media/cms/a/./x.jpg",
+        "/media/cms/%2e%2e/x.jpg",
+        "/media/cms/a%2Fb.jpg",
+        "/media/cms/a%5Cb.jpg",
+        "/media/cms/a%0Ab.jpg",
+        "/media/cms/a%7Fb.jpg",
+        "/media/cms/a%2.jpg",
+        "/media/cms/køkken.jpg",  # raw non-ASCII: intern encodes it
+        "/media/cms/a b.jpg",
+        "/media/cms/x.jpg?y=1",
+        "/media/cms/x'.jpg",
+    ],
+)
+def test_preview_media_urls_are_checked(url: str) -> None:
+    item = snapshot()["pages"][1] | {"background": url}
+    with pytest.raises(SnapshotError):
+        validate_preview({"kind": "page", "item": item, "media_base": "https://intern.gahk.dk"})

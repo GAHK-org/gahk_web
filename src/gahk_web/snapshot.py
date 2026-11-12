@@ -10,6 +10,7 @@ content. A refused snapshot changes nothing: the site keeps serving the previous
 import re
 from datetime import date, datetime
 from typing import Any, TypedDict, cast
+from urllib.parse import unquote
 
 FORMAT = 1
 
@@ -17,7 +18,9 @@ PATH_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*(?:/[a-z0-9]+(?:[-_][a-z0-9]+
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 BILLEDER_RE = re.compile(r"^/billeder/([0-9a-f]{16})/([a-z0-9]+(?:[-_.][a-z0-9]+)*)$")
 LEGACY_IMAGE_PREFIX = "/static/legacy/image/"
-MEDIA_RE = re.compile(r"^/media/[A-Za-z0-9][A-Za-z0-9._/-]*$")
+# A picture in intern's library, which only a preview may show: /media/cms/<path>. intern sends the
+# name percent-encoded (quote(name, safe="/")), so older names with other letters arrive as %XX.
+MEDIA_RE = re.compile(r"^/media/cms(?:/(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+)+$")
 ORIGIN_RE = re.compile(r"^https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 URL_FORBIDDEN_RE = re.compile(r"[\x00-\x20\x7f\"'<>\\`]")
@@ -235,9 +238,21 @@ def background(value: object, where: str, image_urls: set[str] | None, *, allow_
         return text
     if BILLEDER_RE.match(text) and (image_urls is None or text in image_urls):
         return text
-    if allow_media and MEDIA_RE.match(text) and ".." not in text.split("/"):
+    if allow_media and is_media_url(text):
         return text
     raise SnapshotError(f"{where}: {text!r} is not an image this snapshot ships")
+
+
+def is_media_url(text: str) -> bool:
+    """A /media/cms/ address on intern, with no segment that is (or decodes to) "." or "..", a
+    slash, a backslash or a control character."""
+    if not MEDIA_RE.match(text):
+        return False
+    for segment in text.split("/")[3:]:
+        name = unquote(segment, errors="replace")
+        if name in (".", "..") or "/" in name or "\\" in name or CONTROL_RE.search(name):
+            return False
+    return True
 
 
 def validate_page(obj: object, where: str, image_urls: set[str] | None, *, preview: bool = False) -> Page:

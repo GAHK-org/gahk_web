@@ -45,6 +45,18 @@ def test_preview_renders_an_unsaved_page_in_the_current_site(client: Client, cfg
     assert "Nyt" not in (cfg.public_html / "faciliteter/kokken/index.html").read_text()
 
 
+def test_preview_shows_percent_encoded_media_names(client: Client) -> None:
+    publish(client)
+    name = "/media/cms/2026/11/k%C3%B8kken%20nyt.jpg"
+    item = page(3, "faciliteter/kokken", "Køkken", f'<p><img src="{name}"></p>', background=name)
+    result = client.api(
+        "POST", "/api/preview", {"kind": "page", "item": item, "media_base": "https://intern.gahk.dk"}
+    )
+    assert result.status == 200, result.text
+    assert f'src="https://intern.gahk.dk{name}"' in result.text
+    assert f"url('https://intern.gahk.dk{name}')" in result.text
+
+
 def test_preview_news_and_event(client: Client) -> None:
     publish(client)
     news = {
