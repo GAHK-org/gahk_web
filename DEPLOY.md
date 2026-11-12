@@ -356,7 +356,7 @@ release. The webhost installs it on intern's next nudge (at most 15 minutes) or 
 
 1. downloads the bundle (redirects followed, at most 50 MB) and checks its size and sha256;
 2. unpacks it into `releases/<sha>`, refusing absolute paths, `..`, links and devices;
-3. installs the release's packages for the webhost's `python3`: `python3 -m pip install --target …
+3. installs the release's packages for the webhost's `python3`: `python3 -I -m pip install --target …
    --require-hashes --only-binary=:all: --no-deps -r requirements.lock`, isolated from any pip
    configuration on the account, into a temporary folder. Every file pip downloads must match the
    sha256 in the release. When a kept release has the same `requirements.lock` and was installed
@@ -379,7 +379,8 @@ must keep working with the previous release.
 CI publishes a bundle only when the `lint`, `typecheck`, `test (Python 3.13, PostgreSQL 15)`,
 `test (Python 3.14, PostgreSQL 17)` and `bundle` checks pass. The `bundle` job installs the
 release's packages on x86_64 Linux for Python 3.13 and 3.14 with the updater's own pip command, so a
-package without a wheel for the webhost's python fails there, not on the webhost.
+package without a wheel for the webhost's python fails there, not on the webhost. That holds as long
+as the webhost's glibc is not older than the CI runner's (section 13 item 14).
 
 **When PyPI is down.** A release with new packages cannot install: the update fails with
 `failed: pip install: …`, the old release keeps running, and the next nudge (15 minutes later) tries
@@ -459,8 +460,8 @@ them.
 | `/api/*` answers 401 `bad signature` | The `[sync]` key and `GAHK_WEB_KEY` differ, or the sender's clock is off by more than 5 minutes. |
 | `/api/*` answers 503 `database unavailable` | The `[database]` settings, or the database host is down. |
 | The update result says `self-test failed` | The new release does not run on this python. The old one keeps running. See `update.log`. |
-| The update says `failed: pip is not available on the webhost` | `python3 -m pip` does not work on the account any more (Hetzner changed its python). Ask Hetzner support for pip for `/usr/bin/python3`; the old release keeps running meanwhile. |
-| A new release's update says `failed: pip install: ERROR: Could not find a version that satisfies …` or `No matching distribution` | PyPI has no wheel of a package the new release changed for the webhost's python. The old release keeps running, so nothing is down: bump or replace the package in the repo and release again. A pin (section 10) only stops the retries every 15 minutes. |
+| The update says `failed: pip is not available on the webhost` | `python3 -I -m pip` does not work on the account: if it never did, see section 13 item 14; otherwise Hetzner changed its python. Ask Hetzner support for pip for `/usr/bin/python3`; the old release keeps running meanwhile. |
+| A new release's update says `failed: pip install: ERROR: Could not find a version that satisfies …` or `No matching distribution` | PyPI has no wheel of a package the new release changed for the webhost's python (or for its glibc, section 13 item 14). The old release keeps running, so nothing is down: bump or replace the package in the repo and release again. A pin (section 10) only stops the retries every 15 minutes. |
 | After a Python upgrade (`/api/health` says `the release's packages are for …`), the update says `failed: pip install: … No matching distribution` | The new python has no wheel yet for one of the running release's packages. No pin helps: every release needs its packages for this python. Release a version with a package that has wheels for it; CI's `bundle` job must pass on that Python. Until then forms and the API answer 503 (pages keep working). |
 | The update says `failed: pip install:` with a network error, or `pip install took longer than 600 s` | PyPI was unreachable or slow. Nothing to do: the next nudge tries again, and the old release keeps running. |
 | The update says `failed: pip install: ERROR: THESE PACKAGES DO NOT MATCH THE HASHES …` | A downloaded file is not the one the release names (a broken download, or something between the webhost and PyPI). It is refused; the next nudge tries again. If it persists, find out why before anything else. |
@@ -512,3 +513,27 @@ the home is `/usr/home/<login>` with `public_html` directly under it.
     attempt was killed; the visit beacon and the updater's re-render do, where a kill costs nobody
     an answer. After three killed attempts the image gets no variants, and pages show its
     original. A full disk does not count as an attempt.
+14. The updater runs pip as `python3 -I -m pip` (isolated: no user site-packages, no `PYTHON*`
+    variables), while the check on 2026-11-12 ran `python3 -m pip`. And the host's glibc is only
+    known to be 2.28 or newer (numpy's `manylinux_2_28` wheels loaded), while CI's `bundle` job
+    checks the wheels on Ubuntu with glibc 2.39. Check both once: upload this as
+    `~/public_html/cgi-bin/hostcheck.cgi` (mode 755), open `https://gahk.dk/cgi-bin/hostcheck.cgi`,
+    record the answers here, and delete the file.
+
+    ```python
+    #!/usr/bin/python3
+    import os, subprocess
+
+    print("Content-Type: text/plain\n", flush=True)
+    subprocess.run(["/usr/bin/python3", "-I", "-m", "pip", "--version"], stderr=subprocess.STDOUT)
+    print("glibc", os.confstr("CS_GNU_LIBC_VERSION"))
+    ```
+
+    - If pip answers `No module named pip` (it lives only in the user site), the updater must run
+      it with `-E -P` instead of `-I`, keeping `PIP_CONFIG_FILE=/dev/null` and `--target`. Until
+      then every install fails with `failed: pip is not available on the webhost`.
+    - If glibc is older than 2.39, the `bundle` job must install with pip's
+      `--platform manylinux_<major>_<minor>_x86_64` for the host's glibc, so that a wheel needing a
+      newer glibc fails in CI. Until then such a wheel passes CI and fails only on the webhost:
+      harmless for a new release (the old one keeps running), but it would block the repair after
+      a Python upgrade.
