@@ -280,4 +280,4 @@ def test_edit_links_follow_the_protocol(client: Client, cfg: Config) -> None:
     for name, edit_url in pages.items():
         html = (cfg.public_html / name).read_text()
         assert f'<a id="rediger" class="editor-link" href="{edit_url}" hidden>Rediger siden</a>' in html
-        assert "gahk_redaktoer=1" in html
+        assert "gahk_editor=1" in html

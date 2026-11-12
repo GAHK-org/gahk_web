@@ -81,7 +81,7 @@
   <a id="rediger" class="editor-link" href="{{ edit_url }}" hidden>Rediger siden</a>
   <script>
     (function () {
-      if (/(?:^|;\s*)gahk_redaktoer=1(?:;|$)/.test(document.cookie)) {
+      if (/(?:^|;\s*)gahk_editor=1(?:;|$)/.test(document.cookie)) {
         document.getElementById("rediger").hidden = false;
       }
 {% if beacon %}{# the page's own address, not the one it was opened at: /velkommen counts as the front page #}

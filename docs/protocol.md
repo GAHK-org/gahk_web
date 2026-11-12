@@ -277,7 +277,7 @@ Every page on gahk.dk carries a hidden **Rediger siden** link. A script on the p
 browser has the cookie below, which only intern sets. The cookie is a hint for the browser, not a
 permission: intern checks the user's roles again when the link is followed.
 
-- Cookie: `gahk_redaktoer=1`, with `Domain=.gahk.dk`, `Path=/`, `Secure`, `SameSite=Lax`, and **not**
+- Cookie: `gahk_editor=1`, with `Domain=.gahk.dk`, `Path=/`, `Secure`, `SameSite=Lax`, and **not**
   `HttpOnly`, because gahk.dk's script must read it. No other value shows the link.
 - intern sets it at login, and again on each request, for a user who is a superuser or holds one of
   `CMS_EDITOR_ROLES` as a real role (not a role preview). It deletes it (same name, domain and path)

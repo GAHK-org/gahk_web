@@ -289,7 +289,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--green); out
   .apply-form__submit .btn { width: 100%; justify-content: center; }
 }
 
-/* ---- "Rediger siden": shown only to editors (intern sets the gahk_redaktoer cookie) ---- */
+/* ---- "Rediger siden": shown only to editors (intern sets the gahk_editor cookie) ---- */
 .editor-link {
   position: fixed;
   right: 1rem;
