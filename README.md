@@ -1,2 +1,110 @@
 # gahk_web
-Light CMS for gahk.dk
+[![CI](https://github.com/GAHK-org/gahk_web/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GAHK-org/gahk_web/actions/workflows/ci.yml)
+
+Den offentlige hjemmeside **gahk.dk** for G. A. Hagemanns Kollegium.
+
+Alt indhold – sider, menu, nyheder, begivenheder og billeder – redigeres på
+[intern.gahk.dk](https://intern.gahk.dk) under *Hjemmeside* (repoet
+[gahk_intern](https://github.com/GAHK-org/gahk_intern)). Ved hver ændring sender intern et signeret
+øjebliksbillede af indholdet hertil, og gahk_web gør det til færdige, statiske HTML-filer, som Apache
+serverer direkte. Derfor kører gahk.dk videre, selv om intern.gahk.dk eller S3 er nede.
+
+Python kører kun for det, statiske filer ikke kan klare: synkroniserings-API'et (`/api/*`, kun for
+intern), optagelsesformularerne, besøgstælleren, kalender-feeds og omdirigeringer af gamle adresser.
+Ansøgninger og besøgstal ligger kun på webhotellet, indtil intern henter dem (hvert andet minut).
+Webhotellet gemmer altså intet permanent, og det har hverken adgang til interns database eller til S3.
+
+Siden kører på Hetzner Webhosting (Apache med CGI, Python 3.11 – 3.13 efter Hetzners opdatering i
+2026). Webhotellet opdaterer sig selv: når intern beder om det (hvert kvarter, eller med knappen
+*Opdatér gahk.dk nu*), henter det den nyeste bundle, som CI har lagt på GitHub-releasen `production`.
+Der bruges ikke noget cron-job. Opsætning og drift er beskrevet i [DEPLOY.md](DEPLOY.md), kontrakten
+med intern i [docs/protocol.md](docs/protocol.md) og opførslen i [spec/features/](spec/features/).
+
+## Kom i gang (udvikling)
+
+```sh
+task install     # opret virtualenv + installer afhængigheder
+task dev         # udviklingsserver → http://127.0.0.1:8810
+```
+
+`task dev` skriver første gang `local/config.ini` med nye hemmeligheder, opretter databaserne og
+kører migreringerne. Den bruger som standard gahk_interns Postgres-container (`localhost:5432`,
+bruger og kodeord `gahk`); brug en anden med `task dev PG=postgres://bruger:kode@vært:port`.
+Udviklingsserveren efterligner `.htaccess` og skriver siderne til `var/public_html`.
+
+Indtil der er publiceret indhold, svarer siden "Siden opdateres" (503). Indhold kommer fra en lokal
+intern: sæt `GAHK_WEB_URL` og `GAHK_WEB_KEY` i gahk_interns `app/.env` til de værdier, `task config`
+skrev ud (nøglen står også i `local/config.ini`), og gem en side under *Hjemmeside*.
+
+## Test
+
+```sh
+task db:create   # opret test-databasen (én gang)
+task test        # kør testsuiten mod Postgres, som CI
+task bundle      # byg release-bundlen i dist/ og røgtest den på Python 3.11 og 3.13
+```
+
+Testene genskaber skemaet i test-databasen (`gahk_web_test`) ved hver kørsel.
+`task bundle -- --database postgres://…/en_smid_vaek_database` prøver også den første installation
+gennem CGI-scriptet, ligesom CI gør. Den sletter alle tabeller i databasen, så brug kun en til formålet.
+
+## Code Quality: lint + typer + pre-commit
+
+```sh
+task lint         # ruff check + format-tjek
+task fix          # ret det, ruff kan rette, og formatér koden
+task typecheck    # mypy (strict) – samme som CI's typecheck-job
+task hooks        # installér prek git pre-commit hooks (kør én gang)
+```
+
+`task hooks` installerer [prek](https://github.com/j178/prek) (en hurtig, pre-commit-kompatibel
+runner) via `.pre-commit-config.yaml`. Derefter kører **ruff** (check + format) og **mypy** automatisk
+ved hvert commit. Kør manuelt på alt med `uv run prek run --all-files`. De samme tjek håndhæves i CI
+(`.github/workflows/ci.yml`): `lint`, `typecheck`, `test` (Python 3.11 med PostgreSQL 15 og 3.13 med
+17), `bundle` og `security`. Et merge til `main` udgiver derefter en ny bundle (`release`).
+
+Afhængighederne, som siden kører med, skal være ren Python: de pakkes ind i bundlen uden kompilerede
+moduler, og `bundle`-jobbet fejler, hvis en af dem ikke kan importeres uden.
+
+## Branches og pull requests
+
+Ingen kan pushe direkte til `main` eller `dev`; alt går gennem pull requests. `dev` samler det
+næste release, og `main` er det, der kører i produktion: hvert merge til `main` bliver til en ny
+bundle, som gahk.dk installerer inden for et kvarter.
+
+| Branch | Laves fra | PR ind i | Merge med |
+|--------|-----------|----------|-----------|
+| `feature/…`, `fix/…` (og Copilots `copilot/…`) | `dev` | `dev` | **Squash and merge** |
+| `dev` (release) | – | `main` | **Create a merge commit** |
+| `hotfix/…` | `main` | `main` | **Squash and merge** |
+| `automation/sync-main-…` (laves automatisk) | – | `dev` | **Create a merge commit** – aldrig squash |
+| Dependabot | – | `dev`; sikkerhedsopdateringer: `main` | **Squash and merge** (patch-opdateringer merges automatisk) |
+
+**Release:** Åbn en PR fra `dev` til `main`, og merge med "Create a merge commit". Squash eller rebase
+aldrig en release: så deler `main` og `dev` ikke længere historik, og hver release giver de samme
+konflikter igen.
+
+**Hotfix** – en rettelse, der ikke kan vente på næste release:
+
+1. Lav branchen fra `main`, ikke `dev`: `git fetch && git switch -c hotfix/kort-navn origin/main`.
+2. Åbn en PR ind i `main`, og squash-merge den.
+3. Workflowet *Sync main to dev* laver en branch med `main` merget ind i `dev`. Åbn PR'en via linket i
+   kørslens opsummering (Actions-fanen), og merge med "Create a merge commit".
+
+Indtil sync-PR'en er merget, er PR'er ind i `dev` blokeret – så rettelsen ikke går tabt i næste
+release. Det samme gælder, når Dependabot har merget en sikkerhedsopdatering ind i `main`.
+
+**Tjekkene `branch-flow` og `in-sync`** (`.github/workflows/branch-policy.yml`) håndhæver reglerne:
+
+- `branch-flow` fejler: branchen må ikke merges derind (tjek navnet og målet), eller en hotfix
+  indeholder upubliceret arbejde fra `dev` – lav den forfra fra `main`.
+- `in-sync`: *"main has changes dev lacks"* – merge sync-PR'en ind i `dev` først.
+- `in-sync`: *"main has moved on"* – klik "Update branch" (på Dependabots PR'er: kommentér
+  `@dependabot rebase`).
+
+**Ændringer i kontrakten med intern** (API'et og øjebliksbilledet, [docs/protocol.md](docs/protocol.md))
+skal laves i begge repoer. Gør dem bagudkompatible, så den ene side kan udgives før den anden.
+
+## Licens
+
+Koden er udgivet under GNU Affero General Public License v3.0 eller senere (AGPL-3.0-or-later) – se [LICENSE](LICENSE).

@@ -1,0 +1,89 @@
+version: '3'
+
+# Dev task runner for gahk_web, the public site gahk.dk.
+#   task dev       -> the development server at http://127.0.0.1:8810 (it emulates .htaccess)
+#   task test      -> the test suite (against PostgreSQL; `task db:create` once first)
+#   task bundle    -> build the release bundle into dist/ and smoke-test it on Python 3.11 and 3.13
+#
+# Any PostgreSQL will do; the default is gahk_intern's dev container (localhost:5432, user gahk,
+# password gahk). Point elsewhere with: task dev PG=postgres://user:pass@host:port
+# `task dev` reads local/config.ini (gitignored), which `task config` writes once with fresh secrets,
+# and renders the site into var/public_html. Publish content to it from a local intern (its
+# GAHK_WEB_URL and GAHK_WEB_KEY are printed by `task config`).
+#
+# Dependencies are managed by uv (pyproject.toml + uv.lock). `uv run` auto-syncs the ./.venv and runs
+# in it. The project is not an installed package, so src/ goes on PYTHONPATH (see env: below).
+vars:
+  PG: 'postgres://gahk:gahk@localhost:5432'
+  DEV_DB: 'gahk_web'
+  TEST_DB: 'gahk_web_test'
+  DEV_PORT: '8810'
+
+env:
+  PYTHONPATH: '{{.ROOT_DIR}}/src'
+  GAHK_WEB_CONFIG: '{{.ROOT_DIR}}/local/config.ini'
+  GAHK_WEB_TEST_DATABASE: '{{.PG}}/{{.TEST_DB}}'
+  # Windows consoles default to cp1252, which cannot print the Danish text some commands write.
+  PYTHONIOENCODING: 'utf-8'
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds: ['task --list']
+    silent: true
+
+  install:
+    desc: Create/sync the virtualenv from pyproject.toml + uv.lock (runtime + dev deps)
+    cmds: ['uv sync']
+
+  config:
+    desc: Write local/config.ini for `task dev` (only if it does not exist yet)
+    cmds: ['uv run python scripts/dev_setup.py config {{.PG}} {{.DEV_DB}}']
+    status: ['test -f local/config.ini']
+
+  db:create:
+    desc: Create the dev and test databases on the PostgreSQL server at PG (if missing)
+    cmds: ['uv run python scripts/dev_setup.py databases {{.PG}} {{.DEV_DB}} {{.TEST_DB}}']
+
+  migrate:
+    desc: Apply the database migrations to the dev database
+    cmds: ['uv run python -m gahk_web migrate']
+
+  rebuild:
+    desc: Re-render var/public_html from the last published snapshot
+    cmds: ['uv run python -m gahk_web rebuild']
+
+  dev:
+    desc: 'Run the development server on http://127.0.0.1:8810 (writes local/config.ini and the databases first if needed)'
+    cmds:
+      - task: config
+      - task: db:create
+      - task: migrate
+      - 'uv run python -m gahk_web.devserver --port {{.DEV_PORT}} --public-html var/public_html'
+
+  test:
+    desc: Run the pytest suite (needs `task db:create`; the tests recreate the test database's schema)
+    cmds: ['uv run pytest {{.CLI_ARGS}}']
+
+  lint:
+    desc: Lint + format-check with ruff
+    cmds: ['uv run ruff check .', 'uv run ruff format --check .']
+
+  fix:
+    desc: Auto-fix lint issues and format the code with ruff (the writing counterpart of `lint`)
+    cmds: ['uv run ruff check --fix .', 'uv run ruff format .']
+
+  typecheck:
+    desc: Static type-check with mypy (strict; the package, the scripts and the CGI stub)
+    cmds: ['uv run mypy']
+
+  bundle:
+    desc: Build the release bundle into dist/ and smoke-test it on Python 3.11 and 3.13 (add -- --database URL for the install test)
+    cmds:
+      - 'uv python install 3.11 3.13'
+      - 'uv run python scripts/build_bundle.py'
+      - 'uv run python scripts/smoke_bundle.py --python 3.11 --python 3.13 {{.CLI_ARGS}}'
+
+  hooks:
+    desc: Install the prek git pre-commit hooks (ruff + mypy run on commit)
+    cmds: ['uv run prek install']

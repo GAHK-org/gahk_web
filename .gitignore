@@ -1,21 +1,56 @@
-# Python
+# Python / uv
 __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-dist/
-build/
 *.egg-info/
+build/
+# scripts/build_bundle.py writes the release bundle and its manifest here.
+dist/
 
-# Local runs (render a dev site into var/public_html, not into the repo's public_html)
+# Local runs (task dev renders into var/public_html, not into the repo's public_html)
 /public_html/*
 !/public_html/.htaccess
 !/public_html/cgi-bin/
-/config.ini
 /var/
+# task config writes local/config.ini: a dev database password and signing key.
 /local/
+
+# ---------------------------------------------------------------------------
+# Secrets and data (the same block as gahk_intern's, after a production database
+# dump reached a public commit there on 2026-08-04).
+# ---------------------------------------------------------------------------
+
+# The webhost's config.ini holds the database password and the signing key shared with intern.
+config.ini
+*.ini.bak
+.env
+.env.*
+!.env.example
+
+# Database dumps, plain and compressed (form submissions are personal data).
+*.sql
+!/src/gahk_web/migrations/*.sql
+*.dump
+*.sql.gz
+*.sql.bz2
+*.dump.gz
+*.tar.gz
+
+# A missing colon turns `scp file root@host:~/` into a LOCAL copy named `root@host` — no extension,
+# so no content-based rule catches it.
+root@*
+*@*.*.*.*
+
+# Key, certificate and ACME material
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
 
 # OS / editors
 .DS_Store
