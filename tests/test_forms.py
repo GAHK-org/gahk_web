@@ -106,6 +106,16 @@ def test_honeypot(client: Client, con: db.Connection) -> None:
     assert applications(con) == []
 
 
+def test_too_many_fields_answers_with_the_form(client: Client, con: db.Connection) -> None:
+    publish(client)
+    junk = {f"x{number}": "1" for number in range(120)}
+    result = post(client, "/optagelse/ansoeg", VALID | junk)
+    assert result.status == 413
+    assert '<form method="post" action="/optagelse/ansoeg"' in result.text
+    assert forms.SPAM in result.text
+    assert applications(con) == []
+
+
 @pytest.mark.parametrize(
     "headers",
     [

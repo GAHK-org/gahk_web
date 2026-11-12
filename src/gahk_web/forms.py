@@ -26,6 +26,7 @@ from urllib.request import urlopen
 
 from . import db
 from .clock import now_utc
+from .wsgi import BodyTooLarge
 
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 TURNSTILE_TIMEOUT = 5
@@ -34,6 +35,7 @@ HONEYPOT_FIELD = "website"
 RATE_LIMIT = 5
 RATE_WINDOW = timedelta(hours=1)
 MAX_FORM_BYTES = 64 * 1024
+MAX_FORM_FIELDS = 100
 
 REQUIRED = "Dette felt er påkrævet."
 INVALID_EMAIL = "Indtast en gyldig e-mail-adresse."
@@ -170,12 +172,17 @@ def valid_email(value: str) -> bool:
 
 
 def parse_body(body: bytes) -> dict[str, str]:
-    """application/x-www-form-urlencoded → the first value of each field."""
+    """application/x-www-form-urlencoded → the first value of each field.
+
+    Raises BodyTooLarge for more than MAX_FORM_FIELDS fields."""
     try:
         text = body.decode("utf-8")
     except UnicodeDecodeError:
         text = body.decode("latin-1")
-    parsed = parse_qs(text, keep_blank_values=True, max_num_fields=100)
+    try:
+        parsed = parse_qs(text, keep_blank_values=True, max_num_fields=MAX_FORM_FIELDS)
+    except ValueError as exc:  # "Max number of fields exceeded"
+        raise BodyTooLarge(str(exc)) from exc
     return {name: values[0] for name, values in parsed.items()}
 
 
