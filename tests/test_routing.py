@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 import pytest
-from conftest import GANG, Client, image, publish
+from conftest import GANG, KOKKEN, Client, image, publish, rename_image, snapshot
 from sqlalchemy.orm import Session
 
 from gahk_web import routing
@@ -85,6 +85,40 @@ def test_old_image_addresses_with_the_old_sites_static_hash_follow_the_map(clien
     assert client.get("/static/legacy/image/upload/images/gang.b8dc291a4e4.jpg").status == 404
     assert client.get("/static/legacy/image/upload/images/gang.B8DC291A4E43.jpg").status == 404
     assert client.get("/static/legacy/image/upload/images/ukendt.b8dc291a4e43.jpg").status == 404
+
+
+def test_old_image_addresses_with_other_letters_follow_the_map(client: Client) -> None:
+    """Old addresses may have their letters spelled out or percent-encoded in the map; a browser
+    always asks percent-encoded (NFC, or NFD from a Mac). The Location is percent-encoded too."""
+    data = rename_image(snapshot(), "kokken.jpg", "køkken-på-første.jpg")
+    kokken = image("køkken-på-første.jpg", KOKKEN)["url"]
+    href = f"/billeder/{kokken.split('/')[2]}/k%C3%B8kken-p%C3%A5-f%C3%B8rste.jpg"
+    data["legacy_images"] |= {
+        "/static/legacy/image/upload/køkken.jpg": kokken,
+        "/static/legacy/image/upload/s%C3%B8en.jpg": kokken,
+        "/static/legacy/image/upload/tre_æbler.2019.jpg": kokken,
+    }
+    publish(client, data)
+    for path in (
+        "/static/legacy/image/upload/k%C3%B8kken.jpg",
+        "/static/legacy/image/upload/s%C3%B8en.jpg",
+        "/static/legacy/image/upload/tre_%C3%A6bler.2019.jpg",
+        "/static/legacy/image/upload/k%C3%B8kken.b8dc291a4e43.jpg",  # the old site's hashed name
+    ):
+        result = client.get(path)
+        assert (result.status, result.headers["Location"]) == (301, href), path
+    # NFD (a Mac's "å": "a" plus a combining ring) finds the NFC key, and the other way round.
+    data["legacy_images"] |= {
+        "/static/legacy/image/upload/på.jpg": kokken,
+        "/static/legacy/image/upload/ha%CC%8Ab.jpg": kokken,
+    }
+    publish(client, data | {"revision": "c" * 64})
+    for path in ("/static/legacy/image/upload/pa%CC%8A.jpg", "/static/legacy/image/upload/h%C3%A5b.jpg"):
+        result = client.get(path)
+        assert (result.status, result.headers["Location"]) == (301, href), path
+    assert client.get("/static/legacy/image/upload/kokken.jpg").status == 404
+    result = client.get("/public/image/upload/k%C3%B8kken.jpg")
+    assert (result.status, result.headers["Location"]) == (301, "/static/legacy/image/upload/k%C3%B8kken.jpg")
 
 
 def test_slash_variants_redirect_to_the_canonical_form(client: Client) -> None:
@@ -256,6 +290,16 @@ def test_devserver_serves_assets_and_images(client: Client, dev: Client) -> None
     assert (result.status, result.body) == (200, GANG)
     assert dev.get("/robots.txt").text.startswith("User-agent: *")
     assert dev.get("/sw.js").headers["Content-Type"].startswith(("application/javascript", "text/javascript"))
+
+
+def test_devserver_serves_images_with_other_letters(client: Client, dev: Client) -> None:
+    publish(client, rename_image(snapshot(), "kokken.jpg", "tovtrækning-2019.jpg"))
+    folder = image("kokken.jpg", KOKKEN)["url"].rsplit("/", 1)[0]
+    result = dev.get(f"{folder}/tovtr%C3%A6kning-2019.jpg")
+    assert (result.status, result.body) == (200, KOKKEN)
+    assert dev.get(f"{folder}/tovtra%CC%8Akning-2019.jpg").status == 404  # NFD is another name
+    page = dev.get("/faciliteter/kokken").text
+    assert f"{folder}/tovtr%C3%A6kning-2019.jpg" in page
 
 
 def test_devserver_matches_production_routing(client: Client, dev: Client) -> None:

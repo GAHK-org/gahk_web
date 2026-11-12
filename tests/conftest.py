@@ -294,6 +294,17 @@ def snapshot(today: date | None = None, **overrides: object) -> dict[str, Any]:
     return data
 
 
+def rename_image(data: dict[str, Any], name: str, new_name: str) -> dict[str, Any]:
+    """data with the image called name called new_name instead, wherever its URL appears."""
+    text = json.dumps(data, ensure_ascii=False)
+    for item in data["images"]:
+        folder, _, old = item["url"].rpartition("/")
+        if old == name:
+            text = text.replace(item["url"], f"{folder}/{new_name}")
+    renamed: dict[str, Any] = json.loads(text)
+    return renamed
+
+
 def upload_images(client: Client, shas: list[str] | None = None) -> None:
     for sha, data in IMAGE_BYTES.items():
         if shas is None or sha in shas:

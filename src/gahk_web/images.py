@@ -3,7 +3,9 @@
 intern PUTs the bytes of each image the webhost lacks (PUT /api/images/<sha256>); they are kept as a
 blob in state_dir/images/<sha256>. The public URL /billeder/<sha16>/<name> carries a name only the
 snapshot knows, so publishing links (or copies) each blob to public_html/billeder/<sha16>/<name>
-and records it in image_files. Those URLs never change content, so Apache serves them with a
+and records it in image_files. The name keeps its letters (tovtrækning.jpg): it is written in UTF-8
+(NFC, as the snapshot has it), which is what Apache finds for the percent-encoded address a browser
+asks for (/billeder/<sha16>/tovtr%C3%A6kning.jpg). Those URLs never change content, so Apache serves them with a
 one-year immutable cache.
 
 After a successful publish, public copies the new snapshot does not use are deleted, and so are blobs
@@ -41,7 +43,7 @@ from sqlalchemy.orm import Session
 from .clock import now_utc
 from .config import Config
 from .models import Image, ImageFile
-from .snapshot import BILLEDER_RE, HEX64_RE, IMAGE_TYPES, MAX_IMAGE_BYTES, Snapshot
+from .snapshot import HEX64_RE, IMAGE_TYPES, MAX_IMAGE_BYTES, Snapshot, billeder_match
 
 BLOB_GRACE = timedelta(hours=1)
 # An image whose variants were started this often without an outcome (the process died making them)
@@ -52,6 +54,13 @@ VARIANT_NAME_RE = re.compile(r"^_[0-9]+w\.webp$")
 
 class ImageError(ValueError):
     pass
+
+
+def public_file(cfg: Config, rel_path: str) -> Path:
+    """public_html/<rel_path> with its name in UTF-8 on disk, whatever locale the process has (a
+    CGI process may get none, and Python's file names follow the locale): Apache maps a request's
+    percent-decoded bytes to a file name as they are, and pages encode names from UTF-8."""
+    return cfg.public_html / os.fsdecode(rel_path.encode("utf-8"))
 
 
 def blob_dir(cfg: Config) -> Path:
@@ -153,7 +162,7 @@ def materialize(session: Session, cfg: Config, snapshot: Snapshot) -> None:
     }
     for image in snapshot["images"]:
         rel_path = image["url"].lstrip("/")
-        target = cfg.public_html / rel_path
+        target = public_file(cfg, rel_path)
         if known.get(rel_path) == image["sha256"] and target.is_file():
             continue
         _publish_copy(blob_path(cfg, image["sha256"]), target)
@@ -393,9 +402,9 @@ def collect_garbage(session: Session, cfg: Config, snapshot: Snapshot) -> int:
     used_folders = {sha[:16] for sha in used_shas}
     removed = 0
     for rel_path in session.scalars(select(ImageFile.rel_path)).all():
-        if rel_path in used_paths or not BILLEDER_RE.match("/" + rel_path):
+        if rel_path in used_paths or not billeder_match("/" + rel_path):
             continue
-        target = cfg.public_html / rel_path
+        target = public_file(cfg, rel_path)
         with contextlib.suppress(FileNotFoundError):
             target.unlink()
             removed += 1

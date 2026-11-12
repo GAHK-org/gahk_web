@@ -4,7 +4,14 @@ from typing import Any
 import pytest
 from conftest import snapshot
 
-from gahk_web.snapshot import SnapshotError, is_reserved, validate, validate_preview
+from gahk_web.snapshot import (
+    SnapshotError,
+    billeder_href,
+    billeder_match,
+    is_reserved,
+    validate,
+    validate_preview,
+)
 
 
 def test_valid_snapshot_passes() -> None:
@@ -80,6 +87,85 @@ def test_bad_image_urls_are_refused(url: str) -> None:
     data["images"][0]["url"] = url
     with pytest.raises(SnapshotError):
         validate(data)
+
+
+SHA16 = "0123456789abcdef"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "tovtrækning-2019.jpg",
+        "kø_og_ål.jpeg",
+        "æøå.png",
+        "straße.gif",  # ß has no single upper-case letter, and needs none
+        "café.v2.webp",
+        "fête_d-été.jpg",
+        "ελληνικά.jpg",
+        "日本語.png",
+        "한국어.jpg",  # Hangul in its composed (NFC) form
+        "٢٠٢٤.jpg",  # Arabic-Indic digits are decimal digits
+        "a" * 251 + ".jpg",
+        "ø" * 125 + ".jpg",  # 254 bytes
+    ],
+)
+def test_image_names_keep_their_letters(name: str) -> None:
+    assert billeder_match(f"/billeder/{SHA16}/{name}")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Tovtrækning.jpg",  # upper case
+        "tovtrÆkning.jpg",
+        "ǅ.jpg",  # title case
+        "tovtra\u030akning.jpg",  # NFD: "a" plus a combining ring
+        "\u1112\u1161\u11ab.jpg",  # NFD Hangul: three jamo, each a letter, for one syllable
+        "x\u200d.jpg",  # a zero-width joiner
+        "x².jpg",
+        "½.jpg",
+        "a b.jpg",
+        "a\tb.jpg",
+        "a\x00.jpg",
+        "a%20b.jpg",  # names are text, not encoded URLs
+        "a/b.jpg",
+        "../x.jpg",
+        "a..b.jpg",
+        "a--b.jpg",
+        ".x.jpg",
+        "_x.jpg",
+        "_960w.webp",  # gahk.dk's own variants
+        "x-.jpg",
+        "x.jpg\n",
+        "a.cgi.jpg",  # Apache would run it, so .htaccess refuses its address
+        "a.py.jpg",
+        "a.fcgi.jpg",
+        "ø" * 126 + ".jpg",  # 256 bytes: more than a file name may have
+    ],
+)
+def test_bad_image_names_are_refused(name: str) -> None:
+    assert not billeder_match(f"/billeder/{SHA16}/{name}")
+
+
+def test_a_snapshot_ships_images_with_danish_names() -> None:
+    data = snapshot()
+    sha = data["images"][2]["sha256"]
+    url = f"/billeder/{sha[:16]}/køkken-på-første.jpg"
+    data["images"][2]["url"] = url
+    data["pages"][2]["background"] = url
+    data["legacy_images"]["/static/legacy/image/upload/køkken.jpg"] = url
+    validate(data)
+
+
+def test_image_hrefs_are_percent_encoded_from_utf8() -> None:
+    assert (
+        billeder_href(f"/billeder/{SHA16}/tovtrækning-2019.jpg")
+        == f"/billeder/{SHA16}/tovtr%C3%A6kning-2019.jpg"
+    )
+    assert billeder_href(f"/billeder/{SHA16}/a_b.c-d.jpg") == f"/billeder/{SHA16}/a_b.c-d.jpg"
+    assert billeder_href(f"/billeder/{SHA16}/_960w.webp") == f"/billeder/{SHA16}/_960w.webp"
+    # intern's /media/ names arrive encoded already: never encoded twice.
+    assert billeder_href("/media/cms/k%C3%B8kken.jpg") == "/media/cms/k%C3%B8kken.jpg"
 
 
 def test_image_url_hash_must_match_the_sha() -> None:

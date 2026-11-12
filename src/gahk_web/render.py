@@ -43,7 +43,7 @@ from .config import Config
 from .forms import SPECS, SUCCESS_PATH, FormSpec
 from .images import Picture, pictures
 from .models import GeneratedFile, SiteState
-from .snapshot import Event, NewsItem, Page, Snapshot
+from .snapshot import Event, NewsItem, Page, Snapshot, billeder_href
 from .version import code_version
 
 if TYPE_CHECKING:
@@ -102,9 +102,9 @@ EMPTY_SNAPSHOT: Snapshot = {
 _MEDIA_ATTR_RE = re.compile(
     r"""((?:src|href|srcset|poster)\s*=\s*["']|url\(\s*["']?)/media/""", re.IGNORECASE
 )
-# What a background URL may hold to go into a <style> element unquoted-safe: a /billeder/ path, or in
-# a preview intern's percent-encoded /media/cms/ path (snapshot.py checks both); never quotes,
-# parentheses or "<".
+# What a background URL may hold to go into a <style> element unquoted-safe: a /billeder/ path
+# (percent-encoded by billeder_href, whatever letters its name has), or in a preview intern's
+# percent-encoded /media/cms/ path (snapshot.py checks both); never quotes, parentheses or "<".
 _CSS_URL_RE = re.compile(r"^(?:https?://[A-Za-z0-9.:-]+)?/[A-Za-z0-9._~%/-]+$")
 # Below this window width a page's background picture (cover over a tall, narrow page) uses a
 # variant at least this wide instead of the widest.
@@ -275,7 +275,9 @@ class Site:
 
         picture = self.picture(url)
         if picture is None:
-            return Markup('<img src="{}" alt="" class="hero__img" fetchpriority="high">').format(url)
+            return Markup('<img src="{}" alt="" class="hero__img" fetchpriority="high">').format(
+                billeder_href(url)
+            )
         return Markup(
             '<img src="{}" srcset="{}" sizes="100vw" alt="" class="hero__img" fetchpriority="high">'
         ).format(escape(picture.src), escape(picture.srcset))
@@ -286,7 +288,8 @@ class Site:
         from markupsafe import Markup
 
         picture = self.picture(url)
-        wide = picture.src if picture else url
+        href = billeder_href(url)
+        wide = picture.src if picture else href
         rules = [f".page-stage--photo{{background-image:url('{wide}')}}"]
         if picture is not None:
             phone = picture.at_least(PHONE_BACKGROUND_PX)
@@ -294,7 +297,7 @@ class Site:
                 rules.append(
                     f"@media (max-width:{PHONE_MAX_PX}px){{.page-stage--photo{{background-image:url('{phone}')}}}}"
                 )
-        if not all(_CSS_URL_RE.match(candidate) for candidate in (wide, url)):
+        if not all(_CSS_URL_RE.match(candidate) for candidate in (wide, href)):
             return Markup("")
         return Markup("\n".join(rules))  # noqa: S704 - checked against _CSS_URL_RE just above
 
@@ -330,7 +333,7 @@ class Site:
             context["og_image"] = (
                 background
                 if background.startswith("http")
-                else self.absolute(background or static_url("img/apple-touch-icon.png"))
+                else self.absolute(billeder_href(background) or static_url("img/apple-touch-icon.png"))
             )
         return context
 

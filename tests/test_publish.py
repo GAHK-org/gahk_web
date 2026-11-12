@@ -1,5 +1,7 @@
 import hashlib
 import json
+import os
+import unicodedata
 from pathlib import Path
 
 from conftest import (
@@ -12,6 +14,7 @@ from conftest import (
     jpeg,
     page,
     publish,
+    rename_image,
     snapshot,
     upload_images,
 )
@@ -204,6 +207,20 @@ def test_unused_images_are_collected_after_publish(client: Client, cfg: Config, 
     again = snapshot(revision="d" * 64) | {"images": data["images"], "pages": data["pages"]}
     assert client.api("POST", "/api/publish", again).status == 200
     assert not (cfg.state_dir / "images" / kokken["sha256"]).exists()
+
+
+def test_image_files_keep_their_letters(client: Client, cfg: Config) -> None:
+    """A name with Danish letters is written as it is, in UTF-8 and NFC: the bytes Apache looks for
+    when a browser asks for the percent-encoded address."""
+    name = "køkken-på-første_sal.v2.jpg"
+    assert unicodedata.is_normalized("NFC", name)
+    publish(client, rename_image(snapshot(), "kokken.jpg", name))
+    folder = os.fsencode(cfg.public_html / "billeder" / image(name, KOKKEN)["sha256"][:16])
+    assert os.listdir(folder) == [name.encode("utf-8")]  # noqa: PTH208 - the name as bytes on disk
+    assert (cfg.public_html / image(name, KOKKEN)["url"].lstrip("/")).read_bytes() == KOKKEN
+    # The next publish names it as before: the copy under the old name goes.
+    publish(client, snapshot(revision="c" * 64))
+    assert os.listdir(folder) == [b"kokken.jpg"]  # noqa: PTH208 - the name as bytes on disk
 
 
 def test_status_reports_revision_and_outbox(client: Client, cfg: Config) -> None:

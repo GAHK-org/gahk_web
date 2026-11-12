@@ -17,6 +17,7 @@ its session on first use, and in the persistent process the connection is reused
 import logging
 import mimetypes
 import re
+import unicodedata
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,7 @@ from .clock import copenhagen_today
 from .config import Config
 from .models import Base, GeneratedFile, SiteState
 from .render import EMPTY_SNAPSHOT, Site, load_snapshot, page_file, quote_path
-from .snapshot import PATH_RE
+from .snapshot import PATH_RE, billeder_href
 from .web import (
     ALL_METHODS,
     PAGE_CACHE,
@@ -196,15 +197,23 @@ def _legacy_image(session: Session, path: str) -> str | None:
 
     The old site served these files through Django's ManifestStaticFilesStorage too, under names
     with a 12-hex-digit hash before the extension (gang.b8dc291a4e43.jpg), and pages elsewhere may
-    still link those; without an exact match, the name without the hash is looked up."""
+    still link those; without an exact match, the name without the hash is looked up.
+
+    path is the request's path, percent-decoded. A key may spell its letters out (/static/legacy/
+    image/køkken.jpg) or percent-encode them (k%C3%B8kken.jpg); both match, in NFC or NFD."""
     legacy = session.scalar(select(SiteState.snapshot["legacy_images"]))
     if not isinstance(legacy, dict):
         return None
     for candidate in dict.fromkeys((path, _STATIC_HASH_RE.sub("", path))):
+        wanted = unicodedata.normalize("NFC", candidate)
         for old, new in legacy.items():
-            if old == candidate or unquote(old) == candidate:
+            if wanted in (_nfc(old), _nfc(unquote(old, errors="replace"))):
                 return str(new)
     return None
+
+
+def _nfc(text: str) -> str:
+    return unicodedata.normalize("NFC", text)
 
 
 def _page_url(session: Session, path: str) -> str | None:
@@ -235,7 +244,7 @@ def fallback(path: str = "") -> Response:
 
     if path.startswith(routing.LEGACY_IMAGE_PREFIX):
         image = _legacy_image(session, path)
-        return redirect(301, image) if image else not_found(cfg)
+        return redirect(301, billeder_href(image)) if image else not_found(cfg)
 
     bare = path.strip("/")
     if bare == "" or _PAGE_PATH_RE.match(bare):

@@ -8,15 +8,21 @@ cleaning what intern already cleaned changes nothing; change the two together.
 Then each <img> whose src is a published image with variants (images.Picture) links the variants:
 src is the widest one, srcset lists them all, sizes says how wide the content column shows it, and
 width/height give the browser the picture's shape before it loads. Pictures load lazily, except the
-first one of the front page. The rewrite uses the standard library's HTML tokenizer and replaces only
-the <img> tags it finds, so the rest of the body stays byte for byte as it was.
+first one of the front page. The src of any other /billeder/ image is percent-encoded the way the
+page's other image URLs are (tovtr%C3%A6kning.jpg); intern may write it either way. The rewrite uses
+the standard library's HTML tokenizer and replaces only the <img> tags it changes, so the rest of the
+body stays byte for byte as it was.
 """
 
 import html
 import re
+import unicodedata
 from collections.abc import Mapping
 from html.parser import HTMLParser
 from typing import TYPE_CHECKING
+from urllib.parse import unquote
+
+from .snapshot import billeder_href, billeder_match
 
 if TYPE_CHECKING:
     from .images import Picture
@@ -169,18 +175,27 @@ def img_tag(attrs: list[tuple[str, str | None]], picture: "Picture", *, lazy: bo
     ]
     if lazy:
         out += [("loading", "lazy"), ("decoding", "async")]
-    parts = [
-        name if value is None else f'{name}="{html.escape(value, quote=True)}"'
-        for name, value in out
-        if not (value is None and name in ("width", "height"))
-    ]
+    return _tag([(name, value) for name, value in out if not (value is None and name in ("width", "height"))])
+
+
+def _tag(attrs: list[tuple[str, str | None]]) -> str:
+    parts = [name if value is None else f'{name}="{html.escape(value, quote=True)}"' for name, value in attrs]
     return "<img " + " ".join(parts) + ">"
 
 
+def image_url(src: str) -> str:
+    """The snapshot's URL of an <img> src: a /billeder/ address percent-decoded (and NFC, as the
+    snapshot's names are), whether the body spells its letters out or encodes them."""
+    if not src.startswith("/billeder/"):
+        return src
+    return unicodedata.normalize("NFC", unquote(src, errors="replace"))
+
+
 def responsive_images(body: str, pictures: Mapping[str, "Picture"], *, eager_first: bool = False) -> str:
-    """The body with each <img> of a picture with variants rewritten (see img_tag). With eager_first,
-    the first picture in the body loads at once (it is likely in view when the page opens)."""
-    if not pictures or "<img" not in body.lower():
+    """The body with each <img> of a picture with variants rewritten (see img_tag), and the src of
+    every other /billeder/ image percent-encoded. With eager_first, the first picture in the body
+    loads at once (it is likely in view when the page opens)."""
+    if "<img" not in body.lower():
         return body
     finder = _ImgTags(body)
     finder.feed(body)
@@ -189,12 +204,20 @@ def responsive_images(body: str, pictures: Mapping[str, "Picture"], *, eager_fir
     done = 0
     first = True
     for offset, text, attrs in finder.found:
-        picture = pictures.get(dict(attrs).get("src") or "")
-        if picture is None or offset < done:
+        if offset < done:
             continue
-        pieces += [body[done:offset], img_tag(attrs, picture, lazy=not (eager_first and first))]
+        src = dict(attrs).get("src") or ""
+        url = image_url(src)
+        picture = pictures.get(src) or pictures.get(url)
+        if picture is not None:
+            tag = img_tag(attrs, picture, lazy=not (eager_first and first))
+            first = False
+        elif billeder_match(url) and billeder_href(url) != src:
+            tag = _tag([(name, billeder_href(url) if name == "src" else value) for name, value in attrs])
+        else:
+            continue
+        pieces += [body[done:offset], tag]
         done = offset + len(text)
-        first = False
     if not pieces:
         return body
     pieces.append(body[done:])

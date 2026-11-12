@@ -175,3 +175,49 @@ def test_attributes_are_escaped() -> None:
     tag = img_tag([("src", pic.url), ("alt", 'Et "citat" & <tegn>'), ("class", None)], pic, lazy=False)
     assert 'alt="Et &quot;citat&quot; &amp; &lt;tegn&gt;"' in tag
     assert " class " in tag
+
+
+def test_images_with_other_letters_are_found_and_encoded() -> None:
+    """A name keeps its letters; the body may spell them out or percent-encode them (in NFC or, from
+    a Mac, NFD), and the page always links it percent-encoded from UTF-8, NFC."""
+    pic = picture("/billeder/0123456789abcdef/tovtrækning-2019.jpg")
+    for src in (
+        pic.url,
+        "/billeder/0123456789abcdef/tovtr%C3%A6kning-2019.jpg",
+        "/billeder/0123456789abcdef/tovtr%c3%a6kning-2019.jpg",
+    ):
+        out = responsive_images(f'<img src="{src}" alt="Tovtrækning">', {pic.url: pic})
+        assert out.startswith(f'<img src="{pic.src}" alt="Tovtrækning" width="2000"'), src
+        assert "srcset=" in out
+
+    body = (
+        '<p><img src="/billeder/fedcba9876543210/kø_og_ål.v2.gif" alt="Kø og ål" class="x">'
+        '<img src="/billeder/fedcba9876543210/sa%CC%8A-ma%CC%8Ange.png" alt="">'
+        '<img src="/billeder/fedcba9876543210/ελληνικά-日本語.jpg"></p>'
+    )
+    assert responsive_images(body, {}) == (
+        '<p><img src="/billeder/fedcba9876543210/k%C3%B8_og_%C3%A5l.v2.gif" alt="Kø og ål" class="x">'
+        '<img src="/billeder/fedcba9876543210/s%C3%A5-m%C3%A5nge.png" alt="">'
+        '<img src="/billeder/fedcba9876543210/%CE%B5%CE%BB%CE%BB%CE%B7%CE%BD%CE%B9%CE%BA%CE%AC-'
+        '%E6%97%A5%E6%9C%AC%E8%AA%9E.jpg"></p>'
+    )
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "/billeder/fedcba9876543210/a-b_c.d.jpg",  # already all it needs to be
+        "/billeder/fedcba9876543210/k%C3%B8kken.jpg",
+        "https://gahk.dk/billeder/fedcba9876543210/køkken.jpg",  # not a site path: not ours to change
+        "/media/cms/køkken.jpg",
+    ],
+)
+def test_image_srcs_that_need_nothing_are_left_alone(src: str) -> None:
+    body = f'<p><img src="{src}" alt=""></p>'
+    assert responsive_images(body, {}) == body
+
+
+def test_an_encoded_name_cannot_break_out_of_the_attribute() -> None:
+    body = '<img src="/billeder/fedcba9876543210/a%22%20onerror%3D%22x.jpg">'
+    out = responsive_images(body, {})
+    assert out == '<img src="/billeder/fedcba9876543210/a%22%20onerror%3D%22x.jpg">'

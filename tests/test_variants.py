@@ -8,12 +8,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import GANG, Client, execute, image, page, publish, query_one, snapshot
+from conftest import GANG, Client, execute, image, page, publish, query_one, rename_image, snapshot
 from PIL import Image, ImageCms
 from sqlalchemy.orm import Session
 
 from gahk_web import api, images, variants
 from gahk_web.config import Config
+from gahk_web.snapshot import billeder_match
 
 GPS = 0x8825
 ORIENTATION = 0x0112
@@ -283,6 +284,38 @@ def test_pages_link_the_variants(client: Client, cfg: Config) -> None:
     assert f"background-image:url('{image('gang.jpg', GANG)['url']}')" in kontakt  # no variants
 
 
+def test_image_names_with_other_letters_are_percent_encoded_in_pages(client: Client, cfg: Config) -> None:
+    """Names keep their letters; wherever a page writes one (img src, srcset, a CSS url(), og:image) it
+    is percent-encoded from UTF-8, so no letter can break a srcset or a url()."""
+    put(client, PHOTO)
+    put(client, BROKEN)
+    data = photo_snapshot()
+    data = rename_image(data, "galleri.jpg", "tovtrækning-2019.jpg")
+    data = rename_image(data, "broken.jpg", "kø_og_ål.v2.jpg")
+    data = rename_image(data, "gang.jpg", "gangen-på-første.jpg")
+    gallery = image("tovtrækning-2019.jpg", PHOTO)["url"]
+    folder = f"/billeder/{PHOTO_SHA[:16]}"
+    # intern may also write a name percent-encoded: it is the same picture.
+    data["pages"][-1]["body"] += f'<p><img src="{folder}/tovtr%C3%A6kning-2019.jpg" alt="igen"></p>'
+    publish(client, data)
+
+    html = (cfg.public_html / "galleri/index.html").read_text()
+    broken = f"/billeder/{BROKEN_SHA[:16]}/k%C3%B8_og_%C3%A5l.v2.jpg"
+    assert f'<img src="{broken}">' in html  # no variants: the original, encoded
+    assert html.count(f'srcset="{folder}/_480w.webp 480w') == 2  # both spellings found the picture
+    assert f".page-stage--photo{{background-image:url('{folder}/_2000w.webp')}}" in html
+    assert gallery not in html and "kø" not in html.split("<body>")[1]
+
+    gang = image("gangen-på-første.jpg", GANG)["url"]
+    gang_href = f"/billeder/{gang.split('/')[2]}/gangen-p%C3%A5-f%C3%B8rste.jpg"
+    kontakt = (cfg.public_html / "kontakt/index.html").read_text()
+    assert f"background-image:url('{gang_href}')" in kontakt  # no variants: the original, encoded
+    assert f'<meta property="og:image" content="https://gahk.dk{gang_href}">' in kontakt
+    begivenheder = (cfg.public_html / "begivenheder/index.html").read_text()
+    assert f'<img src="{gang_href}" alt="" class="hero__img"' in begivenheder
+    assert gang not in kontakt + begivenheder
+
+
 def test_a_phone_gets_a_narrower_background(client: Client, cfg: Config) -> None:
     big = photo(3000, 2000)
     for data_bytes in (big, PHOTO, BROKEN):
@@ -461,5 +494,5 @@ def test_a_preview_keeps_intern_images_and_is_sanitised(client: Client) -> None:
 
 def test_variant_names_never_collide_with_image_names() -> None:
     assert images.VARIANT_NAME_RE.match("_480w.webp")
-    assert not images.BILLEDER_RE.match(f"/{images.variant_rel_path(PHOTO_SHA, 480)}")
+    assert not billeder_match(f"/{images.variant_rel_path(PHOTO_SHA, 480)}")
     assert Path(images.variant_rel_path(PHOTO_SHA, 480)).parent.name == PHOTO_SHA[:16]
