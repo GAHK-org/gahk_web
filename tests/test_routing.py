@@ -252,6 +252,17 @@ def test_htaccess_names_the_same_rules() -> None:
     assert "max-age=31536000, immutable" in text
 
 
+def test_htaccess_encodes_the_path_again_when_it_sends_www_and_http_to_https() -> None:
+    """%{REQUEST_URI} is decoded: with NE, /a%20b on www.gahk.dk went to "https://gahk.dk/a b", and a
+    Danish letter went out as raw UTF-8 (found by the URL parity probe of the old site's pictures)."""
+    lines = rule_lines(HTACCESS.read_text())
+    canonical = [line for line in lines if "%{REQUEST_URI}" in line]
+    assert canonical == [
+        "RewriteRule ^ https://%1%{REQUEST_URI} [R=301,L]",
+        "RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]",
+    ]
+
+
 def rule_lines(text: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip().startswith(("Rewrite", "# Rewrite"))]
 
