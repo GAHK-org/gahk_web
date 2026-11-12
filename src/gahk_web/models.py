@@ -72,7 +72,7 @@ class SiteState(Base):
 class Image(Base):
     """Image bytes received with PUT /api/images/<sha256>, kept as blobs under state_dir/images, and
     their responsive WebP variants (images.py): the upright size, which variant widths exist as
-    public_html/billeder/<sha16>/_<width>w.webp, and how often making them was tried.
+    public_html/images/<sha16>/_<width>w.webp, and how often making them was tried.
     variant_widths None: not made yet. Empty: the image gets none (variant_note says why), and pages
     show the original."""
 
@@ -95,7 +95,7 @@ class Image(Base):
 
 
 class ImageFile(Base):
-    """The public copies of the blobs: public_html/billeder/<sha16>/<name>. The name comes from the
+    """The public copies of the blobs: public_html/images/<sha16>/<name>. The name comes from the
     snapshot, so one blob can have several public names."""
 
     __tablename__ = "image_files"

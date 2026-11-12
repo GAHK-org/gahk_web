@@ -64,7 +64,7 @@ intern or its storage is down.
   few minutes until their copies are ready.
 - The original picture keeps its address, so old links to it keep working.
 - A picture's address keeps the letters of its file name, Danish and others
-  (`/billeder/…/tovtrækning-2019.jpg`), in lower case.
+  (`/images/…/tovtrækning-2019.jpg`), in lower case.
 - A picture the editors take off the site disappears with the next publication, its smaller copies
   included.
 

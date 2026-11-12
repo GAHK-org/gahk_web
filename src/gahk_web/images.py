@@ -1,18 +1,18 @@
 """The image cache: blobs from intern, published under their content-hashed URLs.
 
 intern PUTs the bytes of each image the webhost lacks (PUT /api/images/<sha256>); they are kept as a
-blob in state_dir/images/<sha256>. The public URL /billeder/<sha16>/<name> carries a name only the
-snapshot knows, so publishing links (or copies) each blob to public_html/billeder/<sha16>/<name>
+blob in state_dir/images/<sha256>. The public URL /images/<sha16>/<name> carries a name only the
+snapshot knows, so publishing links (or copies) each blob to public_html/images/<sha16>/<name>
 and records it in image_files. The name keeps its letters (tovtrækning.jpg): it is written in UTF-8
 (NFC, as the snapshot has it), which is what Apache finds for the percent-encoded address a browser
-asks for (/billeder/<sha16>/tovtr%C3%A6kning.jpg). Those URLs never change content, so Apache serves them with a
+asks for (/images/<sha16>/tovtr%C3%A6kning.jpg). Those URLs never change content, so Apache serves them with a
 one-year immutable cache.
 
 After a successful publish, public copies the new snapshot does not use are deleted, and so are blobs
 nothing uses, once they are an hour old (a blob PUT for a publish still in flight stays).
 
 Each JPEG, PNG and WebP image also gets responsive WebP variants (variants.py), kept next to its public
-copies as public_html/billeder/<sha16>/_<width>w.webp. A name that starts with "_" is never a
+copies as public_html/images/<sha16>/_<width>w.webp. A name that starts with "_" is never a
 snapshot name, so a variant cannot collide with an image. The images row records the image's upright
 size and which variant widths exist; pages link the variants instead of the original (render.py).
 Variants are cache: they are made when intern PUTs the image (one image per request spreads the work),
@@ -43,7 +43,7 @@ from sqlalchemy.orm import Session
 from .clock import now_utc
 from .config import Config
 from .models import Image, ImageFile
-from .snapshot import HEX64_RE, IMAGE_TYPES, MAX_IMAGE_BYTES, Snapshot, billeder_match
+from .snapshot import HEX64_RE, IMAGE_TYPES, MAX_IMAGE_BYTES, Snapshot, image_url_match
 
 BLOB_GRACE = timedelta(hours=1)
 # An image whose variants were started this often without an outcome (the process died making them)
@@ -179,14 +179,14 @@ def materialize(session: Session, cfg: Config, snapshot: Snapshot) -> None:
 
 
 def variant_rel_path(sha256: str, width: int) -> str:
-    return f"billeder/{sha256[:16]}/_{width}w.webp"
+    return f"images/{sha256[:16]}/_{width}w.webp"
 
 
 @dataclass(frozen=True)
 class Picture:
     """A published image with variants, as pages link it."""
 
-    url: str  # the original's /billeder/ URL
+    url: str  # the original's /images/ URL
     width: int  # upright size of the original, in pixels
     height: int
     variants: tuple[tuple[int, str], ...]  # (width, URL), narrowest first; never empty
@@ -237,7 +237,7 @@ def _variant_files_exist(cfg: Config, sha256: str, widths: Iterable[int]) -> boo
 
 
 def _remove_variant_files(cfg: Config, sha256: str) -> int:
-    folder = cfg.public_html / "billeder" / sha256[:16]
+    folder = cfg.public_html / "images" / sha256[:16]
     removed = 0
     with contextlib.suppress(OSError):
         for entry in folder.iterdir():
@@ -402,7 +402,7 @@ def collect_garbage(session: Session, cfg: Config, snapshot: Snapshot) -> int:
     used_folders = {sha[:16] for sha in used_shas}
     removed = 0
     for rel_path in session.scalars(select(ImageFile.rel_path)).all():
-        if rel_path in used_paths or not billeder_match("/" + rel_path):
+        if rel_path in used_paths or not image_url_match("/" + rel_path):
             continue
         target = public_file(cfg, rel_path)
         with contextlib.suppress(FileNotFoundError):

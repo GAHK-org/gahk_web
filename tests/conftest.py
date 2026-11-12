@@ -203,7 +203,7 @@ def jpeg(seed: str) -> bytes:
 def image(name: str, data: bytes, content_type: str = "image/jpeg") -> dict[str, Any]:
     sha = hashlib.sha256(data).hexdigest()
     return {
-        "url": f"/billeder/{sha[:16]}/{name}",
+        "url": f"/images/{sha[:16]}/{name}",
         "sha256": sha,
         "content_type": content_type,
         "size": len(data),

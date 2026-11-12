@@ -215,7 +215,7 @@ def test_image_files_keep_their_letters(client: Client, cfg: Config) -> None:
     name = "køkken-på-første_sal-v2.jpg"
     assert unicodedata.is_normalized("NFC", name)
     publish(client, rename_image(snapshot(), "kokken.jpg", name))
-    folder = os.fsencode(cfg.public_html / "billeder" / image(name, KOKKEN)["sha256"][:16])
+    folder = os.fsencode(cfg.public_html / "images" / image(name, KOKKEN)["sha256"][:16])
     assert os.listdir(folder) == [name.encode("utf-8")]  # noqa: PTH208 - the name as bytes on disk
     assert (cfg.public_html / image(name, KOKKEN)["url"].lstrip("/")).read_bytes() == KOKKEN
     # The next publish names it as before: the copy under the old name goes.

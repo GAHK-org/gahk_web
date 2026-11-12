@@ -8,7 +8,7 @@ cleaning what intern already cleaned changes nothing; change the two together.
 Then each <img> whose src is a published image with variants (images.Picture) links the variants:
 src is the widest one, srcset lists them all, sizes says how wide the content column shows it, and
 width/height give the browser the picture's shape before it loads. Pictures load lazily, except the
-first one of the front page. The src of any other /billeder/ image is percent-encoded the way the
+first one of the front page. The src of any other /images/ image is percent-encoded the way the
 page's other image URLs are (tovtr%C3%A6kning.jpg); intern may write it either way. The rewrite uses
 the standard library's HTML tokenizer and replaces only the <img> tags it changes, so the rest of the
 body stays byte for byte as it was.
@@ -22,7 +22,7 @@ from html.parser import HTMLParser
 from typing import TYPE_CHECKING
 from urllib.parse import unquote
 
-from .snapshot import billeder_href, billeder_match
+from .snapshot import image_href, image_url_match
 
 if TYPE_CHECKING:
     from .images import Picture
@@ -184,16 +184,16 @@ def _tag(attrs: list[tuple[str, str | None]]) -> str:
 
 
 def image_url(src: str) -> str:
-    """The snapshot's URL of an <img> src: a /billeder/ address percent-decoded (and NFC, as the
+    """The snapshot's URL of an <img> src: a /images/ address percent-decoded (and NFC, as the
     snapshot's names are), whether the body spells its letters out or encodes them."""
-    if not src.startswith("/billeder/"):
+    if not src.startswith("/images/"):
         return src
     return unicodedata.normalize("NFC", unquote(src, errors="replace"))
 
 
 def responsive_images(body: str, pictures: Mapping[str, "Picture"], *, eager_first: bool = False) -> str:
     """The body with each <img> of a picture with variants rewritten (see img_tag), and the src of
-    every other /billeder/ image percent-encoded. With eager_first, the first picture in the body
+    every other /images/ image percent-encoded. With eager_first, the first picture in the body
     loads at once (it is likely in view when the page opens)."""
     if "<img" not in body.lower():
         return body
@@ -212,8 +212,8 @@ def responsive_images(body: str, pictures: Mapping[str, "Picture"], *, eager_fir
         if picture is not None:
             tag = img_tag(attrs, picture, lazy=not (eager_first and first))
             first = False
-        elif billeder_match(url) and billeder_href(url) != src:
-            tag = _tag([(name, billeder_href(url) if name == "src" else value) for name, value in attrs])
+        elif image_url_match(url) and image_href(url) != src:
+            tag = _tag([(name, image_href(url) if name == "src" else value) for name, value in attrs])
         else:
             continue
         pieces += [body[done:offset], tag]

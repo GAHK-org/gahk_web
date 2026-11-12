@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from gahk_web import api, images, variants
 from gahk_web.config import Config
-from gahk_web.snapshot import billeder_match
+from gahk_web.snapshot import image_url_match
 
 GPS = 0x8825
 ORIENTATION = 0x0112
@@ -199,7 +199,7 @@ def put(client: Client, data: bytes, content_type: str = "image/jpeg") -> None:
 
 
 def variant_files(cfg: Config, sha: str) -> list[str]:
-    folder = cfg.public_html / "billeder" / sha[:16]
+    folder = cfg.public_html / "images" / sha[:16]
     return sorted(entry.name for entry in folder.glob("_*")) if folder.is_dir() else []
 
 
@@ -241,7 +241,7 @@ def test_a_put_makes_the_variants(client: Client, cfg: Config, con: Session) -> 
     row = image_row(con, PHOTO_SHA)
     assert (row["width"], row["height"], row["variant_widths"]) == (2000, 1000, [480, 960, 1600, 2000])
     for name in variant_files(cfg, PHOTO_SHA):
-        data = (cfg.public_html / "billeder" / PHOTO_SHA[:16] / name).read_bytes()
+        data = (cfg.public_html / "images" / PHOTO_SHA[:16] / name).read_bytes()
         assert_bare_webp(data, Image.open(io.BytesIO(data)).size)
 
 
@@ -260,7 +260,7 @@ def test_pages_link_the_variants(client: Client, cfg: Config) -> None:
     publish(client, photo_snapshot())
     gallery = image("galleri.jpg", PHOTO)["url"]
     broken = image("broken.jpg", BROKEN)["url"]
-    folder = f"/billeder/{PHOTO_SHA[:16]}"
+    folder = f"/images/{PHOTO_SHA[:16]}"
 
     html = (cfg.public_html / "galleri/index.html").read_text()
     assert (
@@ -294,20 +294,20 @@ def test_image_names_with_other_letters_are_percent_encoded_in_pages(client: Cli
     data = rename_image(data, "broken.jpg", "kø_og_ål-v2.jpg")
     data = rename_image(data, "gang.jpg", "gangen-på-første.jpg")
     gallery = image("tovtrækning-2019.jpg", PHOTO)["url"]
-    folder = f"/billeder/{PHOTO_SHA[:16]}"
+    folder = f"/images/{PHOTO_SHA[:16]}"
     # intern may also write a name percent-encoded: it is the same picture.
     data["pages"][-1]["body"] += f'<p><img src="{folder}/tovtr%C3%A6kning-2019.jpg" alt="igen"></p>'
     publish(client, data)
 
     html = (cfg.public_html / "galleri/index.html").read_text()
-    broken = f"/billeder/{BROKEN_SHA[:16]}/k%C3%B8_og_%C3%A5l-v2.jpg"
+    broken = f"/images/{BROKEN_SHA[:16]}/k%C3%B8_og_%C3%A5l-v2.jpg"
     assert f'<img src="{broken}">' in html  # no variants: the original, encoded
     assert html.count(f'srcset="{folder}/_480w.webp 480w') == 2  # both spellings found the picture
     assert f".page-stage--photo{{background-image:url('{folder}/_2000w.webp')}}" in html
     assert gallery not in html and "kø" not in html.split("<body>")[1]
 
     gang = image("gangen-på-første.jpg", GANG)["url"]
-    gang_href = f"/billeder/{gang.split('/')[2]}/gangen-p%C3%A5-f%C3%B8rste.jpg"
+    gang_href = f"/images/{gang.split('/')[2]}/gangen-p%C3%A5-f%C3%B8rste.jpg"
     kontakt = (cfg.public_html / "kontakt/index.html").read_text()
     assert f"background-image:url('{gang_href}')" in kontakt  # no variants: the original, encoded
     assert f'<meta property="og:image" content="https://gahk.dk{gang_href}">' in kontakt
@@ -325,7 +325,7 @@ def test_a_phone_gets_a_narrower_background(client: Client, cfg: Config) -> None
     data["images"].append(picture)
     data["pages"][-1]["background"] = picture["url"]
     publish(client, data)
-    folder = f"/billeder/{picture['sha256'][:16]}"
+    folder = f"/images/{picture['sha256'][:16]}"
     html = (cfg.public_html / "galleri/index.html").read_text()
     assert f"background-image:url('{folder}/_2400w.webp')" in html
     assert (
@@ -337,7 +337,7 @@ def test_a_phone_gets_a_narrower_background(client: Client, cfg: Config) -> None
 def test_missing_variant_files_are_made_again(client: Client, cfg: Config, con: Session) -> None:
     put(client, PHOTO)
     put(client, BROKEN)
-    (cfg.public_html / "billeder" / PHOTO_SHA[:16] / "_960w.webp").unlink()
+    (cfg.public_html / "images" / PHOTO_SHA[:16] / "_960w.webp").unlink()
     publish(client, photo_snapshot())
     assert "_960w.webp" in variant_files(cfg, PHOTO_SHA)
     assert image_row(con, PHOTO_SHA)["variant_widths"] == [480, 960, 1600, 2000]
@@ -349,7 +349,7 @@ def test_variants_a_publish_had_no_time_for_come_with_housekeeping(
     put(client, PHOTO)
     put(client, BROKEN)
     for name in variant_files(cfg, PHOTO_SHA):  # as if stored by a release without variants
-        (cfg.public_html / "billeder" / PHOTO_SHA[:16] / name).unlink()
+        (cfg.public_html / "images" / PHOTO_SHA[:16] / name).unlink()
     execute(con, "UPDATE images SET variant_widths = NULL, variant_attempts = 0")
     monkeypatch.setattr(api, "PUBLISH_VARIANT_BUDGET", 0.0)
 
@@ -379,7 +379,7 @@ def test_variants_go_with_their_image(client: Client, cfg: Config, con: Session)
     put(client, PHOTO)
     put(client, BROKEN)
     publish(client, photo_snapshot())
-    folder = cfg.public_html / "billeder" / PHOTO_SHA[:16]
+    folder = cfg.public_html / "images" / PHOTO_SHA[:16]
     assert variant_files(cfg, PHOTO_SHA)
 
     later = snapshot(revision="b" * 64)
@@ -412,7 +412,7 @@ def test_variants_of_an_image_collected_meanwhile_are_removed(
 
     monkeypatch.setattr(variants, "make", collected_while_making)
     assert not images.make_variants(con, cfg, PHOTO_SHA)
-    assert not (cfg.public_html / "billeder" / PHOTO_SHA[:16]).exists()  # no orphans left behind
+    assert not (cfg.public_html / "images" / PHOTO_SHA[:16]).exists()  # no orphans left behind
 
 
 def test_a_full_disk_does_not_count_toward_giving_up(
@@ -447,7 +447,7 @@ def test_requests_intern_waits_for_leave_a_killed_attempt_to_housekeeping(
     put(client, PHOTO)
     put(client, BROKEN)
     for name in variant_files(cfg, PHOTO_SHA):
-        (cfg.public_html / "billeder" / PHOTO_SHA[:16] / name).unlink()
+        (cfg.public_html / "images" / PHOTO_SHA[:16] / name).unlink()
     # As if the process making them had been killed once (for its memory, say).
     execute(
         con,
@@ -488,11 +488,11 @@ def test_a_preview_keeps_intern_images_and_is_sanitised(client: Client) -> None:
     html = result.text
     assert '<img src="https://intern.gahk.dk/media/cms/ny.jpg" alt="">' in html  # untouched
     assert "background-image:url('https://intern.gahk.dk/media/cms/baggrund.jpg')" in html
-    assert f'srcset="/billeder/{PHOTO_SHA[:16]}/_480w.webp 480w' in html  # a published picture
+    assert f'srcset="/images/{PHOTO_SHA[:16]}/_480w.webp 480w' in html  # a published picture
     assert "onclick" not in html and "javascript:" not in html
 
 
 def test_variant_names_never_collide_with_image_names() -> None:
     assert images.VARIANT_NAME_RE.match("_480w.webp")
-    assert not billeder_match(f"/{images.variant_rel_path(PHOTO_SHA, 480)}")
+    assert not image_url_match(f"/{images.variant_rel_path(PHOTO_SHA, 480)}")
     assert Path(images.variant_rel_path(PHOTO_SHA, 480)).parent.name == PHOTO_SHA[:16]

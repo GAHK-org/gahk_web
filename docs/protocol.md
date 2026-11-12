@@ -203,15 +203,15 @@ when no release is installed yet (bootstrap) or the active one is broken.
   "format": 1,
   "revision": "<64 hex>",
   "published_at": "2026-11-11T12:00:00+01:00",
-  "site": {"front_page_id": 1, "default_background": "/billeder/<sha16>/<name>" | ""},
-  "legacy_images": {"/static/legacy/image/upload/images/gang.jpg": "/billeder/<sha16>/gang.jpg"},
+  "site": {"front_page_id": 1, "default_background": "/images/<sha16>/<name>" | ""},
+  "legacy_images": {"/static/legacy/image/upload/images/gang.jpg": "/images/<sha16>/gang.jpg"},
   "pages": [{"id": 1, "path": "", "title": "Velkommen", "body": "<p>…</p>",
-             "background": "/billeder/<sha16>/<name>" | "", "description": "", "updated_at": "<iso>"}],
+             "background": "/images/<sha16>/<name>" | "", "description": "", "updated_at": "<iso>"}],
   "news": [{"id": 3, "title": "…", "body": "<p>…</p>", "published_at": "<iso>"}],
   "events": [{"id": 5, "title": "…", "description": "<p>…</p>", "starts_on": "2026-12-01"}],
   "menu": [{"label": "Hjem", "url": "/"}],
   "redirects": {"gammel-sti": "ny/sti"},
-  "images": [{"url": "/billeder/<sha16>/<name>", "sha256": "<64 hex>",
+  "images": [{"url": "/images/<sha16>/<name>", "sha256": "<64 hex>",
               "content_type": "image/jpeg", "size": 12345}]
 }
 ```
@@ -221,17 +221,17 @@ when no release is installed yet (bootstrap) or the active one is broken.
 - **Paths** have no leading or trailing slash, one or two segments of `[a-z0-9]` joined by `-` or `_`.
   The front page has path `""`. Pages without an address are not sent.
 - **Reserved paths** make gahk.dk refuse the snapshot, so intern refuses them as page paths too.
-  - First segments: `admin`, `api`, `begivenheder`, `billeder`, `cgi-bin`, `django-admin`,
-    `favicon.ico`, `health`, `healthz`, `intern`, `kalender`, `media`, `nyintern`, `photo-album`,
+  - First segments: `admin`, `api`, `begivenheder`, `cgi-bin`, `django-admin`, `favicon.ico`,
+    `health`, `healthz`, `images`, `intern`, `kalender`, `media`, `nyintern`, `photo-album`,
     `robots.txt`, `s`, `sitemap.xml`, `static`, `sw.js`, `wiki`, `404`.
   - Full paths: `optagelse/ansoeg`, `optagelse/fremlej`, `optagelse/send_rundvisning`,
     `optagelse/send_fremleje`, `optagelse/listansoegninger`, `optagelse/eksport`.
   - `optagelse` itself is an ordinary page.
 - **Images** are content: they all live in intern's image library, and gahk_web's repository holds
   none.
-  - intern rewrites `/media/cms/<name>` to `/billeder/<sha256[:16]>/<basename>`. The basename is
+  - intern rewrites `/media/cms/<name>` to `/images/<sha256[:16]>/<basename>`. The basename is
     slugified and lower-case, with its extension kept. It keeps its letters: the JSON carries the
-    name as UTF-8 text (`/billeder/<sha16>/tovtrækning-2019.jpg`), never percent-encoded, and
+    name as UTF-8 text (`/images/<sha16>/tovtrækning-2019.jpg`), never percent-encoded, and
     gahk.dk refuses the snapshot unless the name
     - is words of lower-case or caseless letters (Unicode categories Ll, Lm, Lo: `æ`, `ø`, `å`,
       `é`, `ß`, other scripts) and decimal digits (Nd), joined by single `-` or `_`, then one `.`
@@ -249,15 +249,15 @@ when no release is installed yet (bootstrap) or the active one is broken.
     ask for and Apache decodes to the file. In a body, intern may write an image's `src` either
     way; gahk.dk finds the image both ways and writes it encoded.
   - Every image a page, background or body uses is listed in `images`, with its type (jpeg, png,
-    gif, webp) and size (≤ 15 MB). Page and default backgrounds must be `/billeder/` URLs listed
+    gif, webp) and size (≤ 15 MB). Page and default backgrounds must be `/images/` URLs listed
     there.
   - These URLs are immutable. gahk.dk serves them with a one-year cache.
   - gahk.dk adds WebP variants of each JPEG, PNG and WebP image next to it, as
-    `/billeder/<sha16>/_<width>w.webp`, and its pages link those instead of the original. A name
+    `/images/<sha16>/_<width>w.webp`, and its pages link those instead of the original. A name
     starting with `_` never matches an image name above, so the two cannot collide. The original
     stays at its URL. This changes nothing intern sends.
 - **`legacy_images`** maps old public image URLs (`/static/legacy/image/<rest>`) to their
-  `/billeder/` URL. gahk.dk answers `/static/legacy/image/<rest>` and `/public/image/<rest>` with a
+  `/images/` URL. gahk.dk answers `/static/legacy/image/<rest>` and `/public/image/<rest>` with a
   301 straight to the new URL; it never serves a file at an address with `/legacy/` in it. A key may have its letters spelled out (`køkken.jpg`) or percent-encoded
   (`k%C3%B8kken.jpg`); a request matches either, in NFC or NFD.
 - **Links** in bodies to `/intern/…` or `http(s)://(www.)gahk.dk/intern/…` are rewritten by intern

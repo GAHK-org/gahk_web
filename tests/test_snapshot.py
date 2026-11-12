@@ -6,8 +6,8 @@ from conftest import snapshot
 
 from gahk_web.snapshot import (
     SnapshotError,
-    billeder_href,
-    billeder_match,
+    image_href,
+    image_url_match,
     is_reserved,
     validate,
     validate_preview,
@@ -32,7 +32,7 @@ def broken(**changes: object) -> dict[str, Any]:
         "admin",
         "api",
         "begivenheder",
-        "billeder",
+        "images",
         "static",
         "s",
         "intern/x",
@@ -77,10 +77,10 @@ def test_only_the_front_page_has_the_empty_path() -> None:
     "url",
     [
         "/media/cms/2026/11/x.jpg",
-        "/billeder/0123/x.jpg",
-        "/billeder/0123456789abcdef/../x.jpg",
-        "/billeder/0123456789abcdef/X.jpg",
-        "/billeder/0123456789abcdef/x.png",  # extension does not match image/jpeg
+        "/images/0123/x.jpg",
+        "/images/0123456789abcdef/../x.jpg",
+        "/images/0123456789abcdef/X.jpg",
+        "/images/0123456789abcdef/x.png",  # extension does not match image/jpeg
         "https://example.com/x.jpg",
     ],
 )
@@ -111,7 +111,7 @@ SHA16 = "0123456789abcdef"
     ],
 )
 def test_image_names_keep_their_letters(name: str) -> None:
-    assert billeder_match(f"/billeder/{SHA16}/{name}")
+    assert image_url_match(f"/images/{SHA16}/{name}")
 
 
 @pytest.mark.parametrize(
@@ -149,13 +149,13 @@ def test_image_names_keep_their_letters(name: str) -> None:
     ],
 )
 def test_bad_image_names_are_refused(name: str) -> None:
-    assert not billeder_match(f"/billeder/{SHA16}/{name}")
+    assert not image_url_match(f"/images/{SHA16}/{name}")
 
 
 def test_a_snapshot_ships_images_with_danish_names() -> None:
     data = snapshot()
     sha = data["images"][2]["sha256"]
-    url = f"/billeder/{sha[:16]}/køkken-på-første.jpg"
+    url = f"/images/{sha[:16]}/køkken-på-første.jpg"
     data["images"][2]["url"] = url
     data["pages"][2]["background"] = url
     data["legacy_images"]["/static/legacy/image/upload/køkken.jpg"] = url
@@ -163,19 +163,16 @@ def test_a_snapshot_ships_images_with_danish_names() -> None:
 
 
 def test_image_hrefs_are_percent_encoded_from_utf8() -> None:
-    assert (
-        billeder_href(f"/billeder/{SHA16}/tovtrækning-2019.jpg")
-        == f"/billeder/{SHA16}/tovtr%C3%A6kning-2019.jpg"
-    )
-    assert billeder_href(f"/billeder/{SHA16}/a_b.c-d.jpg") == f"/billeder/{SHA16}/a_b.c-d.jpg"
-    assert billeder_href(f"/billeder/{SHA16}/_960w.webp") == f"/billeder/{SHA16}/_960w.webp"
+    assert image_href(f"/images/{SHA16}/tovtrækning-2019.jpg") == f"/images/{SHA16}/tovtr%C3%A6kning-2019.jpg"
+    assert image_href(f"/images/{SHA16}/a_b.c-d.jpg") == f"/images/{SHA16}/a_b.c-d.jpg"
+    assert image_href(f"/images/{SHA16}/_960w.webp") == f"/images/{SHA16}/_960w.webp"
     # intern's /media/ names arrive encoded already: never encoded twice.
-    assert billeder_href("/media/cms/k%C3%B8kken.jpg") == "/media/cms/k%C3%B8kken.jpg"
+    assert image_href("/media/cms/k%C3%B8kken.jpg") == "/media/cms/k%C3%B8kken.jpg"
 
 
 def test_image_url_hash_must_match_the_sha() -> None:
     data = snapshot()
-    data["images"][0]["url"] = "/billeder/0000000000000000/gang.jpg"
+    data["images"][0]["url"] = "/images/0000000000000000/gang.jpg"
     with pytest.raises(SnapshotError, match="does not match"):
         validate(data)
 
@@ -186,7 +183,7 @@ def test_backgrounds_must_be_shipped_images() -> None:
     with pytest.raises(SnapshotError, match="not an image this snapshot ships"):
         validate(data)
     data = snapshot()
-    data["site"]["default_background"] = "/billeder/0123456789abcdef/other.jpg"
+    data["site"]["default_background"] = "/images/0123456789abcdef/other.jpg"
     with pytest.raises(SnapshotError, match="default_background"):
         validate(data)
 
@@ -196,7 +193,7 @@ def test_legacy_image_map_is_checked() -> None:
     data["legacy_images"] = {"/public/image/x.jpg": data["images"][0]["url"]}
     with pytest.raises(SnapshotError, match="legacy_images"):
         validate(data)
-    data["legacy_images"] = {"/static/legacy/image/x.jpg": "/billeder/0123456789abcdef/nope.jpg"}
+    data["legacy_images"] = {"/static/legacy/image/x.jpg": "/images/0123456789abcdef/nope.jpg"}
     with pytest.raises(SnapshotError, match="legacy_images"):
         validate(data)
     data["legacy_images"] = {

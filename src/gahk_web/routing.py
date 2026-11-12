@@ -51,7 +51,7 @@ def legacy_image_key(path: str) -> str | None:
     """The key in the snapshot's legacy_images map for an old picture address, or None.
 
     The old site's pictures were at /static/legacy/image/..., and before that at /public/image/...
-    (the same files). Both are only ever redirected, in one step, to the picture's /billeder/ address:
+    (the same files). Both are only ever redirected, in one step, to the picture's /images/ address:
     gahk.dk never serves anything at an address with /legacy/ in it."""
     for prefix in (LEGACY_IMAGE_PREFIX, PUBLIC_IMAGE_PREFIX):
         if path.startswith(prefix) and len(path) > len(prefix):

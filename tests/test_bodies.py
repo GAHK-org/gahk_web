@@ -18,11 +18,11 @@ LEGITIMATE = [
         '<h3 style="margin-bottom: 0in; line-height: 20px; widows: 0; orphans: 0; ">Frokost</h3>\n\n'
         '<p style="margin-bottom: 0in; line-height: 20px; widows: 0; orphans: 0; "><span style="line-height:'
         ' 115%; ">Frokosten serveres i spisesalen hver hverdag fra kl. 11.45-12.45.&nbsp;Der er altid'
-        ' mindst tre salater.</span><br>\n<br>\n<img alt="" src="/billeder/0123456789abcdef/spisning.jpg"'
+        ' mindst tre salater.</span><br>\n<br>\n<img alt="" src="/images/0123456789abcdef/spisning.jpg"'
         ' style="height: 110px; width: 420px;"></p>'
     ),
     (
-        '<p><img alt="" src="/billeder/0123456789abcdef/aurora.jpg" style="caret-color: rgb(0, 0, 0); color:'
+        '<p><img alt="" src="/images/0123456789abcdef/aurora.jpg" style="caret-color: rgb(0, 0, 0); color:'
         ' rgb(0, 0, 0); width: 180px; height: 201px; float: right;">Aurora &amp; Mathias &lt;3</p>'
     ),
     (
@@ -37,7 +37,7 @@ LEGITIMATE = [
         "<ul><li><strong>Fed</strong>, <em>kursiv</em>, <u>understreget</u>, <s>gennemstreget</s></li>"
         '<li><sub>2</sub><sup>3</sup> <small>lille</small> <mark>mærket</mark> <abbr title="Gl.">gl.</abbr>'
         "</li></ul><ol><li>en</li></ol><blockquote><cite>citat</cite></blockquote><pre><code>kode</code></pre>"
-        '<figure><img src="/billeder/0123456789abcdef/a.png" alt="A" width="300" height="200"><figcaption>'
+        '<figure><img src="/images/0123456789abcdef/a.png" alt="A" width="300" height="200"><figcaption>'
         'Tekst</figcaption></figure><dl><dt>t</dt><dd>d</dd></dl><hr><div class="x" id="y" lang="da">'
         "<h1>1</h1><h2>2</h2><h4>4</h4><h5>5</h5><h6>6</h6></div>"
     ),
@@ -74,8 +74,8 @@ def test_sanitising_is_a_fixed_point() -> None:
         ),
         # What only the rewrite may add, never the body itself.
         (
-            '<img src="/billeder/0123456789abcdef/a.jpg" srcset="evil.jpg 1x" sizes="1px" loading="eager">',
-            '<img src="/billeder/0123456789abcdef/a.jpg">',
+            '<img src="/images/0123456789abcdef/a.jpg" srcset="evil.jpg 1x" sizes="1px" loading="eager">',
+            '<img src="/images/0123456789abcdef/a.jpg">',
         ),
     ],
 )
@@ -104,20 +104,20 @@ def test_published_and_previewed_bodies_are_sanitised(client: Client, cfg: Confi
     assert "alert(1)" not in result.text and "onload" not in result.text
 
 
-def picture(url: str = "/billeder/0123456789abcdef/a.jpg", width: int = 2000, height: int = 1000) -> Picture:
+def picture(url: str = "/images/0123456789abcdef/a.jpg", width: int = 2000, height: int = 1000) -> Picture:
     widths = [step for step in (480, 960, 1600) if step < width] + [min(width, 2400)]
-    return Picture(url, width, height, tuple((w, f"/billeder/0123456789abcdef/_{w}w.webp") for w in widths))
+    return Picture(url, width, height, tuple((w, f"/images/0123456789abcdef/_{w}w.webp") for w in widths))
 
 
 def test_an_image_with_variants_links_them() -> None:
     pic = picture()
-    body = '<p>Før &amp; <b>efter</b></p><p><img alt="Gangen" src="/billeder/0123456789abcdef/a.jpg"></p><p>Slut</p>'
+    body = '<p>Før &amp; <b>efter</b></p><p><img alt="Gangen" src="/images/0123456789abcdef/a.jpg"></p><p>Slut</p>'
     out = responsive_images(body, {pic.url: pic})
     assert out == (
-        '<p>Før &amp; <b>efter</b></p><p><img src="/billeder/0123456789abcdef/_2000w.webp" alt="Gangen"'
-        ' width="2000" height="1000" srcset="/billeder/0123456789abcdef/_480w.webp 480w,'
-        " /billeder/0123456789abcdef/_960w.webp 960w, /billeder/0123456789abcdef/_1600w.webp 1600w,"
-        ' /billeder/0123456789abcdef/_2000w.webp 2000w" sizes="(min-width: 768px) 720px,'
+        '<p>Før &amp; <b>efter</b></p><p><img src="/images/0123456789abcdef/_2000w.webp" alt="Gangen"'
+        ' width="2000" height="1000" srcset="/images/0123456789abcdef/_480w.webp 480w,'
+        " /images/0123456789abcdef/_960w.webp 960w, /images/0123456789abcdef/_1600w.webp 1600w,"
+        ' /images/0123456789abcdef/_2000w.webp 2000w" sizes="(min-width: 768px) 720px,'
         ' calc(100vw - 3rem)" loading="lazy" decoding="async"></p><p>Slut</p>'
     )
     assert "a.jpg" not in out  # the original is no longer linked
@@ -162,8 +162,8 @@ def test_only_the_front_pages_first_picture_loads_eagerly() -> None:
 def test_other_images_and_the_rest_of_the_body_are_left_alone() -> None:
     pic = picture()
     body = (
-        '<p title="a &quot;b&quot; c">x<br>\n<img src="/billeder/fedcba9876543210/gif.gif" alt="">\n'
-        '<img src="https://example.com/x.jpg"><img alt="ingen src"></p><a href="/billeder/0123456789abcdef/a.jpg">'
+        '<p title="a &quot;b&quot; c">x<br>\n<img src="/images/fedcba9876543210/gif.gif" alt="">\n'
+        '<img src="https://example.com/x.jpg"><img alt="ingen src"></p><a href="/images/0123456789abcdef/a.jpg">'
         "Fuld størrelse</a>"
     )
     assert responsive_images(body, {pic.url: pic}) == body
@@ -180,25 +180,25 @@ def test_attributes_are_escaped() -> None:
 def test_images_with_other_letters_are_found_and_encoded() -> None:
     """A name keeps its letters; the body may spell them out or percent-encode them (in NFC or, from
     a Mac, NFD), and the page always links it percent-encoded from UTF-8, NFC."""
-    pic = picture("/billeder/0123456789abcdef/tovtrækning-2019.jpg")
+    pic = picture("/images/0123456789abcdef/tovtrækning-2019.jpg")
     for src in (
         pic.url,
-        "/billeder/0123456789abcdef/tovtr%C3%A6kning-2019.jpg",
-        "/billeder/0123456789abcdef/tovtr%c3%a6kning-2019.jpg",
+        "/images/0123456789abcdef/tovtr%C3%A6kning-2019.jpg",
+        "/images/0123456789abcdef/tovtr%c3%a6kning-2019.jpg",
     ):
         out = responsive_images(f'<img src="{src}" alt="Tovtrækning">', {pic.url: pic})
         assert out.startswith(f'<img src="{pic.src}" alt="Tovtrækning" width="2000"'), src
         assert "srcset=" in out
 
     body = (
-        '<p><img src="/billeder/fedcba9876543210/kø_og_ål-v2.gif" alt="Kø og ål" class="x">'
-        '<img src="/billeder/fedcba9876543210/sa%CC%8A-ma%CC%8Ange.png" alt="">'
-        '<img src="/billeder/fedcba9876543210/ελληνικά-日本語.jpg"></p>'
+        '<p><img src="/images/fedcba9876543210/kø_og_ål-v2.gif" alt="Kø og ål" class="x">'
+        '<img src="/images/fedcba9876543210/sa%CC%8A-ma%CC%8Ange.png" alt="">'
+        '<img src="/images/fedcba9876543210/ελληνικά-日本語.jpg"></p>'
     )
     assert responsive_images(body, {}) == (
-        '<p><img src="/billeder/fedcba9876543210/k%C3%B8_og_%C3%A5l-v2.gif" alt="Kø og ål" class="x">'
-        '<img src="/billeder/fedcba9876543210/s%C3%A5-m%C3%A5nge.png" alt="">'
-        '<img src="/billeder/fedcba9876543210/%CE%B5%CE%BB%CE%BB%CE%B7%CE%BD%CE%B9%CE%BA%CE%AC-'
+        '<p><img src="/images/fedcba9876543210/k%C3%B8_og_%C3%A5l-v2.gif" alt="Kø og ål" class="x">'
+        '<img src="/images/fedcba9876543210/s%C3%A5-m%C3%A5nge.png" alt="">'
+        '<img src="/images/fedcba9876543210/%CE%B5%CE%BB%CE%BB%CE%B7%CE%BD%CE%B9%CE%BA%CE%AC-'
         '%E6%97%A5%E6%9C%AC%E8%AA%9E.jpg"></p>'
     )
 
@@ -206,9 +206,9 @@ def test_images_with_other_letters_are_found_and_encoded() -> None:
 @pytest.mark.parametrize(
     "src",
     [
-        "/billeder/fedcba9876543210/a-b_c.d.jpg",  # already all it needs to be
-        "/billeder/fedcba9876543210/k%C3%B8kken.jpg",
-        "https://gahk.dk/billeder/fedcba9876543210/køkken.jpg",  # not a site path: not ours to change
+        "/images/fedcba9876543210/a-b_c.d.jpg",  # already all it needs to be
+        "/images/fedcba9876543210/k%C3%B8kken.jpg",
+        "https://gahk.dk/images/fedcba9876543210/køkken.jpg",  # not a site path: not ours to change
         "/media/cms/køkken.jpg",
     ],
 )
@@ -218,6 +218,6 @@ def test_image_srcs_that_need_nothing_are_left_alone(src: str) -> None:
 
 
 def test_an_encoded_name_cannot_break_out_of_the_attribute() -> None:
-    body = '<img src="/billeder/fedcba9876543210/a%22%20onerror%3D%22x.jpg">'
+    body = '<img src="/images/fedcba9876543210/a%22%20onerror%3D%22x.jpg">'
     out = responsive_images(body, {})
-    assert out == '<img src="/billeder/fedcba9876543210/a%22%20onerror%3D%22x.jpg">'
+    assert out == '<img src="/images/fedcba9876543210/a%22%20onerror%3D%22x.jpg">'

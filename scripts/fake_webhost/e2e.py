@@ -850,7 +850,7 @@ manifest_url = {MANIFEST_URL}
         expect(f"{folder}/_480w.webp 480w" in page, "the body's picture has no srcset")
         expect(DANISH_NAME not in page, "the page spells the image name out")
 
-        # Both old picture addresses go in one step to the picture's /billeder/ URL (the app, from
+        # Both old picture addresses go in one step to the picture's /images/ URL (the app, from
         # the snapshot's legacy_images map); never by way of another /legacy/ address.
         for old_path in (
             "/public/image/upload/images/k%C3%B8kken.jpg",
@@ -915,7 +915,7 @@ manifest_url = {MANIFEST_URL}
         ):
             legacy = host.get(old_path)
             expect(
-                legacy.status == 301 and legacy.header("Location").startswith("/billeder/"),
+                legacy.status == 301 and legacy.header("Location").startswith("/images/"),
                 f"{old_path}: {legacy.status} {legacy.header('Location')}",
             )
         missing = host.get("/findes-ikke")
@@ -1032,7 +1032,7 @@ manifest_url = {MANIFEST_URL}
             "/INSTALL.PY",
             "/foo.py",
             "/x.cgi.jpg",
-            "/billeder/0123456789abcdef/foto.php.jpg",
+            "/images/0123456789abcdef/foto.php.jpg",
             "/x.PHTML",
             "/x.shtml",
             "/fcgitest/test.fcgi",

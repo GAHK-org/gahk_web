@@ -86,7 +86,7 @@ What lives where on the webhost (`~` is the FTP home):
 ~/public_html/cgi-bin/gahk.cgi   from the release: the CGI stub, for /api/update, large bodies and
                                  the CGI-only switch; gahk.fcgi shares its code
 ~/public_html/static/            from the release (css with hashed names, fonts, icons)
-~/public_html/billeder/          images, copied from intern's library, and their WebP variants
+~/public_html/images/            images, copied from intern's library, and their WebP variants
                                  (`<sha16>/_<width>w.webp`), made here; both are cache
 ~/public_html/…                  the rendered pages: index.html, <path>/index.html, 404.html, …
 ```
@@ -317,7 +317,7 @@ konsoleH offers Varnish in front of Apache. Leave it **off**:
   the API, the forms, the visit beacon, the calendar feeds, redirects and 404s, none of which may
   be cached anyway.
 - The `.htaccess` sets the cache headers browsers need: a minute for pages, so an edit shows within a
-  minute, and a year, immutable, for `/billeder/` and hashed assets. A Varnish TTL on top would only
+  minute, and a year, immutable, for `/images/` and hashed assets. A Varnish TTL on top would only
   delay edits, and Hetzner documents no way to purge it.
 - Behind Varnish, `REMOTE_ADDR` may become Varnish's address. The rate limit on the forms and the
   daily visitor count both key on the client address, and `X-Forwarded-For` is deliberately not
@@ -384,7 +384,7 @@ curl -sI https://gahk.dk/fcgitest/test.fcgi   # 403 (and delete the folder, sect
 curl -sI https://gahk.dk/favicon.ico       # 200
 curl -s  https://gahk.dk/ | grep -o '/static/css/site\.[0-9a-f]*\.css'   # the hashed stylesheet …
 curl -sI https://gahk.dk/static/css/site.<hash>.css   # … 200, max-age=31536000, immutable
-curl -sI https://gahk.dk/billeder/<sha16>/<name>      # an image from a page: 200, immutable
+curl -sI https://gahk.dk/images/<sha16>/<name>   # an image from a page: 200, immutable
 curl -sI https://gahk.dk/sw.js             # 200, Cache-Control: no-cache
 gahk_api GET /api/status                   # version, revision, outbox counts, update.last_result
 ```
@@ -412,7 +412,7 @@ addresses redirect there with their path, query and method. Check these once DNS
 | `/velkommen`, `/velkommen/` (the old second address of the front page) | 200, the front page (canonical link `/`) |
 | `/optagelse/ansoeg`, `/optagelse/fremlej` | 200, the forms; a POST there, or to the old targets `/optagelse/send_rundvisning` and `/optagelse/send_fremleje`, is handled |
 | `/optagelse/ansoeg/success` | 200, the thank-you page |
-| `/static/legacy/image/upload/…` (also with the old site's hash in the name), `/public/image/…` | 301, in one step, to the picture's `/billeder/<sha16>/<name>` (200) |
+| `/static/legacy/image/upload/…` (also with the old site's hash in the name), `/public/image/…` | 301, in one step, to the picture's `/images/<sha16>/<name>` (200) |
 | `/static/legacy/image/elements/lamassu.svg`, `…/lamassu.b8dc291a4e43.svg` (the old logo and favicon) | 301 to `/static/img/lamassu.svg` (200, `image/svg+xml`) |
 | `/favicon.ico`, `/static/icons/icon-192x192.png`, `/static/icons/badge-72x72.png` | 200 |
 | `/kalender/<token>.ics` | 200 `text/calendar`, passed through from intern |
@@ -521,7 +521,7 @@ it). The kept releases share them as hard links while their `requirements.lock` 
 releases usually take about 65 MB, at most about 200 MB, plus about 65 MB while an install runs.
 Interrupted installs leave folders named `.tmp-*` and `~/gahk_web/tmp`; the next update deletes them.
 The images take their size twice: the blob in `~/gahk_web/state/images` (hard-linked into
-`~/public_html/billeder` where hard links work) and the WebP variants beside it, which add about as
+`~/public_html/images` where hard links work) and the WebP variants beside it, which add about as
 much again (the old site's 66 pictures: 18 MB of originals, 20 MB of variants).
 
 **Rollback.** Add a pin to `~/gahk_web/config.ini` with the file manager:
@@ -703,7 +703,7 @@ it; each of those still needs a look on Hetzner only if its Apache is set up dif
 8. `REMOTE_ADDR` is the real client (Varnish off). **Not verified on Hetzner.**
 9. The database is reachable with konsoleH's hostname, and `verify-full` works with `sqlca.pem`.
    **Not verified on Hetzner.**
-10. Hardlinks work in the home: from `~/gahk_web/state` to `~/public_html/billeder`, and between
+10. Hardlinks work in the home: from `~/gahk_web/state` to `~/public_html/images`, and between
     releases' `vendor/` folders. If they do not, the code copies instead (more disk, section 10).
     **Not verified on Hetzner** (the fake webhost has one ordinary file system).
 11. A CGI process may start a child in its own session that outlives the request. The updater does

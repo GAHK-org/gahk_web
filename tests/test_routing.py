@@ -111,7 +111,7 @@ def test_not_intranet() -> None:
 def test_old_image_addresses_follow_the_legacy_map(client: Client) -> None:
     publish(client)
     gang = image("gang.jpg", GANG)["url"]
-    # Both old forms go straight to /billeder/, never by way of another /legacy/ address.
+    # Both old forms go straight to /images/, never by way of another /legacy/ address.
     for path in ("/public/image/upload/images/gang.jpg", "/static/legacy/image/upload/images/gang.jpg"):
         result = client.get(path)
         assert (result.status, result.headers["Location"]) == (301, gang), path
@@ -138,7 +138,7 @@ def test_old_image_addresses_with_other_letters_follow_the_map(client: Client) -
     always asks percent-encoded (NFC, or NFD from a Mac). The Location is percent-encoded too."""
     data = rename_image(snapshot(), "kokken.jpg", "køkken-på-første.jpg")
     kokken = image("køkken-på-første.jpg", KOKKEN)["url"]
-    href = f"/billeder/{kokken.split('/')[2]}/k%C3%B8kken-p%C3%A5-f%C3%B8rste.jpg"
+    href = f"/images/{kokken.split('/')[2]}/k%C3%B8kken-p%C3%A5-f%C3%B8rste.jpg"
     data["legacy_images"] |= {
         "/static/legacy/image/upload/køkken.jpg": kokken,
         "/static/legacy/image/upload/s%C3%B8en.jpg": kokken,
@@ -345,11 +345,11 @@ def test_which_stub_answers(path: str, content_length: str, cgi_only: bool, stub
         "/fcgitest/test.fcgi/extra",
         "/install.cgi",
         "/A.FCGI",
-        "/billeder/0123456789abcdef/a.cgi.jpg",
+        "/images/0123456789abcdef/a.cgi.jpg",
         "/x.Py",
-        "/billeder/0123456789abcdef/foto.php.jpg",
-        "/billeder/0123456789abcdef/foto.PHP5.jpg",
-        "/billeder/0123456789abcdef/foto.shtml.jpg",
+        "/images/0123456789abcdef/foto.php.jpg",
+        "/images/0123456789abcdef/foto.PHP5.jpg",
+        "/images/0123456789abcdef/foto.shtml.jpg",
         "/x.phtml",
         "/x.phar",
         "/cgi.pl",

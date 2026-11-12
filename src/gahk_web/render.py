@@ -17,7 +17,7 @@ backgrounds and the top pictures use the variants too (images.Picture).
 Each file is written to a temporary name and moved into place, so a visitor never sees half a page,
 and only when its content changed. The generated_files table lists what the last render wrote; a file
 in that list that the new render does not produce (a deleted or moved page) is removed. Nothing else in
-public_html is ever touched: static/, billeder/, cgi-bin/ and .htaccess belong to the release and the
+public_html is ever touched: static/, images/, cgi-bin/ and .htaccess belong to the release and the
 image cache.
 
 Callers hold the render advisory lock (db.LOCK_RENDER) around render_site().
@@ -44,7 +44,7 @@ from .config import Config
 from .forms import SPECS, SUCCESS_PATH, FormSpec
 from .images import Picture, pictures
 from .models import GeneratedFile, SiteState
-from .snapshot import Event, NewsItem, Page, Snapshot, billeder_href
+from .snapshot import Event, NewsItem, Page, Snapshot, image_href
 from .version import code_version
 
 if TYPE_CHECKING:
@@ -75,7 +75,7 @@ FRONT_PAGE_ALIASES = ("velkommen",)
 # Files outside <path>/index.html that a render produces. Only these and page folders are ever deleted.
 FIXED_FILES = ("404.html", "503.html", "sitemap.xml", "robots.txt", "sw.js")
 _GENERATED_DIR_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*(?:/[a-z0-9]+(?:[-_][a-z0-9]+)*){0,2}$")
-_NOT_PAGES = frozenset({"static", "billeder", "cgi-bin"})
+_NOT_PAGES = frozenset({"static", "images", "cgi-bin"})
 
 MONTHS = (
     "januar",
@@ -110,8 +110,8 @@ EMPTY_SNAPSHOT: Snapshot = {
 _MEDIA_ATTR_RE = re.compile(
     r"""((?:src|href|srcset|poster)\s*=\s*["']|url\(\s*["']?)/media/""", re.IGNORECASE
 )
-# What a background URL may hold to go into a <style> element unquoted-safe: a /billeder/ path
-# (percent-encoded by billeder_href, whatever letters its name has), or in a preview intern's
+# What a background URL may hold to go into a <style> element unquoted-safe: a /images/ path
+# (percent-encoded by image_href, whatever letters its name has), or in a preview intern's
 # percent-encoded /media/cms/ path (snapshot.py checks both); never quotes, parentheses or "<".
 _CSS_URL_RE = re.compile(r"^(?:https?://[A-Za-z0-9.:-]+)?/[A-Za-z0-9._~%/-]+$")
 # Below this window width a page's background picture (cover over a tall, narrow page) uses a
@@ -284,7 +284,7 @@ class Site:
         picture = self.picture(url)
         if picture is None:
             return Markup('<img src="{}" alt="" class="hero__img" fetchpriority="high">').format(
-                billeder_href(url)
+                image_href(url)
             )
         return Markup(
             '<img src="{}" srcset="{}" sizes="100vw" alt="" class="hero__img" fetchpriority="high">'
@@ -296,7 +296,7 @@ class Site:
         from markupsafe import Markup
 
         picture = self.picture(url)
-        href = billeder_href(url)
+        href = image_href(url)
         wide = picture.src if picture else href
         rules = [f".page-stage--photo{{background-image:url('{wide}')}}"]
         if picture is not None:
@@ -341,7 +341,7 @@ class Site:
             context["og_image"] = (
                 background
                 if background.startswith("http")
-                else self.absolute(billeder_href(background) or static_url("img/apple-touch-icon.png"))
+                else self.absolute(image_href(background) or static_url("img/apple-touch-icon.png"))
             )
         return context
 

@@ -34,7 +34,7 @@ from .clock import copenhagen_today
 from .config import Config
 from .models import Base, GeneratedFile, SiteState
 from .render import EMPTY_SNAPSHOT, Site, load_snapshot, page_file, quote_path
-from .snapshot import PATH_RE, billeder_href
+from .snapshot import PATH_RE, image_href
 from .web import (
     ALL_METHODS,
     PAGE_CACHE,
@@ -195,7 +195,7 @@ def calendar(rest: str) -> Response:
 
 
 def _legacy_image(session: Session, path: str) -> str | None:
-    """The /billeder/ address of an old picture address, from the snapshot's legacy_images map.
+    """The /images/ address of an old picture address, from the snapshot's legacy_images map.
 
     The old site served these files through Django's ManifestStaticFilesStorage too, under names
     with a 12-hex-digit hash before the extension (gang.b8dc291a4e43.jpg), and pages elsewhere may
@@ -248,9 +248,9 @@ def fallback(path: str = "") -> Response:
     housekeeping.maybe_rebuild(session, cfg, state)
 
     legacy_key = routing.legacy_image_key(path)
-    if legacy_key is not None:  # straight to /billeder/, never by way of another /legacy/ address
+    if legacy_key is not None:  # straight to /images/, never by way of another /legacy/ address
         image = _legacy_image(session, legacy_key)
-        return redirect(301, billeder_href(image)) if image else not_found(cfg)
+        return redirect(301, image_href(image)) if image else not_found(cfg)
 
     bare = path.strip("/")
     if bare == "" or _PAGE_PATH_RE.match(bare):

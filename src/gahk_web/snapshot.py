@@ -17,11 +17,11 @@ FORMAT = 1
 
 PATH_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*(?:/[a-z0-9]+(?:[-_][a-z0-9]+)*)?$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
-# /billeder/<sha16>/<name>. The name is UTF-8 text: words of letters and digits ([^\W_]: any
+# /images/<sha16>/<name>. The name is UTF-8 text: words of letters and digits ([^\W_]: any
 # script, Danish letters included) joined by single "-" or "_", then one "." and the extension;
-# billeder_match() checks the rest.
+# image_url_match() checks the rest.
 # It never starts with "_" or ".", so it cannot be one of gahk.dk's own variants (_960w.webp).
-BILLEDER_RE = re.compile(r"/billeder/([0-9a-f]{16})/([^\W_]+(?:[-_.][^\W_]+)*)")
+IMAGE_URL_RE = re.compile(r"/images/([0-9a-f]{16})/([^\W_]+(?:[-_.][^\W_]+)*)")
 # Letters (lower-case or caseless) and decimal digits: what intern keeps in a name. "²", "½" and
 # combining marks are not; upper-case letters are not either (the names are lower-case).
 _NAME_CATEGORIES = frozenset({"Ll", "Lm", "Lo", "Nd"})
@@ -42,12 +42,12 @@ RESERVED_FIRST_SEGMENTS = frozenset(
         "admin",
         "api",
         "begivenheder",
-        "billeder",
         "cgi-bin",
         "django-admin",
         "favicon.ico",
         "health",
         "healthz",
+        "images",
         "intern",
         "kalender",
         "media",
@@ -242,26 +242,26 @@ def legacy_image_url(text: str) -> bool:
 
 
 def background(value: object, where: str, image_urls: set[str] | None, *, allow_media: bool = False) -> str:
-    """ "" (no picture) or /billeder/<sha16>/<name>, which the snapshot must ship.
+    """ "" (no picture) or /images/<sha16>/<name>, which the snapshot must ship.
 
     A preview may also point at intern's own library (/media/...), which is not copied here yet.
     """
     text = _str(value, where, 255, single_line=True)
     if not text:
         return text
-    if billeder_match(text) and (image_urls is None or text in image_urls):
+    if image_url_match(text) and (image_urls is None or text in image_urls):
         return text
     if allow_media and is_media_url(text):
         return text
     raise SnapshotError(f"{where}: {text!r} is not an image this snapshot ships")
 
 
-def billeder_match(url: str) -> re.Match[str] | None:
-    """The match of a /billeder/<sha16>/<name> URL (group 1 the hash, group 2 the name), or None.
+def image_url_match(url: str) -> re.Match[str] | None:
+    """The match of a /images/<sha16>/<name> URL (group 1 the hash, group 2 the name), or None.
 
     The name is NFC-normalized and lower-case: the same letters always make the same file and the
     same URL ("å" as one character, never "a" plus a combining ring)."""
-    match = BILLEDER_RE.fullmatch(url)
+    match = IMAGE_URL_RE.fullmatch(url)
     if match is None:
         return None
     name = match.group(2)
@@ -275,11 +275,11 @@ def billeder_match(url: str) -> re.Match[str] | None:
     return match
 
 
-def billeder_href(url: str) -> str:
-    """An image URL as pages and redirects write it: a /billeder/ name percent-encoded from UTF-8
-    (/billeder/<sha16>/tovtr%C3%A6kning.jpg), so neither a srcset, a CSS url() nor a Location
+def image_href(url: str) -> str:
+    """An image URL as pages and redirects write it: a /images/ name percent-encoded from UTF-8
+    (/images/<sha16>/tovtr%C3%A6kning.jpg), so neither a srcset, a CSS url() nor a Location
     header depends on what letters it has. Other URLs (intern's /media/, already encoded) as given."""
-    return quote(url, safe="/") if url.startswith("/billeder/") else url
+    return quote(url, safe="/") if url.startswith("/images/") else url
 
 
 def is_media_url(text: str) -> bool:
@@ -340,9 +340,9 @@ def validate_image(obj: object, where: str) -> Image:
     sha = _str(item["sha256"], f"{where}.sha256", 64, single_line=True)
     if not HEX64_RE.match(sha):
         raise SnapshotError(f"{where}.sha256: expected 64 lower-case hex digits")
-    match = billeder_match(url)
+    match = image_url_match(url)
     if not match:
-        raise SnapshotError(f"{where}.url: {url!r} is not /billeder/<16 hex>/<name>")
+        raise SnapshotError(f"{where}.url: {url!r} is not /images/<16 hex>/<name>")
     if match.group(1) != sha[:16]:
         raise SnapshotError(f"{where}.url: the hash in the URL does not match sha256")
     content_type = item["content_type"]

@@ -79,7 +79,7 @@ ErrorDocument 404 /404.html
   RewriteRule (?:^|/)[^/]*\.(?:py|cgi|fcgi|php\d?|phtml|phar|pl|shtml)(?:[./]|$) - [F,L,NC]
 
   # --- Old picture addresses (/static/legacy/image/... and the older /public/image/...) have no
-  # file here: the app redirects each in one step to the picture's /billeder/ address (from the
+  # file here: the app redirects each in one step to the picture's /images/ address (from the
   # published snapshot), or answers 404. Nothing is ever served at an address with /legacy/ in it. ---
 
   # --- Icons browsers ask for at the root ---
@@ -137,7 +137,7 @@ ErrorDocument 404 /404.html
     Header set Cache-Control "public, max-age=60"
   </If>
   # Pictures: the address carries the content hash, so they never change.
-  <If "%{REQUEST_FILENAME} =~ m#/billeder/[0-9a-f]{16}/[^/]+$#">
+  <If "%{REQUEST_FILENAME} =~ m#/images/[0-9a-f]{16}/[^/]+$#">
     Header set Cache-Control "public, max-age=31536000, immutable"
   </If>
   # Site assets with a content hash in the name (site.1a2b3c4d.css).
