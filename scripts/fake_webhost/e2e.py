@@ -221,6 +221,7 @@ def snapshot_with_pictures() -> tuple[dict[str, Any], dict[str, bytes]]:
     data: dict[str, Any] = conftest.rename_image(conftest.snapshot(), "kokken.jpg", DANISH_NAME)
     kokken = next(image["url"] for image in data["images"] if image["url"].endswith(DANISH_NAME))
     data["legacy_images"][DANISH_LEGACY] = kokken
+    data["redirects"]["velkommen"] = ""  # as intern sends the front page's old slug
     old = [conftest.GANG, conftest.HERO, conftest.KOKKEN]
     new = [picture(1200, 800, 1, False), picture(2400, 1600, 2, True), picture(1000, 700, 3, False)]
     text = json.dumps(data)
@@ -754,6 +755,8 @@ manifest_url = {MANIFEST_URL}
             "/faciliteter/kokken",
             "/begivenheder/",
             "/begivenheder",
+            "/velkommen",  # the front page's old address: a copy of it, not a redirect
+            "/velkommen/",
         ):
             page = host.get(path)
             expect(page.status == 200, f"{path}: {page.status}")
@@ -773,6 +776,9 @@ manifest_url = {MANIFEST_URL}
             (snapshot["images"][0]["url"], "public, max-age=31536000, immutable"),
             ("/favicon.ico", "public, max-age=604800"),
             ("/static/icons/icon-192x192.png", "public, max-age=604800"),
+            # The old site's logo at its old addresses: served, not redirected.
+            ("/static/legacy/image/elements/lamassu.svg", "public, max-age=604800"),
+            ("/static/legacy/image/elements/lamassu.b8dc291a4e43.svg", "public, max-age=604800"),
             ("/sw.js", "no-cache"),
             ("/sitemap.xml", "public, max-age=60"),
             ("/robots.txt", "public, max-age=60"),
@@ -783,6 +789,13 @@ manifest_url = {MANIFEST_URL}
                 answer.header("Cache-Control") == cache,
                 f"{path}: Cache-Control {answer.header('Cache-Control')}",
             )
+        logo = host.get("/static/legacy/image/elements/lamassu.svg")
+        expect(
+            logo.header("Content-Type").startswith("image/svg+xml") and logo.body.startswith(b"<?xml"),
+            f"the old logo address: {logo.header('Content-Type')}",
+        )
+        velkommen = host.get("/velkommen")
+        expect('<link rel="canonical" href="https://gahk.dk/">' in velkommen.text, "/velkommen's canonical")
         # intern's preview (this site's HTML on intern.gahk.dk) loads the fonts cross-origin.
         font = host.get("/static/fonts/ubuntu-400.woff2", headers={"Origin": "https://intern.gahk.dk"})
         expect(
@@ -847,8 +860,36 @@ manifest_url = {MANIFEST_URL}
         cases = [
             ("http", "gahk.dk", "/faciliteter", 301, "https://gahk.dk/faciliteter"),
             ("https", "www.gahk.dk", "/faciliteter?a=1", 301, "https://gahk.dk/faciliteter?a=1"),
+            # Encoded again: a space in an old picture's name never reaches the Location as it is.
+            ("https", "www.gahk.dk", "/a%20b.jpg?c=d%20e", 301, "https://gahk.dk/a%20b.jpg?c=d%20e"),
+            ("http", "gahk.dk", "/a%20b.jpg", 301, "https://gahk.dk/a%20b.jpg"),
             ("https", "gahk.dk", "/intern/x?y=1", 308, "https://intern.gahk.dk/intern/x?y=1"),
             ("https", "gahk.dk", "/wiki/", 308, "https://intern.gahk.dk/wiki/"),
+            # The old wiki's own addresses end in .php: redirected, not refused as scripts.
+            (
+                "https",
+                "gahk.dk",
+                "/wiki/index.php?title=Forside",
+                308,
+                "https://intern.gahk.dk/wiki/index.php?title=Forside",
+            ),
+            (
+                "https",
+                "gahk.dk",
+                "/wiki/load.php?modules=startup&only=scripts",
+                308,
+                "https://intern.gahk.dk/wiki/load.php?modules=startup&only=scripts",
+            ),
+            ("https", "gahk.dk", "/healthz", 308, "https://intern.gahk.dk/healthz"),
+            # The old intranet's static files that this site has no file for.
+            ("https", "gahk.dk", "/static/manifest.json", 301, "https://intern.gahk.dk/static/manifest.json"),
+            (
+                "https",
+                "gahk.dk",
+                "/static/legacy/image/elements/logo.png",
+                301,
+                "https://intern.gahk.dk/static/legacy/image/elements/logo.png",
+            ),
             (
                 "https",
                 "gahk.dk",
@@ -893,7 +934,23 @@ manifest_url = {MANIFEST_URL}
         entries = host.access()
         handlers = {entry.request.split()[1]: entry.handler for entry in entries}
         expect(handlers.get("/findes-ikke") == "fcgid-script", f"404 not from FastCGI: {handlers}")
-        expect(handlers.get("/intern/x?y=1") == "-", "an intern redirect started Python")
+        login = host.request(
+            "POST",
+            "/wiki/index.php?title=Speciel:Log_ind",
+            b"x=1",
+            {"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        expect(login.status == 308, f"a POST to the old wiki: {login.status}")
+        entries = host.access()
+        handlers |= {entry.request.split()[1]: entry.handler for entry in entries}
+        for path in (
+            "/intern/x?y=1",
+            "/wiki/index.php?title=Forside",
+            "/wiki/index.php?title=Speciel:Log_ind",
+            "/healthz",
+            "/static/manifest.json",
+        ):
+            expect(handlers.get(path) == "-", f"{path} started Python: {handlers.get(path)}")
 
     def outbox(self, host: Webhost) -> None:
         form = host.get("/optagelse/ansoeg")
