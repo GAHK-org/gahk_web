@@ -239,17 +239,29 @@ def _remove_files(paths: Iterable[Path]) -> None:
             folder.rmdir()  # only when nothing else is left in it
 
 
+def _uncount_attempt(con: db.Connection, sha256: str) -> None:
+    """Take back an attempt that ended without an outcome for a reason that is not the image's (a
+    missing blob, a full disk). Only a process that died making them counts toward giving up."""
+    db.execute(
+        con,
+        "UPDATE images SET variant_attempts = GREATEST(variant_attempts - 1, 0) WHERE sha256 = :sha",
+        sha=sha256,
+    )
+
+
 def make_variants(con: db.Connection, cfg: Config, sha256: str) -> bool:
     """Make (or remake) one image's variants and record them. True when it now has some. Never
     raises for a bad image: that image just gets none."""
     from . import variants
 
+    # Counted before the work, so a process killed while making them (memory) still counts.
     db.execute(
         con, "UPDATE images SET variant_attempts = variant_attempts + 1 WHERE sha256 = :sha", sha=sha256
     )
     try:
         made = variants.make(blob_path(cfg, sha256).read_bytes())
     except FileNotFoundError:
+        _uncount_attempt(con, sha256)
         return False  # intern PUTs it again when it asks what is missing
     except variants.NoVariants as exc:
         note = str(exc)
@@ -262,8 +274,9 @@ def make_variants(con: db.Connection, cfg: Config, sha256: str) -> bool:
                 target = cfg.public_html / variant_rel_path(sha256, width)
                 write_atomically(target, data)
                 written.append(target)
-        except OSError:  # a full disk: try again later
+        except OSError:  # a full disk or quota: not the image's fault, so try again later
             _remove_files(written)
+            _uncount_attempt(con, sha256)
             return False
         recorded = db.execute(
             con,

@@ -381,6 +381,32 @@ def test_variants_of_an_image_collected_meanwhile_are_removed(
     assert not (cfg.public_html / "billeder" / PHOTO_SHA[:16]).exists()  # no orphans left behind
 
 
+def test_a_full_disk_does_not_count_toward_giving_up(
+    cfg: Config, con: db.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    images.store(con, cfg, PHOTO_SHA, PHOTO, "image/jpeg")
+    writes = 0
+
+    def disk_full(target: Path, data: bytes) -> None:
+        nonlocal writes
+        writes += 1
+        if writes % 2 == 0:  # the second variant of each attempt
+            raise OSError(28, "No space left on device")
+        write_atomically(target, data)
+
+    write_atomically = images.write_atomically
+    monkeypatch.setattr(images, "write_atomically", disk_full)
+    for _attempt in range(images.MAX_VARIANT_ATTEMPTS + 1):
+        assert images.ensure_variants(con, cfg, [PHOTO_SHA]) == images.VariantProgress(0, 0)
+        assert variant_files(cfg, PHOTO_SHA) == []  # what was written is taken back
+    row = image_row(con, PHOTO_SHA)
+    assert (row["variant_widths"], row["variant_note"], row["variant_attempts"]) == (None, None, 0)
+
+    monkeypatch.setattr(images, "write_atomically", write_atomically)
+    assert images.ensure_variants(con, cfg, [PHOTO_SHA]) == images.VariantProgress(1, 0)
+    assert image_row(con, PHOTO_SHA)["variant_widths"] == [480, 960, 1600, 2000]
+
+
 def test_a_preview_keeps_intern_images_and_is_sanitised(client: Client) -> None:
     put(client, PHOTO)
     put(client, BROKEN)
