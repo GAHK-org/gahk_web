@@ -11,6 +11,10 @@ requires-python = ">=3.13"
 dependencies = [
     "jinja2>=3.1.4",
     "markupsafe>=2.1",
+    # Defence-in-depth sanitising of the published HTML (the same allowlist as intern).
+    "nh3>=0.2.18",
+    # Responsive WebP variants of the published images.
+    "pillow>=11",
     # The binary extra ships libpq and the C implementation; the webhost has no libpq of its own.
     "psycopg[binary]>=3.2",
 ]

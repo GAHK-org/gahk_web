@@ -4,12 +4,13 @@ The release's selftest.py puts only <release>/src and the packages (<release>/ve
 the updater has just installed them into) on sys.path and calls main(). The updater runs it with the
 webhost's python3 before it switches to a release, and CI runs it on Python 3.13 and 3.14 for every
 bundle. It needs no database, no config file and no network: it imports every module and package,
-checks that the packages are the ones installed for this python (compiled parts included), renders
-a sample snapshot with the release's templates into memory, and checks the static files the pages
-link to.
+checks that the packages are the ones installed for this python and that their compiled parts work
+(MarkupSafe's speedups, psycopg's libpq, Pillow's WebP and JPEG codecs, nh3), renders a sample
+snapshot with the release's templates into memory, and checks the static files the pages link to.
 """
 
 import importlib
+import io
 import pkgutil
 import re
 import sys
@@ -24,7 +25,7 @@ import gahk_web
 MIN_PYTHON = (3, 13)
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # The runtime dependencies, by import name (pyproject.toml's [project] dependencies).
-DEPENDENCIES = ("jinja2", "markupsafe", "psycopg", "psycopg_binary")
+DEPENDENCIES = ("jinja2", "markupsafe", "nh3", "PIL", "psycopg", "psycopg_binary")
 
 
 def sample_snapshot() -> dict[str, Any]:
@@ -107,6 +108,29 @@ def check_packages(vendor: Path | None) -> None:
             raise AssertionError(f"{name} was imported from {file}, not from {vendor}")
 
 
+def check_images() -> None:
+    """Pillow's compiled codecs: a tiny WebP and JPEG, written and read back in memory."""
+    from PIL import Image, features
+
+    if not features.check("webp"):
+        raise AssertionError("Pillow was built without WebP")
+    for kind in ("WEBP", "JPEG"):
+        buffer = io.BytesIO()
+        Image.new("RGB", (8, 6), (0, 96, 64)).save(buffer, kind, quality=80)
+        with Image.open(io.BytesIO(buffer.getvalue())) as image:
+            image.load()
+            if image.format != kind or image.size != (8, 6):
+                raise AssertionError(f"a {kind} image did not survive a round trip")
+
+
+def check_sanitizer() -> None:
+    import nh3
+
+    cleaned = nh3.clean('<p onclick="x()">Hej <b>alle</b><script>alert(1)</script></p>')
+    if cleaned != "<p>Hej <b>alle</b></p>":
+        raise AssertionError(f"nh3 left {cleaned!r}")
+
+
 def check_render() -> dict[str, tuple[str, str | None]]:
     from .config import Config, DatabaseConfig
     from .render import Site
@@ -174,6 +198,8 @@ def main(release: Path | None = None, vendor: Path | None = None) -> int:
         ("python", check_python),
         ("imports", check_imports),
         ("packages", lambda: check_packages(vendor)),
+        ("images", check_images),
+        ("sanitizer", check_sanitizer),
         ("release files", lambda: check_release(release)),
         ("migrations", check_migrations),
         ("render", render),
