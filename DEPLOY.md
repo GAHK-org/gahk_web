@@ -76,7 +76,7 @@ What lives where on the webhost (`~` is the FTP home):
 ~/gahk_web/CURRENT               the active release (a git sha)
 ~/gahk_web/releases/<sha>/       the 3 most recently installed releases, each with requirements.lock
   └ <sha>/vendor/                its Python packages, installed by the updater with pip for this
-                                 python3 (vendor/.abi names that python); about 50 MB
+                                 python3 (vendor/.abi names that python); about 65 MB
 ~/gahk_web/state/                cache: image blobs, update.json (the last update's result)
 ~/gahk_web/var/                  update.log, the update lock
 ~/gahk_web/tmp/                  pip's temporary files during an install; deleted afterwards
@@ -536,7 +536,7 @@ them.
 | The update says `failed: pip install:` with a network error, or `pip install took longer than 600 s` | PyPI was unreachable or slow. Nothing to do: the next nudge tries again, and the old release keeps running. |
 | The update says `failed: pip install: ERROR: THESE PACKAGES DO NOT MATCH THE HASHES …` | A downloaded file is not the one the release names (a broken download, or something between the webhost and PyPI). It is refused; the next nudge tries again. If it persists, find out why before anything else. |
 | `/api/health` answers 503 `the release's packages are for …`; forms answer *"Siden opdateres"* | Hetzner upgraded python. Pages and pictures still work; forms, redirects, 404s and the API answer 503. Send `POST /api/update` (or press **Opdatér gahk.dk nu**); it reinstalls the packages for the new python (section 10). |
-| The update fails with `No space left on device` or `Disk quota exceeded` | The account's disk is full. Each release's packages take about 50 MB (section 10); delete old files in `~/www_logs` or images no longer used, then update again. |
+| The update fails with `No space left on device` or `Disk quota exceeded` | The account's disk is full. Each release's packages take about 65 MB (section 10); delete old files in `~/www_logs` or images no longer used, then update again. |
 | Pages show a picture's original (no `srcset`) | Its WebP variants are not made yet (a big first publish: the visit beacon, the nightly rebuild and the next update make the rest), or it gets none (GIF, animation, unreadable): the `images` table's `variant_note` says which. Pages are re-rendered when they are made. |
 | The update says `an update is already running` | Another update holds the lock; it is released when that run ends. |
 | The update says `failed: cannot take the update lock: …` | The file system refuses the lock on `~/gahk_web/var/update.lock` (permissions, or no lock support). No update installs until that is fixed. |

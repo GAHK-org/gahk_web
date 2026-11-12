@@ -72,7 +72,7 @@ ErrorDocument 404 /404.html
   RewriteRule ^(optagelse/(?:listansoegninger|eksport))/?$ https://intern.gahk.dk/$1 [R=308,L]
   RewriteRule ^(optagelse/(?:showAnsoegning|setasreceived|kasser)/.+)$ https://intern.gahk.dk/$1 [R=308,L]
 
-  # --- The oldest image addresses. The CGI app then sends /static/legacy/image/... on to the
+  # --- The oldest image addresses. The app then sends /static/legacy/image/... on to the
   # picture's /billeder/ address (from the published snapshot), or answers 404.
   RewriteRule ^public/image/(.+)$ /static/legacy/image/$1 [R=301,L]
 
@@ -114,7 +114,7 @@ ErrorDocument 404 /404.html
   Require all denied
 </FilesMatch>
 
-# --- Caching. Applies to files served from disk; the CGI app sets its own headers. ---
+# --- Caching. Applies to files served from disk; the app sets its own headers. ---
 # [VERIFY ON HETZNER] mod_headers and ap_expr <If> (Apache 2.4) are available in .htaccess (they work
 # on the fake webhost; whether Hetzner loads mod_headers is its choice).
 <IfModule mod_headers.c>
