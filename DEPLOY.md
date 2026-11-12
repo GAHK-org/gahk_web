@@ -4,6 +4,13 @@ gahk.dk runs on a Hetzner Webhosting S account: Apache with `.htaccess`, Python 
 one PostgreSQL database. This is the complete runbook: the one-time setup, the cutover from the old
 site, day-to-day updates, rollback, and what to do if the account is lost.
 
+**What the webhost must provide** (checked on the account on 2026-11-12, with CGI scripts in
+`public_html`): `/usr/bin/python3` is CPython 3.13 (3.13.5, x86_64); `python3 -m pip` works from a
+CGI request and reaches PyPI over HTTPS; the account's home is `/usr/home/<login>`, with
+`public_html` directly under it. The updater installs the site's Python packages (Jinja2,
+MarkupSafe, psycopg with its libpq, Pillow, nh3) with that pip, into each release. Without pip on
+the webhost no release can be installed (section 12).
+
 **No cron job is used.** The webhost updates its code only when intern.gahk.dk asks it to:
 
 - intern's beat task sends a signed `POST https://gahk.dk/api/update` every 15 minutes;
@@ -57,9 +64,12 @@ What lives where on the webhost (`~` is the FTP home):
 ~/gahk_web/config.ini            secrets; written once by hand (section 3), never overwritten
 ~/gahk_web/bin/updater.py        the self-updater; uploaded once, then replaced by each release
 ~/gahk_web/CURRENT               the active release (a git sha)
-~/gahk_web/releases/<sha>/       the 3 most recently installed releases
+~/gahk_web/releases/<sha>/       the 3 most recently installed releases, each with requirements.lock
+  └ <sha>/vendor/                its Python packages, installed by the updater with pip for this
+                                 python3 (vendor/.abi names that python); about 50 MB
 ~/gahk_web/state/                cache: image blobs, update.json (the last update's result)
-~/gahk_web/var/                  update.log, the update lock, downloads in progress
+~/gahk_web/var/                  update.log, the update lock
+~/gahk_web/tmp/                  pip's temporary files during an install; deleted afterwards
 ~/public_html/.htaccess          from the release, overwritten by each install except its LOCAL block
 ~/public_html/cgi-bin/gahk.cgi   from the release (the stub that starts the active release)
 ~/public_html/static/            from the release (css with hashed names, fonts, icons)
@@ -169,11 +179,16 @@ This is the only manual upload. Afterwards every update comes from GitHub by its
 
    Together with `~/gahk_web/config.ini` (mode 600), that is all. The updater creates `releases/`,
    `state/`, `var/` and `CURRENT` itself.
-3. Delete any placeholder Hetzner put in `~/public_html` (e.g. `index.html`).
+3. Delete any placeholder Hetzner put in `~/public_html` (e.g. `index.html`). Delete the files left
+   from testing the webhost in November 2026 as well: `~/public_html/install.py` and
+   `~/public_html/test_numpy.py` (`install.py` lets anyone on the internet start pip runs on the
+   account), and the folder `~/python_packages`. gahk.dk needs none of them: the updater installs
+   its own packages into each release.
 4. The CGI script must not be group- or world-writable, or suEXEC refuses to run it. The same goes
    for its folder.
 5. Every install overwrites `~/public_html/.htaccess` with the release's, keeping only the lines
-   between `# BEGIN LOCAL` and `# END LOCAL`. Put host-specific lines there (section 13 item 8).
+   between `# BEGIN LOCAL` and `# END LOCAL`. Put host-specific lines there, such as
+   `SetEnv GAHK_WEB_HOME /usr/home/<login>` should the stub ever fail to find the home (section 12).
    Make any other change in the repository's `public_html/.htaccess` and let it release. If the
    first install needs it (section 13 item 1), upload that edited file as the bootstrap `htaccess`.
    A change made only on the server outside the LOCAL block is lost at the next install.
@@ -283,7 +298,8 @@ Until step 4, the old site keeps serving gahk.dk from Coolify.
    ```
 
    An answer with `"still running"` means the install took over 45 seconds and is finishing in the
-   background. Ask `gahk_api GET /api/status` a minute later. gahk_web is now live but empty: pages
+   background; the first install also downloads the packages from PyPI, which usually takes well
+   under a minute. Ask `gahk_api GET /api/status` a minute later. gahk_web is now live but empty: pages
    answer the 503 page *"Siden opdateres"*.
 4. **Switch DNS**: `@` and `www` to the webhost (section 6). As resolvers pick it up, visitors see
    *"Siden opdateres"* for a few minutes. Once both names resolve to the webhost, re-issue the
@@ -335,18 +351,47 @@ release. The webhost installs it on intern's next nudge (at most 15 minutes) or 
 
 1. downloads the bundle (redirects followed, at most 50 MB) and checks its size and sha256;
 2. unpacks it into `releases/<sha>`, refusing absolute paths, `..`, links and devices;
-3. runs the release's `selftest.py` with the webhost's `python3`;
-4. applies database migrations with the new code;
-5. installs the new static files, `cgi-bin/gahk.cgi` and `.htaccess`. When the `.htaccess` changed,
+3. installs the release's packages for the webhost's `python3`: `python3 -m pip install --target …
+   --require-hashes --only-binary=:all: --no-deps -r requirements.lock`, isolated from any pip
+   configuration on the account, into a temporary folder. Every file pip downloads must match the
+   sha256 in the release. When a kept release has the same `requirements.lock` and was installed
+   for the same python, its packages are copied as hard links instead, so a release that changes
+   only code needs neither PyPI nor extra disk;
+4. runs the release's `selftest.py` with the webhost's `python3` and those packages, and only then
+   makes them the release's `vendor/`;
+5. applies database migrations with the new code;
+6. installs the new static files, `cgi-bin/gahk.cgi` and `.htaccess`. When the `.htaccess` changed,
    it asks `{base_url}/api/health`; if that answers 5xx and the previous `.htaccess` cures it, it puts
    the previous one back and fails the update;
-6. switches `CURRENT`. Up to this point the old release kept running untouched;
-7. takes the release's `bin/updater.py` if it passes its own self-test, re-renders the site, deletes
+7. switches `CURRENT`. Up to this point the old release kept running untouched;
+8. takes the release's `bin/updater.py` if it passes its own self-test, re-renders the site, deletes
    hashed static files that neither this nor the previous release uses, and keeps 3 releases.
 
-If any step up to 6 fails, the old release stays live, and intern's overview shows the error. The
+If any step up to 7 fails, the old release stays live, and intern's overview shows the error. The
 same error is in `update.log` (section 12). A schema migration runs before the switch, so migrations
 must keep working with the previous release.
+
+CI publishes a bundle only when the `lint`, `typecheck`, `test (Python 3.13, PostgreSQL 15)`,
+`test (Python 3.14, PostgreSQL 17)` and `bundle` checks pass. The `bundle` job installs the
+release's packages on x86_64 Linux for Python 3.13 and 3.14 with the updater's own pip command, so a
+package without a wheel for the webhost's python fails there, not on the webhost.
+
+**When PyPI is down.** A release with new packages cannot install: the update fails with
+`failed: pip install: …`, the old release keeps running, and the next nudge (15 minutes later) tries
+again. A release with the same `requirements.lock` as a kept one installs without PyPI.
+
+**When Hetzner upgrades Python.** Packages with compiled parts (psycopg, Pillow, nh3, MarkupSafe)
+fit only the python they were installed for, so after an upgrade the site answers *"Siden
+opdateres"* (503), and `GET /api/health` says why. The next `POST /api/update` (at most 15 minutes,
+or **Opdatér gahk.dk nu**) reinstalls the running release's packages for the new python, runs its
+self-test, and the site is back; no new release is needed. The overview shows `reinstalled packages
+for cpython-314 (running <sha>)`. Should the new python have no wheels for a package yet, the site
+stays down until a release with a newer version of it (CI tests the next Python, 3.14, already).
+
+**Disk use.** A release's packages take about 50 MB (Pillow and psycopg's libpq most of it). The
+kept releases share them as hard links while their `requirements.lock` is the same, so three
+releases usually take about 50 MB, at most about 150 MB, plus about 50 MB while an install runs.
+Interrupted installs leave folders named `.tmp-*` and `~/gahk_web/tmp`; the next update deletes them.
 
 **Rollback.** Add a pin to `~/gahk_web/config.ini` with the file manager:
 
@@ -401,16 +446,25 @@ them.
 | `/api/*` answers 401 `bad signature` | The `[sync]` key and `GAHK_WEB_KEY` differ, or the sender's clock is off by more than 5 minutes. |
 | `/api/*` answers 503 `database unavailable` | The `[database]` settings, or the database host is down. |
 | The update result says `self-test failed` | The new release does not run on this python. The old one keeps running. See `update.log`. |
+| The update says `failed: pip is not available on the webhost` | `python3 -m pip` does not work on the account any more (Hetzner changed its python). Ask Hetzner support for pip for `/usr/bin/python3`; the old release keeps running meanwhile. |
+| The update says `failed: pip install: ERROR: Could not find a version that satisfies …` or `No matching distribution` | PyPI has no wheel of that package for the webhost's python (a new Python version, or a package dropped a platform). Pin a release that works (section 10) and bump or replace the package in the repo; CI's `bundle` job must pass for both Pythons. |
+| The update says `failed: pip install:` with a network error, or `pip install took longer than 600 s` | PyPI was unreachable or slow. Nothing to do: the next nudge tries again, and the old release keeps running. |
+| The update says `failed: pip install: ERROR: THESE PACKAGES DO NOT MATCH THE HASHES …` | A downloaded file is not the one the release names (a broken download, or something between the webhost and PyPI). It is refused; the next nudge tries again. If it persists, find out why before anything else. |
+| Every page answers *"Siden opdateres"* and `/api/health` says `the release's packages are for …` | Hetzner upgraded python. Send `POST /api/update` (or press **Opdatér gahk.dk nu**); it reinstalls the packages for the new python (section 10). |
+| The update fails with `No space left on device` or `Disk quota exceeded` | The account's disk is full. Each release's packages take about 50 MB (section 10); delete old files in `~/www_logs` or images no longer used, then update again. |
 | The update says `an update is already running` | Another update holds the lock; it is released when that run ends. |
 | The update says `failed: cannot take the update lock: …` | The file system refuses the lock on `~/gahk_web/var/update.lock` (permissions, or no lock support). No update installs until that is fixed. |
 | The update says `the new .htaccess breaks the site` | Apache rejected the release's `.htaccess` (a syntax error, or a directive Hetzner does not allow), so the updater put the previous one back. Fix `public_html/.htaccess` in the repo; the next release installs. |
 | The whole site, `/api/update` included, answers 500 right after an update | The new `.htaccess` breaks the site and the check did not catch it (it could not reach the site). Upload the previous release's `htaccess` asset to `~/public_html/.htaccess` by SFTP, then fix it in the repo. |
 | `gahk.cgi` is shown as text, or 500 with "Premature end of script headers" | The CGI mode or permissions (section 4), or see section 13 item 1. |
+| Every page answers *"gahk.dk er ved at blive installeret"* although a release is installed | The stub looks in the wrong home. Add `SetEnv GAHK_WEB_HOME /usr/home/<login>` between the `# BEGIN LOCAL` and `# END LOCAL` lines of `~/public_html/.htaccess`; installs keep that block. |
 
 ## 13. Things to verify on Hetzner
 
 These are assumptions that could not be tested before the site ran on the webhost. The same items
-are marked `[VERIFY ON HETZNER]` in `.htaccess` and `gahk.cgi`.
+are marked `[VERIFY ON HETZNER]` in `.htaccess`. Settled on 2026-11-12: `python3` is CPython 3.13.5
+on x86_64, its pip installs binary wheels from PyPI from a CGI request, outbound HTTPS works, and
+the home is `/usr/home/<login>` with `public_html` directly under it.
 
 1. `*.cgi` under `public_html` runs as CGI without `Options +ExecCGI`/`AddHandler`. If not, uncomment
    those two lines in the repository's `public_html/.htaccess`, merge it and let it release. For the
@@ -426,18 +480,13 @@ are marked `[VERIFY ON HETZNER]` in `.htaccess` and `gahk.cgi`.
    that path.
 6. mod_headers with `<If>` expressions works in `.htaccess`.
 7. HSTS is sent only once https works for `gahk.dk` and `www`.
-8. The stub finds the FTP home through the account's home directory, or the folder above
-   `public_html`. If neither works, add `SetEnv GAHK_WEB_HOME /usr/home/<login>` between the
-   `# BEGIN LOCAL` and `# END LOCAL` lines of `~/public_html/.htaccess` on the server. Installs keep
-   that block; anywhere else in the file the line is lost at the next install.
-9. `REMOTE_ADDR` is the real client (Varnish off).
-10. Outbound HTTPS works: GitHub for updates, Cloudflare Turnstile, and intern for the calendar feeds.
-11. The database is reachable with konsoleH's hostname, and `verify-full` works with `sqlca.pem`.
-12. Hardlinks from `~/gahk_web/state` to `~/public_html/billeder` work. If they do not, the code
-    copies instead.
-13. A CGI process may start a child in its own session that outlives the request. The updater does
-    this for installs slower than 45 seconds. If Hetzner kills it, the install stops before the
-    switch, or after it with only cleanup left, and the next nudge carries on. In tests an install
-    takes a few seconds.
-14. One Python process per request is fast enough. Pages are static, so only API calls, forms,
+8. `REMOTE_ADDR` is the real client (Varnish off).
+9. The database is reachable with konsoleH's hostname, and `verify-full` works with `sqlca.pem`.
+10. Hardlinks work in the home: from `~/gahk_web/state` to `~/public_html/billeder`, and between
+    releases' `vendor/` folders. If they do not, the code copies instead (more disk, section 10).
+11. A CGI process may start a child in its own session that outlives the request. The updater does
+    this for installs slower than 45 seconds, and pip runs in that child. If Hetzner kills it, the
+    install stops before the switch, or after it with only cleanup left, and the next nudge carries
+    on. In tests an install takes a few seconds, plus the pip download on the first install.
+12. One Python process per request is fast enough. Pages are static, so only API calls, forms,
     beacons, 404s and redirects start Python.

@@ -16,7 +16,8 @@ Webhotellet gemmer altså intet permanent, og det har hverken adgang til interns
 
 Siden kører på Hetzner Webhosting (Apache med CGI og systemets Python 3.13). Webhotellet opdaterer
 sig selv: når intern beder om det (hvert kvarter, eller med knappen *Opdatér gahk.dk nu*), henter det
-den nyeste bundle, som CI har lagt på GitHub-releasen `production`. Der bruges ikke noget cron-job. Opsætning og drift er beskrevet i [DEPLOY.md](DEPLOY.md), kontrakten
+den nyeste bundle, som CI har lagt på GitHub-releasen `production`, og installerer dens
+Python-pakker fra PyPI med pip. Der bruges ikke noget cron-job. Opsætning og drift er beskrevet i [DEPLOY.md](DEPLOY.md), kontrakten
 med intern i [docs/protocol.md](docs/protocol.md) og opførslen i [spec/features/](spec/features/).
 
 ## Kom i gang (udvikling)
@@ -40,7 +41,7 @@ skrev ud (nøglen står også i `local/config.ini`), og gem en side under *Hjemm
 ```sh
 task db:create   # opret test-databasen (én gang)
 task test        # kør testsuiten mod Postgres, som CI
-task bundle      # byg release-bundlen i dist/ og røgtest den på Python 3.13 og 3.14
+task bundle      # byg release-bundlen i dist/ og røgtest den på Python 3.13 og 3.14 (henter pakker fra PyPI)
 ```
 
 Testene genskaber skemaet i test-databasen (`gahk_web_test`) ved hver kørsel.

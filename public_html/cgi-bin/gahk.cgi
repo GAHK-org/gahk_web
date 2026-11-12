@@ -48,10 +48,9 @@ MIN_KEY_LENGTH = 32  # as gahk_web/config.py
 def find_home() -> Path:
     """The FTP home that holds gahk_web/ and public_html/.
 
-    [VERIFY ON HETZNER] The script may be reached through a path that is not under the FTP home
-    (/usr/www/users/<login>/ vs /usr/home/<login>/), so try, in order: $GAHK_WEB_HOME (SetEnv in
-    .htaccess), the account's home directory (CGI runs as the account), the folder above
-    public_html.
+    On Hetzner that is /usr/home/<login>, with public_html directly under it (checked 2026-11-12).
+    In order: $GAHK_WEB_HOME (SetEnv in the .htaccess LOCAL block, should a path ever differ), the
+    account's home directory (CGI runs as the account), the folder above public_html.
     """
     candidates = []
     if os.environ.get("GAHK_WEB_HOME"):

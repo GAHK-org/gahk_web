@@ -58,8 +58,11 @@ Body limits: 15 MB for an image, 32 MB for `publish` and `preview`, 1 MB for eve
 ### GET /api/health (unsigned)
 
 `200 {"ok": true, "version": "<code sha>", "revision": "<content revision or null>"}`. Without a
-working database: `503 {"ok": false, "version": …, "revision": null}`. It exposes no secrets.
-`version` is the git sha of the running release, or `"dev"` in a checkout.
+working database: `503 {"ok": false, "version": …, "revision": null}`. When the running release's
+packages were installed for another Python than the webhost's (after Hetzner upgraded it), the
+cgi-bin stub answers `503 {"ok": false, "version": …, "revision": null, "error": "<reason>"}` until
+the next `POST /api/update` has reinstalled them. It exposes no secrets. `version` is the git sha of
+the running release, or `"dev"` in a checkout.
 
 ### GET /api/status
 
@@ -162,9 +165,15 @@ minutes, plus the "Opdatér gahk.dk nu" button. The cgi-bin stub checks the sign
 `~/gahk_web/bin/updater.py` itself, before any release is imported, so this endpoint also works
 when no release is installed yet (bootstrap) or the active one is broken.
 
-- `detail` is `installed <sha> (was <sha>)`, `already running <sha>` (with a note when pinned), `an
-  update is already running`, `the update is still running; …` (the install outlasted the 45 seconds
-  the request waits, and finishes in the background), or `failed: <reason>`.
+- `detail` is `installed <sha> (was <sha>)`, `already running <sha>` (with a note when pinned),
+  `reinstalled packages for <python> (running <sha>)` (the webhost's Python changed, so the running
+  release got its packages again; `updated` is `true`), `an update is already running`, `the update
+  is still running; …` (the install outlasted the 45 seconds the request waits, and finishes in the
+  background), or `failed: <reason>`, e.g. `failed: pip install: <pip's error>` or `failed: pip is
+  not available on the webhost`.
+- The update, including the pip install of a release's packages from PyPI, runs in a process of its
+  own; the request waits for it at most 45 seconds, so intern's read timeout must be longer (it is
+  60 seconds).
 - A failure still answers `200`, with `updated: false`. `GET /api/status` reports the outcome too.
 - Before a release is installed, the stub answers `503` if `~/gahk_web/bin/updater.py` is missing.
   A checkout (`version` `"dev"`) answers `409`.

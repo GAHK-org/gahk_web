@@ -13,8 +13,11 @@ The runbook is DEPLOY.md.
 - An update only installs what CI published. Before going live, a release must:
   - match the size and checksum CI published,
   - unpack without anything that points outside its own folder,
-  - pass its own self-test on the webhost's Python,
+  - get its packages for the webhost's Python, each matching the checksum the release names,
+  - pass its own self-test on the webhost's Python with those packages,
   - apply its database changes.
+- When Hetzner upgrades Python, the site shows "Siden opdateres" until the next update request,
+  which reinstalls the packages of the running version for the new Python.
 - If any check fails, the running version stays live. The overview shows the error.
 - The switch to a new version is a single step, so visitors never meet half of an update. An update
   that takes long finishes after intern's request has been answered.
