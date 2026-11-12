@@ -98,7 +98,14 @@ def _url(value: str, name: str) -> str:
 def load_config(path: Path | None = None) -> Config:
     path = path or config_path()
     parser = configparser.ConfigParser(interpolation=None)
-    if not parser.read(path, encoding="utf-8"):
+    try:
+        found = parser.read(path, encoding="utf-8")
+    except configparser.Error as exc:
+        # Never exc's message: configparser quotes the offending lines, which may hold a secret.
+        raise ConfigError(f"{path.name} cannot be parsed ({type(exc).__name__}); see the file") from None
+    except UnicodeDecodeError:
+        raise ConfigError(f"{path.name} is not UTF-8 text") from None
+    if not found:
         raise ConfigError(f"config file not found: {path}")
 
     def get(section: str, key: str, default: str = "") -> str:

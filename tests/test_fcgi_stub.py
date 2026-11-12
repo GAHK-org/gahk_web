@@ -218,13 +218,28 @@ def test_a_release_that_cannot_import_answers_503(spawn: Spawn, home: Path) -> N
     answer = health(process)
     assert answer.status == 503
     error = json.loads(answer.body)["error"]
-    assert "the release cannot start" in error and "broken release" in error
+    # Only the exception's type: its text may quote a file (config.ini's lines).
+    assert "the release cannot start (RuntimeError)" in error and "broken release" not in error
     # A signed status says why, with the updater's last result.
     signed = signing.signed_headers(SYNC_KEY, "GET", "/api/status", b"")
     status = process.request("GET", "/api/status", headers=signed)
     assert status.status == 503 and "cannot start" in json.loads(status.body)["error"]
+    assert "broken release" in json.loads(status.body)["detail"]
     assert process.request("GET", "/api/status").status == 401
     assert "RuntimeError: broken release" in process.output()  # the traceback, in the error log
+
+
+def test_a_broken_config_ini_never_reaches_a_client(spawn: Spawn, home: Path) -> None:
+    """configparser quotes the lines it cannot parse; health is unsigned."""
+    config = home / "gahk_web" / "config.ini"
+    config.write_text(config.read_text() + "S3cretPw\n", encoding="utf-8")
+    process = spawn(GAHK_WEB_FCGI_STANDIN="5")
+    for path in ("/api/health", "/faciliteter", "/api/status"):
+        answer = process.request("GET", path)
+        assert answer.status == 503, path
+        assert b"S3cretPw" not in answer.body and str(home).encode() not in answer.body, path
+    assert "config.ini cannot be parsed (ParsingError)" in process.output()
+    assert "S3cretPw" not in process.output()
 
 
 def test_without_a_release_every_request_answers_503(spawn: Spawn, home: Path) -> None:

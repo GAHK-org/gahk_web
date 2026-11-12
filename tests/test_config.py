@@ -30,6 +30,16 @@ def test_sslmode_defaults_to_encrypted(tmp_path: Path, extra: str, sslmode: str)
     assert load_config(config(tmp_path, extra)).database.sslmode == sslmode
 
 
+@pytest.mark.parametrize("line", ["S3cretPw", "[database\npassword = S3cretPw"])
+def test_a_config_that_cannot_be_parsed_never_quotes_its_lines(tmp_path: Path, line: str) -> None:
+    path = config(tmp_path)
+    path.write_text(path.read_text() + line + "\n", encoding="utf-8")
+    with pytest.raises(ConfigError) as raised:
+        load_config(path)
+    assert "S3cretPw" not in str(raised.value) and str(tmp_path) not in str(raised.value)
+    assert raised.value.__cause__ is None and raised.value.__suppress_context__
+
+
 def test_unknown_sslmode_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="sslmode"):
         load_config(config(tmp_path, "sslmode = prefer\n"))

@@ -91,7 +91,8 @@ intern compares `revision` with its own to decide whether to publish, and shows 
 
 While no release can run (none is installed yet, or the running one's packages were installed for
 another Python), the cgi-bin stub answers a signed request itself: `503` with the same keys, plus
-`error` naming the reason. `version` is the installed sha or null; `revision`, `published_at`,
+`error` naming the reason and `detail` (the exception, when the release failed to start; else
+null). `version` is the installed sha or null; `revision`, `published_at`,
 `rendered_at` and `outbox` are null; `update` comes from the updater's state as usual. That way how
 a slow first install or repair ended can still be read. intern treats every 5xx as gahk.dk being
 unavailable and does not read the body, so its overview shows gahk.dk as unavailable until the

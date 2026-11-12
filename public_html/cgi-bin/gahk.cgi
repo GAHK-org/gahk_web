@@ -94,8 +94,9 @@ class Install:
     home: Path
     sha: str  # ~/gahk_web/CURRENT when that release is installed, else ""
     release: Path | None  # its folder, when installed
-    problem: str = ""  # why it cannot run here; "" when it can
+    problem: str = ""  # why it cannot run here; "" when it can (unsigned health shows it)
     repairable: bool = False  # POST /api/update can cure the problem (packages for another python)
+    detail: str = ""  # more about the problem, for the signed GET /api/status only
 
     @property
     def app_home(self) -> Path:
@@ -119,9 +120,12 @@ def locate() -> Install:
 
 
 def cannot_start(install: Install, exc: BaseException) -> Install:
-    """The release failed to import or start: log why, and answer as for any release that cannot run."""
+    """The release failed to import or start: log why, and answer as for any release that cannot run.
+    The exception's text may quote a file (configparser quotes config.ini's lines, secrets included),
+    so only its type goes into the unsigned health answer; the signed status has the rest."""
     traceback.print_exception(exc, file=sys.stderr)
-    return Install(install.home, install.sha, install.release, f"the release cannot start: {exc!r}")
+    problem = f"the release cannot start ({type(exc).__name__})"
+    return Install(install.home, install.sha, install.release, problem, detail=repr(exc))
 
 
 # --- answers ---
@@ -165,7 +169,7 @@ def read_config(home: Path) -> configparser.ConfigParser:
     parser = configparser.ConfigParser(interpolation=None)
     try:
         parser.read(path, encoding="utf-8")
-    except (configparser.Error, OSError):
+    except (configparser.Error, OSError, ValueError):  # ValueError: not UTF-8
         return configparser.ConfigParser(interpolation=None)
     return parser
 
@@ -271,6 +275,7 @@ def status_answer(install: Install, environ: Mapping[str, str], read_body: BodyR
         "503 Service Unavailable",
         {
             "error": install.problem,
+            "detail": install.detail or None,
             "version": install.sha or None,
             "revision": None,
             "published_at": None,
