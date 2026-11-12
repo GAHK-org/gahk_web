@@ -1,6 +1,7 @@
 """The Flask app's plumbing: the browser's path under the stub, errors that never show a traceback,
 and the database connection a persistent process reuses from request to request."""
 
+import logging
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -148,6 +149,23 @@ def test_an_unreachable_database_is_503(cfg: Config, con: Session) -> None:
     assert (result.status, result.body) == (503, b'{"error": "database unavailable"}')
     result = Client(app).get("/api/health")
     assert result.status == 503 and result.json()["ok"] is False
+
+
+def test_a_visit_beacon_without_a_database_logs_one_line(
+    cfg: Config, con: Session, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Every page a visitor opens sends a beacon: while the database is down, each one used to write
+    a whole traceback to Apache's error log (found in the full-system e2e)."""
+    from dataclasses import replace
+
+    app = create_app(replace(cfg, database=replace(cfg.database, port=1)))
+    browser = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1"}
+    with caplog.at_level(logging.ERROR, logger="gahk_web"):
+        assert Client(app).post("/s", b"/faciliteter", headers=browser).status == 204
+    records = [record for record in caplog.records if record.name == "gahk_web"]
+    assert [record.getMessage().split(":")[0] for record in records] == ["gahk_web"]
+    assert "database unavailable, a page view is lost" in records[0].getMessage()
+    assert records[0].exc_info is None
 
 
 # --- the database connection ---

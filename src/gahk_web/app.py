@@ -169,6 +169,8 @@ def beacon() -> Response:
             stats.record_view(
                 session, cfg.stats_secret, copenhagen_today(), path, request.remote_addr or "", user_agent
             )
+    except DatabaseUnavailable as exc:  # one line, as for every other request: no traceback per view
+        log.error("gahk_web: database unavailable, a page view is lost: %s", exc)
     except Exception:  # a lost page view must never show up as an error in the visitor's console
         log.exception("gahk_web: the visit beacon failed")
     return done
