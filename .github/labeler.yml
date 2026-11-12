@@ -42,7 +42,7 @@
 
 database:
   - changed-files:
-      - any-glob-to-any-file: ["src/gahk_web/migrations/**", "src/gahk_web/db.py"]
+      - any-glob-to-any-file: ["src/gahk_web/migrations/**", "src/gahk_web/db.py", "src/gahk_web/models.py"]
 
 tests:
   - changed-files:

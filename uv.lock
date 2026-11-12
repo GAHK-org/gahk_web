@@ -313,6 +313,20 @@ wheels = [
 ]
 
 [[package]]
+name = "flask-migrate"
+version = "4.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "alembic" },
+    { name = "flask" },
+    { name = "flask-sqlalchemy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5a/8e/47c7b3c93855ceffc2eabfa271782332942443321a07de193e4198f920cf/flask_migrate-4.1.0.tar.gz", hash = "sha256:1a336b06eb2c3ace005f5f2ded8641d534c18798d64061f6ff11f79e1434126d", size = 21965, upload-time = "2025-01-10T18:51:11.848Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d2/c4/3f329b23d769fe7628a5fc57ad36956f1fb7132cf8837be6da762b197327/Flask_Migrate-4.1.0-py3-none-any.whl", hash = "sha256:24d8051af161782e0743af1b04a152d007bad9772b2bca67b7ec1e8ceeb3910d", size = 21237, upload-time = "2025-01-10T18:51:09.527Z" },
+]
+
+[[package]]
 name = "flask-sqlalchemy"
 version = "3.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -353,6 +367,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "flask-migrate" },
     { name = "mypy" },
     { name = "pip" },
     { name = "pip-audit" },
@@ -377,6 +392,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "flask-migrate", specifier = ">=4.1" },
     { name = "mypy", specifier = ">=1.13" },
     { name = "pip", specifier = ">=25" },
     { name = "pip-audit", specifier = ">=2.7" },

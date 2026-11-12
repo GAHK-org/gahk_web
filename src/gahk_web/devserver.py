@@ -16,7 +16,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from flask import Response
+from flask import Flask, Response
 from werkzeug.serving import is_running_from_reloader, run_simple
 from werkzeug.wrappers import Request
 
@@ -95,6 +95,19 @@ def prepare(cfg: Config) -> None:
             housekeeping.maybe_rebuild(session, cfg)
     finally:
         engine.dispose()
+
+
+def migrations_app() -> Flask:
+    """The app `flask db ...` runs in (task migration, task migration:check): the dev config's
+    database, and Flask-Migrate pointed at the migrations inside the package. Development only;
+    Flask-Migrate is a dev dependency, and the webhost migrates with db.migrate()."""
+    from flask_migrate import Migrate
+
+    from .app import orm
+
+    app = create_app(load_config())
+    Migrate(app, orm, directory=str(db.MIGRATIONS))
+    return app
 
 
 def main(argv: list[str] | None = None) -> None:

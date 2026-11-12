@@ -40,6 +40,31 @@ Indtil der er publiceret indhold, svarer siden "Siden opdateres" (503). Indhold 
 intern: sæt `GAHK_WEB_URL` og `GAHK_WEB_KEY` i gahk_interns `app/.env` til de værdier, `task config`
 skrev ud (nøglen står også i `local/config.ini`), og gem en side under *Hjemmeside*.
 
+## Database og migreringer
+
+Tabellerne er typede SQLAlchemy 2-modeller i `src/gahk_web/models.py`. Koden spørger databasen med
+SQLAlchemys ORM og Core (psycopg 3 som driver), og Flask-SQLAlchemy laver appens engine. Skemaet
+laves og ændres af Alembic-migreringer i `src/gahk_web/migrations/versions/`. De ligger i pakken, så
+webhotellets updater kan køre dem uden Flask-kommandoer (`python -m gahk_web migrate`). Både `task dev`
+og testene kører dem også.
+
+Sådan ændrer du skemaet:
+
+1. Ret modellen i `models.py`.
+2. Kør `task migration -- "Kort beskrivelse af ændringen"`. Den bringer dev-databasen op til nyeste
+   migrering og skriver en ny fil (`0002_kort_beskrivelse_af_aendringen.py` osv.) ud fra forskellen
+   mellem modellerne og databasen, med Flask-Migrate (`flask db migrate`).
+3. Læs filen igennem, og ret den til, hvis Alembic har gættet forkert (fx en omdøbning, som den ser
+   som en slettet og en ny kolonne).
+4. Kør `task migrate` og `task test`. Testene fejler, hvis modellerne og migreringerne ikke beskriver
+   det samme skema (som Djangos `makemigrations --check`); `task migration:check` tjekker det samme mod
+   dev-databasen.
+
+Updateren kører migreringerne, *før* den nye release går i drift, mens den forrige release stadig
+svarer. En migrering skal derfor efterlade et skema, som den forrige releases kode også kan bruge:
+tilføj fx en ny kolonne med en standardværdi eller som nullable, og fjern først gamle kolonner i en
+senere release.
+
 ## Test
 
 ```sh
@@ -49,7 +74,7 @@ task bundle      # byg release-bundlen i dist/ og røgtest den på Python 3.13 o
 task webhost     # byg bundlen, og installér og afprøv den på et falsk webhotel i docker
 ```
 
-Testene genskaber skemaet i test-databasen (`gahk_web_test`) ved hver kørsel.
+Testene genskaber skemaet i test-databasen (`gahk_web_test`) med migreringerne ved hver kørsel.
 `task bundle -- --database postgres://…/en_smid_vaek_database` prøver også den første installation
 gennem CGI-scriptet og forespørgsler til FastCGI-scriptet, ligesom CI gør. Den sletter alle tabeller i databasen, så brug kun en til formålet.
 

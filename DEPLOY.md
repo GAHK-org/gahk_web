@@ -9,7 +9,8 @@ site, day-to-day updates, rollback, and what to do if the account is lost.
 (25.1.1, from `/usr/lib/python3/dist-packages`) works as `python3 -m pip` and as `python3 -I -m pip`
 from a CGI request and reaches PyPI over HTTPS; the account's home is `/usr/home/<login>`, with
 `public_html` directly under it. The updater installs the site's Python packages (Flask, flup,
-Jinja2, MarkupSafe, psycopg with its libpq, Pillow, nh3) with that pip, into each release. Without
+Jinja2, MarkupSafe, SQLAlchemy, Flask-SQLAlchemy, Alembic, psycopg with its libpq, Pillow, nh3) with
+that pip, into each release. Without
 pip on the webhost no release can be installed (section 12).
 
 **FastCGI** (checked the same day with a small flup app, `public_html/fcgitest/test.fcgi`): the
@@ -409,7 +410,9 @@ release. The webhost installs it on intern's next nudge (at most 15 minutes) or 
    only code needs neither PyPI nor extra disk;
 4. runs the release's `selftest.py` with the webhost's `python3` and those packages, and only then
    makes them the release's `vendor/`;
-5. applies database migrations with the new code;
+5. applies the new code's database migrations (Alembic, `python -m gahk_web migrate`; one run at
+   a time, and one that waits more than 10 seconds for a table a request is using gives up and is
+   retried by the next nudge);
 6. installs the new static files, `cgi-bin/gahk.cgi`, `cgi-bin/gahk.fcgi` and `.htaccess`;
 7. switches `CURRENT`. Up to this point the old release kept running untouched. Each running
    FastCGI process answers one more request with the old release and then ends;
@@ -425,7 +428,8 @@ release. The webhost installs it on intern's next nudge (at most 15 minutes) or 
 
 If any step up to 6 fails, the old release stays live, and intern's overview shows the error; step 8
 puts it back. The same error is in `update.log` (section 12). A schema migration runs before the
-switch, so migrations must keep working with the previous release. A release that fails step 8 is
+switch, so a migration must leave a schema the previous release still works with (README.md:
+"Database og migreringer"). A release that fails step 8 is
 tried again on every nudge, each time with a few seconds of errors for the forms and the API; pin
 the running version (below) until a fixed release is out.
 
@@ -454,9 +458,9 @@ no pin helps, since every release needs its packages for that python; the forms 
 down until a release with a newer version of that package (CI tests the next Python, 3.14,
 already).
 
-**Disk use.** A release's packages take about 50 MB (Pillow and psycopg's libpq most of it). The
-kept releases share them as hard links while their `requirements.lock` is the same, so three
-releases usually take about 50 MB, at most about 150 MB, plus about 50 MB while an install runs.
+**Disk use.** A release's packages take about 65 MB (Pillow, psycopg's libpq and SQLAlchemy most of
+it). The kept releases share them as hard links while their `requirements.lock` is the same, so three
+releases usually take about 65 MB, at most about 200 MB, plus about 65 MB while an install runs.
 Interrupted installs leave folders named `.tmp-*` and `~/gahk_web/tmp`; the next update deletes them.
 The images take their size twice: the blob in `~/gahk_web/state/images` (hard-linked into
 `~/public_html/billeder` where hard links work) and the WebP variants beside it, which add about as

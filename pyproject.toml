@@ -30,6 +30,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    # `flask db ...` (task migration): Alembic's commands for the dev app. Not needed on the webhost,
+    # which runs the migrations with Alembic directly.
+    "flask-migrate>=4.1",
     "mypy>=1.13",
     # The updater installs each release's packages with `python -m pip`; its tests run real pip.
     "pip>=25",
@@ -60,6 +63,6 @@ warn_unreachable = true
 scripts_are_modules = true
 
 [[tool.mypy.overrides]]
-# flup (the FastCGI server) has no type hints.
-module = ["flup.*"]
+# flup (the FastCGI server) and Flask-Migrate (the dev's `flask db`) have no type hints.
+module = ["flup.*", "flask_migrate.*"]
 ignore_missing_imports = true

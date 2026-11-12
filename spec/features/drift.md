@@ -15,7 +15,8 @@ The runbook is DEPLOY.md.
   - unpack without anything that points outside its own folder,
   - get its packages for the webhost's Python, each matching the checksum the release names,
   - pass its own self-test on the webhost's Python with those packages,
-  - apply its database changes.
+  - apply its database changes, which must leave a database the running version still works with
+    (they run while it is still live).
 - When Hetzner upgrades Python, pages and pictures keep working, but the forms and everything else
   that needs Python answer "Siden opdateres" until the next update request, which reinstalls the
   packages of the running version for the new Python. Applications sent meanwhile are refused.
@@ -100,6 +101,14 @@ The runbook is DEPLOY.md.
   hand-written web layer. flup is old but small, pure Python, and works on the webhost's Python and
   the next one; its one unsafe corner (an error page that shows tracebacks when debugging) is
   replaced.
+- **The database through an established library, its changes as migrations.** The tables are
+  described once, as typed models, and each schema change is a migration that is written from the
+  difference and checked against the models by the tests, as in intern. SQLAlchemy with
+  Flask-SQLAlchemy and Alembic fits the Flask app; SQLModel was not chosen because it is built for
+  FastAPI. The release runs its migrations itself, without the developer tools.
+- **A request never leaves a database lock or transaction behind.** The program that keeps running
+  reuses its database connection, so whatever a failed request held is undone before the next
+  request gets the connection, and an idle program gives its connection back.
 - **Every release runs on a stand-in for the webhost before it is published.** Unit tests cannot
   show what Apache's rewrite rules, its FastCGI and CGI modules and the webhost's own Python do
   together. CI builds a copy of the webhost as close as it can get (the same Linux and Python

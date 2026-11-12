@@ -30,7 +30,7 @@
 
 ## Checklist
 
-- [ ] A schema change is a new file in `src/gahk_web/migrations/` and still works with the previous release (the updater migrates before it switches)
+- [ ] A schema change is a model change in `models.py` plus a new Alembic revision in `src/gahk_web/migrations/versions/` (`task migration`), and still works with the previous release (the updater migrates before it switches)
 - [ ] A change to the sync API or the snapshot is matched in gahk_intern and in `docs/protocol.md`
 - [ ] A new runtime dependency has binary wheels for CPython 3.13 and 3.14 on manylinux x86_64 (the bundle job checks this)
 - [ ] No secrets committed — configuration lives in `config.ini` on the webhost, never in git

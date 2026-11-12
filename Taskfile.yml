@@ -3,6 +3,7 @@ version: '3'
 # Dev task runner for gahk_web, the public site gahk.dk.
 #   task dev       -> the development server at http://127.0.0.1:8810 (it emulates .htaccess)
 #   task test      -> the test suite (against PostgreSQL; `task db:create` once first)
+#   task migration -- "besked"  -> a new Alembic revision from what changed in models.py
 #   task bundle    -> build the release bundle into dist/ and smoke-test it on Python 3.13 and 3.14
 #                     (installs its packages from PyPI, as the webhost does)
 #   task webhost   -> build the bundle and install and exercise it on a fake Hetzner webhost (docker:
@@ -51,6 +52,21 @@ tasks:
   migrate:
     desc: Apply the database migrations to the dev database
     cmds: ['uv run python -m gahk_web migrate']
+
+  migration:
+    desc: 'Write a new migration from what changed in models.py: task migration -- "what changed" (needs the dev database at the newest revision)'
+    cmds:
+      - task: config
+      - task: migrate
+      - "uv run flask --app 'gahk_web.devserver:migrations_app()' db migrate -m {{.CLI_ARGS}}"
+      - 'uv run ruff check --fix --quiet src/gahk_web/migrations'
+      - 'uv run ruff format --quiet src/gahk_web/migrations'
+
+  migration:check:
+    desc: Check that the migrations make what models.py describes (the tests check it too)
+    cmds:
+      - task: migrate
+      - "uv run flask --app 'gahk_web.devserver:migrations_app()' db check"
 
   rebuild:
     desc: Re-render var/public_html from the last published snapshot
