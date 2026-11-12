@@ -219,10 +219,10 @@ def snapshot_with_pictures() -> tuple[dict[str, Any], dict[str, bytes]]:
     kitchen picture named with Danish letters."""
     conftest = load_module("e2e_conftest", ROOT / "tests" / "conftest.py")
     data: dict[str, Any] = conftest.rename_image(conftest.snapshot(), "kokken.jpg", DANISH_NAME)
-    kokken = next(image["url"] for image in data["images"] if image["url"].endswith(DANISH_NAME))
-    data["legacy_images"][DANISH_LEGACY] = kokken
+    kitchen = next(image["url"] for image in data["images"] if image["url"].endswith(DANISH_NAME))
+    data["legacy_images"][DANISH_LEGACY] = kitchen
     data["redirects"]["velkommen"] = ""  # as intern sends the front page's old slug
-    old = [conftest.GANG, conftest.HERO, conftest.KOKKEN]
+    old = [conftest.HALLWAY, conftest.HERO, conftest.KITCHEN]
     new = [picture(1200, 800, 1, False), picture(2400, 1600, 2, True), picture(1000, 700, 3, False)]
     text = json.dumps(data)
     for before, after in zip(old, new, strict=True):
@@ -803,8 +803,8 @@ manifest_url = {MANIFEST_URL}
                 answer.status == 301 and answer.header("Location").endswith("/static/img/lamassu.svg"),
                 f"{old_logo}: {answer.status} {answer.header('Location')}",
             )
-        velkommen = host.get("/velkommen")
-        expect('<link rel="canonical" href="https://gahk.dk/">' in velkommen.text, "/velkommen's canonical")
+        welcome = host.get("/velkommen")
+        expect('<link rel="canonical" href="https://gahk.dk/">' in welcome.text, "/velkommen's canonical")
         # intern's preview (this site's HTML on intern.gahk.dk) loads the fonts cross-origin.
         font = host.get("/static/fonts/ubuntu-400.woff2", headers={"Origin": "https://intern.gahk.dk"})
         expect(

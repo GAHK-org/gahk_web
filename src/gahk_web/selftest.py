@@ -188,12 +188,12 @@ def check_render() -> dict[str, tuple[str, str | None]]:
         variants = tuple((width, f"/images/0123456789abcdef/_{width}w.webp") for width in (480, 960))
         pictures = {url: Picture(url, 960, 640, variants)}
         files = Site(cfg, snapshot, date(2026, 11, 12), pictures=pictures).files()
-    home, kokken = files["index.html"][0], files["faciliteter/kokken/index.html"][0]
-    if "Forside" not in home or "Julefrokost" not in home or "Køkkenet &lt;&amp;&gt;" not in kokken:
+    home, kitchen = files["index.html"][0], files["faciliteter/kokken/index.html"][0]
+    if "Forside" not in home or "Julefrokost" not in home or "Køkkenet &lt;&amp;&gt;" not in kitchen:
         raise AssertionError("the pages did not render the sample snapshot")
-    if 'srcset="/images/0123456789abcdef/_480w.webp 480w' not in kokken:
+    if 'srcset="/images/0123456789abcdef/_480w.webp 480w' not in kitchen:
         raise AssertionError("the pages do not link the picture variants")
-    if "/images/0123456789abcdef/gangen-p%C3%A5-f%C3%B8rste.jpg" not in kokken:
+    if "/images/0123456789abcdef/gangen-p%C3%A5-f%C3%B8rste.jpg" not in kitchen:
         raise AssertionError("the pages do not percent-encode image names")
     return files
 

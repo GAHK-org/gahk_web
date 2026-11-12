@@ -210,10 +210,10 @@ def image(name: str, data: bytes, content_type: str = "image/jpeg") -> dict[str,
     }
 
 
-GANG = jpeg("gang")
+HALLWAY = jpeg("gang")
 HERO = jpeg("hero")
-KOKKEN = jpeg("kokken")
-IMAGE_BYTES = {hashlib.sha256(data).hexdigest(): data for data in (GANG, HERO, KOKKEN)}
+KITCHEN = jpeg("kokken")
+IMAGE_BYTES = {hashlib.sha256(data).hexdigest(): data for data in (HALLWAY, HERO, KITCHEN)}
 
 
 def page(page_id: int, path: str, title: str, body: str = "<p>Tekst</p>", **extra: object) -> dict[str, Any]:
@@ -231,13 +231,13 @@ def page(page_id: int, path: str, title: str, body: str = "<p>Tekst</p>", **extr
 
 def snapshot(today: date | None = None, **overrides: object) -> dict[str, Any]:
     today = today or copenhagen_today()
-    gang, hero, kokken = image("gang.jpg", GANG), image("hero.jpg", HERO), image("kokken.jpg", KOKKEN)
+    hallway, hero, kitchen = image("gang.jpg", HALLWAY), image("hero.jpg", HERO), image("kokken.jpg", KITCHEN)
     data: dict[str, Any] = {
         "format": 1,
         "revision": "a" * 64,
         "published_at": "2026-11-11T12:00:00+01:00",
-        "site": {"front_page_id": 1, "default_background": gang["url"]},
-        "legacy_images": {"/static/legacy/image/upload/images/gang.jpg": gang["url"]},
+        "site": {"front_page_id": 1, "default_background": hallway["url"]},
+        "legacy_images": {"/static/legacy/image/upload/images/gang.jpg": hallway["url"]},
         "pages": [
             page(1, "", "Velkommen", "<p>Forsidetekst</p>", background=hero["url"]),
             page(2, "faciliteter", "Faciliteter", "<p>Om faciliteterne</p>"),
@@ -245,8 +245,8 @@ def snapshot(today: date | None = None, **overrides: object) -> dict[str, Any]:
                 3,
                 "faciliteter/kokken",
                 "Køkkenet",
-                f'<p><img src="{kokken["url"]}" alt=""></p>',
-                background=kokken["url"],
+                f'<p><img src="{kitchen["url"]}" alt=""></p>',
+                background=kitchen["url"],
             ),
             page(4, "kontakt", "Kontakt <os>", "<p>Skriv til os</p>", description="Sådan kontakter du os"),
             page(5, "optagelse", "Optagelse", "<p>Kriterier og husleje</p>"),
@@ -288,7 +288,7 @@ def snapshot(today: date | None = None, **overrides: object) -> dict[str, Any]:
             {"label": "Kontakt", "url": "/kontakt"},
         ],
         "redirects": {"gammel-side": "kontakt"},
-        "images": [gang, hero, kokken],
+        "images": [hallway, hero, kitchen],
     }
     data.update(overrides)
     return data

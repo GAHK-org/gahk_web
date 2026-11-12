@@ -5,9 +5,9 @@ import unicodedata
 from pathlib import Path
 
 from conftest import (
-    GANG,
+    HALLWAY,
     IMAGE_BYTES,
-    KOKKEN,
+    KITCHEN,
     Client,
     execute,
     image,
@@ -45,25 +45,28 @@ def test_publish_reports_missing_images_until_they_are_uploaded(client: Client) 
 
 
 def test_image_put_checks_hash_type_and_bytes(client: Client) -> None:
-    sha = hashlib.sha256(GANG).hexdigest()
+    sha = hashlib.sha256(HALLWAY).hexdigest()
     other = hashlib.sha256(b"other").hexdigest()
     assert (
-        client.api("PUT", f"/api/images/{other}", raw=GANG, headers={"Content-Type": "image/jpeg"}).status
+        client.api("PUT", f"/api/images/{other}", raw=HALLWAY, headers={"Content-Type": "image/jpeg"}).status
         == 400
     )
     assert (
-        client.api("PUT", f"/api/images/{sha}", raw=GANG, headers={"Content-Type": "image/svg+xml"}).status
+        client.api("PUT", f"/api/images/{sha}", raw=HALLWAY, headers={"Content-Type": "image/svg+xml"}).status
         == 400
     )
     assert (
-        client.api("PUT", f"/api/images/{sha}", raw=GANG, headers={"Content-Type": "image/png"}).status == 400
-    )
-    assert (
-        client.api("PUT", f"/api/images/{sha[:63]}", raw=GANG, headers={"Content-Type": "image/jpeg"}).status
+        client.api("PUT", f"/api/images/{sha}", raw=HALLWAY, headers={"Content-Type": "image/png"}).status
         == 400
     )
     assert (
-        client.api("PUT", f"/api/images/{sha}", raw=GANG, headers={"Content-Type": "image/jpeg"}).status
+        client.api(
+            "PUT", f"/api/images/{sha[:63]}", raw=HALLWAY, headers={"Content-Type": "image/jpeg"}
+        ).status
+        == 400
+    )
+    assert (
+        client.api("PUT", f"/api/images/{sha}", raw=HALLWAY, headers={"Content-Type": "image/jpeg"}).status
         == 204
     )
 
@@ -100,19 +103,19 @@ def test_publish_renders_every_file(client: Client, cfg: Config) -> None:
         "sw.js",
     ):
         assert (root / rel).is_file(), rel
-    kokken = image("kokken.jpg", KOKKEN)["url"]
-    assert (root / kokken.lstrip("/")).read_bytes() == KOKKEN
+    kitchen = image("kokken.jpg", KITCHEN)["url"]
+    assert (root / kitchen.lstrip("/")).read_bytes() == KITCHEN
     assert not list(root.rglob(".tmp-*"))
 
 
 def test_titles_are_escaped_and_bodies_are_not(client: Client, cfg: Config) -> None:
     publish(client)
-    kontakt = (cfg.public_html / "kontakt/index.html").read_text()
-    assert "<title>Kontakt &lt;os&gt; - G. A. Hagemanns Kollegium</title>" in kontakt
-    assert "Kontakt <os>" not in kontakt
-    assert "<p>Skriv til os</p>" in kontakt
-    assert '<meta name="description" content="Sådan kontakter du os">' in kontakt
-    assert '<link rel="canonical" href="https://gahk.dk/kontakt">' in kontakt
+    contact = (cfg.public_html / "kontakt/index.html").read_text()
+    assert "<title>Kontakt &lt;os&gt; - G. A. Hagemanns Kollegium</title>" in contact
+    assert "Kontakt <os>" not in contact
+    assert "<p>Skriv til os</p>" in contact
+    assert '<meta name="description" content="Sådan kontakter du os">' in contact
+    assert '<link rel="canonical" href="https://gahk.dk/kontakt">' in contact
     home = (cfg.public_html / "index.html").read_text()
     assert "Ny &lt;nyhed&gt;" in home
     assert '<meta name="description" content="Traditionsrigt kollegium på Østerbro, København">' in home
@@ -123,8 +126,8 @@ def test_menu_and_canonical_follow_the_snapshot(client: Client, cfg: Config) -> 
     page_html = (cfg.public_html / "faciliteter/index.html").read_text()
     assert '<a href="/kontakt">Kontakt</a>' in page_html
     assert '<a href="/faciliteter" aria-current="page">Faciliteter</a>' in page_html
-    optagelse = (cfg.public_html / "optagelse/index.html").read_text()
-    assert '<link rel="canonical" href="https://gahk.dk/optagelse/">' in optagelse
+    admissions = (cfg.public_html / "optagelse/index.html").read_text()
+    assert '<link rel="canonical" href="https://gahk.dk/optagelse/">' in admissions
     sitemap = (cfg.public_html / "sitemap.xml").read_text()
     assert "<loc>https://gahk.dk/faciliteter/kokken</loc>" in sitemap
     assert "<loc>https://gahk.dk/begivenheder/</loc>" in sitemap
@@ -132,10 +135,10 @@ def test_menu_and_canonical_follow_the_snapshot(client: Client, cfg: Config) -> 
 
 def test_section_sidebar_only_for_sections_with_two_pages(client: Client, cfg: Config) -> None:
     publish(client)
-    kokken = (cfg.public_html / "faciliteter/kokken/index.html").read_text()
-    assert 'class="section-nav"' in kokken
-    assert '<a href="/faciliteter">Faciliteter</a>' in kokken
-    assert '<a href="/faciliteter/kokken" class="is-current" aria-current="page">Køkkenet</a>' in kokken
+    kitchen = (cfg.public_html / "faciliteter/kokken/index.html").read_text()
+    assert 'class="section-nav"' in kitchen
+    assert '<a href="/faciliteter">Faciliteter</a>' in kitchen
+    assert '<a href="/faciliteter/kokken" class="is-current" aria-current="page">Køkkenet</a>' in kitchen
     assert (
         "section-nav"
         not in (cfg.public_html / "kontakt/index.html").read_text().split("<main")[0].split("</header>")[1]
@@ -145,16 +148,16 @@ def test_section_sidebar_only_for_sections_with_two_pages(client: Client, cfg: C
 def test_backgrounds_default_and_plain(client: Client, cfg: Config) -> None:
     data = snapshot()
     publish(client, data)
-    gang = image("gang.jpg", GANG)["url"]
-    kontakt = (cfg.public_html / "kontakt/index.html").read_text()
-    assert f"background-image:url('{gang}')" in kontakt
+    hallway = image("gang.jpg", HALLWAY)["url"]
+    contact = (cfg.public_html / "kontakt/index.html").read_text()
+    assert f"background-image:url('{hallway}')" in contact
     home = (cfg.public_html / "index.html").read_text()
     assert image("hero.jpg", jpeg("hero"))["url"] in home
     data["site"]["default_background"] = ""
     data["revision"] = "b" * 64
     publish(client, data)
-    kontakt = (cfg.public_html / "kontakt/index.html").read_text()
-    assert "page-stage--plain" in kontakt
+    contact = (cfg.public_html / "kontakt/index.html").read_text()
+    assert "page-stage--plain" in contact
     assert "hero--plain" in (cfg.public_html / "begivenheder/index.html").read_text()
 
 
@@ -193,20 +196,20 @@ def test_republish_removes_stale_pages_only(client: Client, cfg: Config) -> None
 
 def test_unused_images_are_collected_after_publish(client: Client, cfg: Config, con: Session) -> None:
     publish(client)
-    kokken = image("kokken.jpg", KOKKEN)
+    kitchen = image("kokken.jpg", KITCHEN)
     data = snapshot(revision="c" * 64)
     data["pages"][2]["background"] = ""
     data["pages"][2]["body"] = "<p>Ingen billeder</p>"
-    data["images"] = [img for img in data["images"] if img["sha256"] != kokken["sha256"]]
+    data["images"] = [img for img in data["images"] if img["sha256"] != kitchen["sha256"]]
     publish(client, data)
-    assert not (cfg.public_html / kokken["url"].lstrip("/")).exists()
-    assert not (cfg.public_html / kokken["url"].lstrip("/")).parent.exists()
+    assert not (cfg.public_html / kitchen["url"].lstrip("/")).exists()
+    assert not (cfg.public_html / kitchen["url"].lstrip("/")).parent.exists()
     # The blob stays for an hour (a publish in flight may still need it).
-    assert (cfg.state_dir / "images" / kokken["sha256"]).is_file()
+    assert (cfg.state_dir / "images" / kitchen["sha256"]).is_file()
     execute(con, "UPDATE images SET stored_at = now() - interval '2 hours'")
     again = snapshot(revision="d" * 64) | {"images": data["images"], "pages": data["pages"]}
     assert client.api("POST", "/api/publish", again).status == 200
-    assert not (cfg.state_dir / "images" / kokken["sha256"]).exists()
+    assert not (cfg.state_dir / "images" / kitchen["sha256"]).exists()
 
 
 def test_image_files_keep_their_letters(client: Client, cfg: Config) -> None:
@@ -215,9 +218,9 @@ def test_image_files_keep_their_letters(client: Client, cfg: Config) -> None:
     name = "køkken-på-første_sal-v2.jpg"
     assert unicodedata.is_normalized("NFC", name)
     publish(client, rename_image(snapshot(), "kokken.jpg", name))
-    folder = os.fsencode(cfg.public_html / "images" / image(name, KOKKEN)["sha256"][:16])
+    folder = os.fsencode(cfg.public_html / "images" / image(name, KITCHEN)["sha256"][:16])
     assert os.listdir(folder) == [name.encode("utf-8")]  # noqa: PTH208 - the name as bytes on disk
-    assert (cfg.public_html / image(name, KOKKEN)["url"].lstrip("/")).read_bytes() == KOKKEN
+    assert (cfg.public_html / image(name, KITCHEN)["url"].lstrip("/")).read_bytes() == KITCHEN
     # The next publish names it as before: the copy under the old name goes.
     publish(client, snapshot(revision="c" * 64))
     assert os.listdir(folder) == [b"kokken.jpg"]  # noqa: PTH208 - the name as bytes on disk

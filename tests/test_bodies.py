@@ -90,10 +90,10 @@ def test_published_and_previewed_bodies_are_sanitised(client: Client, cfg: Confi
     data["events"][0]["description"] = '<p><a href="javascript:x()">Mad</a></p>'
     publish(client, data)
     assert "<p>Skriv til os</p>\n" in (cfg.public_html / "kontakt/index.html").read_text()
-    begivenheder = (cfg.public_html / "begivenheder/index.html").read_text()
-    assert '<p>Nu<img src="x"></p>' in begivenheder
-    assert '<a rel="noopener noreferrer">Mad</a>' in begivenheder
-    for html in ((cfg.public_html / "kontakt/index.html").read_text(), begivenheder):
+    events = (cfg.public_html / "begivenheder/index.html").read_text()
+    assert '<p>Nu<img src="x"></p>' in events
+    assert '<a rel="noopener noreferrer">Mad</a>' in events
+    for html in ((cfg.public_html / "kontakt/index.html").read_text(), events):
         assert "alert(1)" not in html and "onerror" not in html and "javascript:" not in html
 
     item = page(9, "ny", "Ny", '<p><img src="/media/cms/ny.jpg" onload="x()"></p><script>alert(1)</script>')

@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 import pytest
-from conftest import GANG, KOKKEN, Client, image, publish, rename_image, snapshot
+from conftest import HALLWAY, KITCHEN, Client, image, publish, rename_image, snapshot
 from sqlalchemy.orm import Session
 
 from gahk_web import routing
@@ -110,11 +110,11 @@ def test_not_intranet() -> None:
 
 def test_old_image_addresses_follow_the_legacy_map(client: Client) -> None:
     publish(client)
-    gang = image("gang.jpg", GANG)["url"]
+    hallway = image("gang.jpg", HALLWAY)["url"]
     # Both old forms go straight to /images/, never by way of another /legacy/ address.
     for path in ("/public/image/upload/images/gang.jpg", "/static/legacy/image/upload/images/gang.jpg"):
         result = client.get(path)
-        assert (result.status, result.headers["Location"]) == (301, gang), path
+        assert (result.status, result.headers["Location"]) == (301, hallway), path
     assert client.get("/public/image/upload/images/ukendt.jpg").status == 404
     assert client.get("/static/legacy/image/upload/images/ukendt.jpg").status == 404
 
@@ -122,11 +122,11 @@ def test_old_image_addresses_follow_the_legacy_map(client: Client) -> None:
 def test_old_image_addresses_with_the_old_sites_static_hash_follow_the_map(client: Client) -> None:
     """The old site also served its legacy images under ManifestStaticFilesStorage's hashed names."""
     publish(client)
-    gang = image("gang.jpg", GANG)["url"]
+    hallway = image("gang.jpg", HALLWAY)["url"]
     result = client.get("/static/legacy/image/upload/images/gang.b8dc291a4e43.jpg")
-    assert (result.status, result.headers["Location"]) == (301, gang)
+    assert (result.status, result.headers["Location"]) == (301, hallway)
     result = client.get("/public/image/upload/images/gang.b8dc291a4e43.jpg")
-    assert (result.status, result.headers["Location"]) == (301, gang)
+    assert (result.status, result.headers["Location"]) == (301, hallway)
     # Only a 12-hex-digit segment right before the extension is a hash.
     assert client.get("/static/legacy/image/upload/images/gang.b8dc291a4e4.jpg").status == 404
     assert client.get("/static/legacy/image/upload/images/gang.B8DC291A4E43.jpg").status == 404
@@ -137,12 +137,12 @@ def test_old_image_addresses_with_other_letters_follow_the_map(client: Client) -
     """Old addresses may have their letters spelled out or percent-encoded in the map; a browser
     always asks percent-encoded (NFC, or NFD from a Mac). The Location is percent-encoded too."""
     data = rename_image(snapshot(), "kokken.jpg", "køkken-på-første.jpg")
-    kokken = image("køkken-på-første.jpg", KOKKEN)["url"]
-    href = f"/images/{kokken.split('/')[2]}/k%C3%B8kken-p%C3%A5-f%C3%B8rste.jpg"
+    kitchen = image("køkken-på-første.jpg", KITCHEN)["url"]
+    href = f"/images/{kitchen.split('/')[2]}/k%C3%B8kken-p%C3%A5-f%C3%B8rste.jpg"
     data["legacy_images"] |= {
-        "/static/legacy/image/upload/køkken.jpg": kokken,
-        "/static/legacy/image/upload/s%C3%B8en.jpg": kokken,
-        "/static/legacy/image/upload/tre_æbler.2019.jpg": kokken,
+        "/static/legacy/image/upload/køkken.jpg": kitchen,
+        "/static/legacy/image/upload/s%C3%B8en.jpg": kitchen,
+        "/static/legacy/image/upload/tre_æbler.2019.jpg": kitchen,
     }
     publish(client, data)
     for path in (
@@ -155,8 +155,8 @@ def test_old_image_addresses_with_other_letters_follow_the_map(client: Client) -
         assert (result.status, result.headers["Location"]) == (301, href), path
     # NFD (a Mac's "å": "a" plus a combining ring) finds the NFC key, and the other way round.
     data["legacy_images"] |= {
-        "/static/legacy/image/upload/på.jpg": kokken,
-        "/static/legacy/image/upload/ha%CC%8Ab.jpg": kokken,
+        "/static/legacy/image/upload/på.jpg": kitchen,
+        "/static/legacy/image/upload/ha%CC%8Ab.jpg": kitchen,
     }
     publish(client, data | {"revision": "c" * 64})
     for path in ("/static/legacy/image/upload/pa%CC%8A.jpg", "/static/legacy/image/upload/h%C3%A5b.jpg"):
@@ -395,9 +395,9 @@ def test_devserver_serves_assets_and_images(client: Client, dev: Client) -> None
     assert dev.get("/static/css/site.css").status == 200
     assert dev.get("/favicon.ico").status == 200
     assert dev.get("/static/icons/icon-192x192.png").status == 200
-    gang = image("gang.jpg", GANG)["url"]
-    result = dev.get(gang)
-    assert (result.status, result.body) == (200, GANG)
+    hallway = image("gang.jpg", HALLWAY)["url"]
+    result = dev.get(hallway)
+    assert (result.status, result.body) == (200, HALLWAY)
     assert dev.get("/robots.txt").text.startswith("User-agent: *")
     assert dev.get("/sw.js").headers["Content-Type"].startswith(("application/javascript", "text/javascript"))
 
@@ -495,9 +495,9 @@ def test_fonts_may_be_fetched_from_any_origin(client: Client, dev: Client) -> No
 
 def test_devserver_serves_images_with_other_letters(client: Client, dev: Client) -> None:
     publish(client, rename_image(snapshot(), "kokken.jpg", "tovtrækning-2019.jpg"))
-    folder = image("kokken.jpg", KOKKEN)["url"].rsplit("/", 1)[0]
+    folder = image("kokken.jpg", KITCHEN)["url"].rsplit("/", 1)[0]
     result = dev.get(f"{folder}/tovtr%C3%A6kning-2019.jpg")
-    assert (result.status, result.body) == (200, KOKKEN)
+    assert (result.status, result.body) == (200, KITCHEN)
     assert dev.get(f"{folder}/tovtra%CC%8Akning-2019.jpg").status == 404  # NFD is another name
     page = dev.get("/faciliteter/kokken").text
     assert f"{folder}/tovtr%C3%A6kning-2019.jpg" in page
@@ -506,8 +506,8 @@ def test_devserver_serves_images_with_other_letters(client: Client, dev: Client)
 def test_devserver_matches_production_routing(client: Client, dev: Client) -> None:
     publish(client)
     assert dev.get("/intern/x").headers["Location"] == "https://intern.gahk.dk/intern/x"
-    gang = image("gang.jpg", GANG)["url"]
-    assert dev.get("/public/image/upload/images/gang.jpg").headers["Location"] == gang
+    hallway = image("gang.jpg", HALLWAY)["url"]
+    assert dev.get("/public/image/upload/images/gang.jpg").headers["Location"] == hallway
     assert dev.get("/public/image/a.jpg").status == 404
     assert dev.get("/gammel-side").headers["Location"] == "/kontakt"
     assert dev.get("/findes-ikke").status == 404

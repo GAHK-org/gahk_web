@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import GANG, Client, execute, image, page, publish, query_one, rename_image, snapshot
+from conftest import HALLWAY, Client, execute, image, page, publish, query_one, rename_image, snapshot
 from PIL import Image, ImageCms
 from sqlalchemy.orm import Session
 
@@ -280,8 +280,8 @@ def test_pages_link_the_variants(client: Client, cfg: Config) -> None:
     body = home.split('class="prose-gahk"')[1]
     assert 'alt="Forsiden"' in body and "loading=" not in body.split("</div>")[0]  # first: eager
 
-    kontakt = (cfg.public_html / "kontakt/index.html").read_text()  # the default background
-    assert f"background-image:url('{image('gang.jpg', GANG)['url']}')" in kontakt  # no variants
+    contact = (cfg.public_html / "kontakt/index.html").read_text()  # the default background
+    assert f"background-image:url('{image('gang.jpg', HALLWAY)['url']}')" in contact  # no variants
 
 
 def test_image_names_with_other_letters_are_percent_encoded_in_pages(client: Client, cfg: Config) -> None:
@@ -306,14 +306,14 @@ def test_image_names_with_other_letters_are_percent_encoded_in_pages(client: Cli
     assert f".page-stage--photo{{background-image:url('{folder}/_2000w.webp')}}" in html
     assert gallery not in html and "kø" not in html.split("<body>")[1]
 
-    gang = image("gangen-på-første.jpg", GANG)["url"]
-    gang_href = f"/images/{gang.split('/')[2]}/gangen-p%C3%A5-f%C3%B8rste.jpg"
-    kontakt = (cfg.public_html / "kontakt/index.html").read_text()
-    assert f"background-image:url('{gang_href}')" in kontakt  # no variants: the original, encoded
-    assert f'<meta property="og:image" content="https://gahk.dk{gang_href}">' in kontakt
-    begivenheder = (cfg.public_html / "begivenheder/index.html").read_text()
-    assert f'<img src="{gang_href}" alt="" class="hero__img"' in begivenheder
-    assert gang not in kontakt + begivenheder
+    hallway = image("gangen-på-første.jpg", HALLWAY)["url"]
+    hallway_href = f"/images/{hallway.split('/')[2]}/gangen-p%C3%A5-f%C3%B8rste.jpg"
+    contact = (cfg.public_html / "kontakt/index.html").read_text()
+    assert f"background-image:url('{hallway_href}')" in contact  # no variants: the original, encoded
+    assert f'<meta property="og:image" content="https://gahk.dk{hallway_href}">' in contact
+    events = (cfg.public_html / "begivenheder/index.html").read_text()
+    assert f'<img src="{hallway_href}" alt="" class="hero__img"' in events
+    assert hallway not in contact + events
 
 
 def test_a_phone_gets_a_narrower_background(client: Client, cfg: Config) -> None:

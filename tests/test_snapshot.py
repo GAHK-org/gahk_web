@@ -51,7 +51,7 @@ def test_reserved_paths_are_refused(path: str) -> None:
         validate(data)
 
 
-def test_optagelse_itself_is_a_normal_page() -> None:
+def test_the_admissions_page_itself_is_a_normal_page() -> None:
     assert not is_reserved("optagelse")
     assert is_reserved("optagelse/ansoeg")
 

@@ -48,9 +48,9 @@ def test_form_pages_render_the_fields(client: Client, cfg: Config) -> None:
     assert "Udfyld formularen for at anmode om en rundvisning." in html
     assert 'href="/optagelse/"' in html  # "Før du søger" points at the optagelse page
     assert "challenges.cloudflare.com" not in html
-    fremleje = (cfg.public_html / "optagelse/fremlej/index.html").read_text()
-    assert '<label for="id_occupation">Beskæftigelse</label>' in fremleje
-    assert 'name="motivation" id="id_motivation" rows="5">' in fremleje  # no length cap
+    sublet = (cfg.public_html / "optagelse/fremlej/index.html").read_text()
+    assert '<label for="id_occupation">Beskæftigelse</label>' in sublet
+    assert 'name="motivation" id="id_motivation" rows="5">' in sublet  # no length cap
 
 
 def test_valid_submission_is_queued_and_redirects(client: Client, con: Session) -> None:
@@ -67,10 +67,10 @@ def test_valid_submission_is_queued_and_redirects(client: Client, con: Session) 
 
 def test_legacy_post_addresses_still_work(client: Client, con: Session) -> None:
     publish(client)
-    fremleje = {
+    sublet = {
         k: v for k, v in VALID.items() if k not in ("study_year", "year_left", "university", "field_of_study")
     }
-    assert post(client, "/optagelse/send_fremleje", fremleje | {"occupation": "Studerende"}).status == 303
+    assert post(client, "/optagelse/send_fremleje", sublet | {"occupation": "Studerende"}).status == 303
     assert post(client, "/optagelse/send_rundvisning", VALID).status == 303
     assert [row["kind"] for row in applications(con)] == ["sublet", "tour"]
 
