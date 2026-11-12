@@ -783,6 +783,15 @@ manifest_url = {MANIFEST_URL}
                 answer.header("Cache-Control") == cache,
                 f"{path}: Cache-Control {answer.header('Cache-Control')}",
             )
+        # intern's preview (this site's HTML on intern.gahk.dk) loads the fonts cross-origin.
+        font = host.get("/static/fonts/ubuntu-400.woff2", headers={"Origin": "https://intern.gahk.dk"})
+        expect(
+            font.status == 200
+            and font.header("Access-Control-Allow-Origin") == "*"
+            and font.header("Cache-Control") == "public, max-age=604800",
+            f"a font: {font.status} {font.headers}",
+        )
+        expect(not host.get("/").header("Access-Control-Allow-Origin"), "a page allows any origin")
         python = [entry.request for entry in host.access() if entry.handler != "-"]
         expect(not python, f"these static requests started Python: {python}")
 

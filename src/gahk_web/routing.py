@@ -57,6 +57,9 @@ UPDATE_PATH = "/api/update"
 LONG_PATHS = frozenset({"/api/publish", "/api/rebuild"})
 CGI_STUB = "gahk.cgi"
 FASTCGI_STUB = "gahk.fcgi"
+# The site's fonts. Browsers fetch fonts with CORS, and intern's preview shows this site's HTML on
+# intern.gahk.dk's origin, so Apache answers them to any origin (they are public files).
+FONT_RE = re.compile(r"^/static/fonts/[^/]+$")
 
 
 def is_stub(path: str) -> bool:
@@ -68,6 +71,11 @@ def is_script(path: str) -> bool:
     """A Python, CGI, FastCGI, PHP, Perl or SSI script anywhere: the server would run it, so it is
     refused."""
     return bool(_SCRIPT_RE.search(path))
+
+
+def is_font(path: str) -> bool:
+    """A font file, which .htaccess answers with Access-Control-Allow-Origin: *."""
+    return bool(FONT_RE.match(path))
 
 
 def stub_for(path: str, content_length: str = "", *, cgi_only: bool = False) -> str:

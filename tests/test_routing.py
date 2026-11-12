@@ -308,6 +308,30 @@ def test_devserver_serves_assets_and_images(client: Client, dev: Client) -> None
     assert dev.get("/sw.js").headers["Content-Type"].startswith(("application/javascript", "text/javascript"))
 
 
+def test_fonts_may_be_fetched_from_any_origin(client: Client, dev: Client) -> None:
+    """intern's preview shows this site's HTML on intern.gahk.dk, and browsers fetch fonts with CORS:
+    without the header the preview fell back to other fonts (found in the full-system e2e)."""
+    text = HTACCESS.read_text()
+    block = re.search(
+        r'<If "%\{REQUEST_FILENAME\} =~ m#(\S+)#">\s*Header set Access-Control-Allow-Origin "\*"', text
+    )
+    assert block is not None and block.group(1) == routing.FONT_RE.pattern.lstrip("^")
+    assert text.count("Access-Control-Allow-Origin") == 1  # fonts only
+    for font in ("/static/fonts/ubuntu-400.woff2", "/static/fonts/julius-sans-one-400.woff2"):
+        assert routing.is_font(font)
+        result = dev.get(font)
+        assert result.status == 200, font
+        assert result.headers["Access-Control-Allow-Origin"] == "*"
+    for other in (
+        "/static/css/site.css",
+        "/static/icons/icon-192x192.png",
+        "/static/fonts/",
+        "/fonts/x.woff2",
+    ):
+        assert not routing.is_font(other)
+    assert "Access-Control-Allow-Origin" not in dev.get("/static/css/site.css").headers
+
+
 def test_devserver_serves_images_with_other_letters(client: Client, dev: Client) -> None:
     publish(client, rename_image(snapshot(), "kokken.jpg", "tovtrækning-2019.jpg"))
     folder = image("kokken.jpg", KOKKEN)["url"].rsplit("/", 1)[0]

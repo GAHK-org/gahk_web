@@ -38,11 +38,14 @@ def _package_static(path: str) -> Path | None:
     return None
 
 
-def _file_response(path: Path) -> Response:
+def _file_response(path: Path, url_path: str) -> Response:
     content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     if content_type.startswith("text/") or content_type in ("application/javascript", "application/xml"):
         content_type += "; charset=utf-8"
-    return response(200, path.read_bytes(), content_type, ("Cache-Control", "no-cache"))
+    headers = [("Cache-Control", "no-cache")]
+    if routing.is_font(url_path):
+        headers.append(("Access-Control-Allow-Origin", "*"))
+    return response(200, path.read_bytes(), content_type, *headers)
 
 
 def static_response(cfg: Config, method: str, path: str, query: str) -> Response | None:
@@ -58,7 +61,7 @@ def static_response(cfg: Config, method: str, path: str, query: str) -> Response
     if method in ("GET", "HEAD"):
         file = routing.static_file(cfg.public_html, path) or _package_static(path)
         if file is not None:
-            return _file_response(file)
+            return _file_response(file, path)
     return None
 
 

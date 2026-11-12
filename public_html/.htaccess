@@ -134,6 +134,11 @@ ErrorDocument 404 /404.html
   <If "%{REQUEST_FILENAME} =~ m#/static/(?:fonts|icons|img)/[^/]+$# || %{REQUEST_FILENAME} =~ m#/static/favicon\.ico$#">
     Header set Cache-Control "public, max-age=604800"
   </If>
+  # Fonts: browsers fetch them with CORS. intern's preview shows this site's HTML on intern.gahk.dk,
+  # which loads them from here, so any origin may have them (routing.FONT_RE).
+  <If "%{REQUEST_FILENAME} =~ m#/static/fonts/[^/]+$#">
+    Header set Access-Control-Allow-Origin "*"
+  </If>
   # The self-removing service worker: browsers must always fetch it fresh.
   <If "%{REQUEST_FILENAME} =~ m#/sw\.js$#">
     Header set Cache-Control "no-cache"
