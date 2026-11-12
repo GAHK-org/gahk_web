@@ -20,6 +20,10 @@ could shadow them. When vendor/ was installed for another python (Hetzner upgrad
 not import the release: GET /api/health answers 503 with the reason, other requests the 503 page,
 and the next POST /api/update reinstalls the packages.
 
+While the release cannot run (none installed yet, or its packages do not fit), a signed GET
+/api/status answers 503 with the reason and the updater's last result (update.json), so how a slow
+install or repair ended can still be read.
+
 Standard library only: it must work before any release is installed.
 """
 
@@ -40,6 +44,7 @@ from urllib.parse import unquote, urlsplit
 
 UPDATE_PATH = "/api/update"
 HEALTH_PATH = "/api/health"
+STATUS_PATH = "/api/status"
 MAX_UPDATE_BODY = 1024 * 1024
 MAX_SKEW_SECONDS = 300  # as gahk_web/signing.py
 MIN_KEY_LENGTH = 32  # as gahk_web/config.py
@@ -90,15 +95,31 @@ def request_path() -> str:
     return "/" + os.environ.get("PATH_INFO", "").lstrip("/")
 
 
-def sync_key(home: Path) -> str:
+def read_config(home: Path) -> configparser.ConfigParser:
+    """config.ini, or an empty one when it is missing or broken."""
     explicit = os.environ.get("GAHK_WEB_CONFIG")
     path = Path(explicit) if explicit else home / "gahk_web" / "config.ini"
     parser = configparser.ConfigParser(interpolation=None)
     try:
         parser.read(path, encoding="utf-8")
     except (configparser.Error, OSError):
-        return ""
-    return parser.get("sync", "key", fallback="").strip()
+        return configparser.ConfigParser(interpolation=None)
+    return parser
+
+
+def sync_key(home: Path) -> str:
+    return read_config(home).get("sync", "key", fallback="").strip()
+
+
+def read_body() -> bytes | None:
+    """The request body, or None when it is larger than any request this stub answers."""
+    try:
+        length = int(os.environ.get("CONTENT_LENGTH") or 0)
+    except ValueError:
+        length = -1
+    if not 0 <= length <= MAX_UPDATE_BODY:
+        return None
+    return sys.stdin.buffer.read(length) if length else b""
 
 
 def signature_problem(key: str, method: str, path: str, body: bytes) -> str:
@@ -132,14 +153,10 @@ def handle_update(home: Path, app_home: Path, release: Path | None) -> None:
     if method != "POST":
         json_reply("405 Method Not Allowed", {"error": "method not allowed"})
         return
-    try:
-        length = int(os.environ.get("CONTENT_LENGTH") or 0)
-    except ValueError:
-        length = -1
-    if not 0 <= length <= MAX_UPDATE_BODY:
+    body = read_body()
+    if body is None:
         json_reply("413 Payload Too Large", {"error": "the body is too large"})
         return
-    body = sys.stdin.buffer.read(length) if length else b""
     problem = signature_problem(sync_key(home), method, UPDATE_PATH, body)
     if problem:
         json_reply("401 Unauthorized", {"error": problem})
@@ -161,6 +178,54 @@ def handle_update(home: Path, app_home: Path, release: Path | None) -> None:
         json_reply("500 Internal Server Error", {"error": f"the updater failed: {exc!r}"})
         return
     json_reply("200 OK", result)
+
+
+def update_state(home: Path) -> dict[str, object]:
+    """The updater's last result, as the release's GET /api/status reports it (gahk_web/api.py)."""
+    state: dict[str, object] = {
+        "checked_at": None,
+        "available_version": None,
+        "last_result": None,
+        "last_error": None,
+    }
+    state_dir = read_config(home).get("paths", "state_dir", fallback="").strip()
+    path = Path(state_dir or home / "gahk_web" / "state") / "update.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return state
+    if isinstance(data, dict):
+        state.update({key: data.get(key) for key in state})
+    return state
+
+
+def handle_status(home: Path, sha: str, problem: str) -> None:
+    """GET /api/status while the release cannot answer it: 503, with the reason and how the last
+    update ended (a slow install or repair finishes after its POST /api/update has answered)."""
+    method = os.environ.get("REQUEST_METHOD", "GET").upper()
+    if method != "GET":
+        json_reply("405 Method Not Allowed", {"error": "method not allowed"})
+        return
+    body = read_body()
+    if body is None:
+        json_reply("413 Payload Too Large", {"error": "the body is too large"})
+        return
+    refused = signature_problem(sync_key(home), method, STATUS_PATH, body)
+    if refused:
+        json_reply("401 Unauthorized", {"error": refused})
+        return
+    json_reply(
+        "503 Service Unavailable",
+        {
+            "error": problem,
+            "version": sha or None,
+            "revision": None,
+            "published_at": None,
+            "rendered_at": None,
+            "outbox": None,
+            "update": update_state(home),
+        },
+    )
 
 
 def interpreter_abi() -> str:
@@ -211,11 +276,13 @@ def main() -> None:
     if request_path() == UPDATE_PATH:
         handle_update(home, app_home, release if installed else None)
         return
+    problem = packages_problem(release) if installed else "no release is installed yet"
+    if problem and request_path() == STATUS_PATH:
+        handle_status(home, sha if installed else "", problem)
+        return
     if not installed:
         plain("503 Service Unavailable", "gahk.dk er ved at blive installeret. Prøv igen om lidt.")
         return
-
-    problem = packages_problem(release)
     if problem:
         unavailable(sha, problem)
         return

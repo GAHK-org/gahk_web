@@ -108,6 +108,39 @@ def test_a_signed_update_bootstraps_the_first_release(home: Path, tmp_path: Path
     assert (home / "gahk_web" / "CURRENT").read_text().strip() == v1
 
 
+def signed_get(path: str, key: str = KEY) -> dict[str, str]:
+    return signing.signed_headers(key, "GET", path, b"")
+
+
+def write_update_state(home: Path, **state: object) -> None:
+    (home / "gahk_web" / "state").mkdir(parents=True, exist_ok=True)
+    (home / "gahk_web" / "state" / "update.json").write_text(json.dumps(state))
+
+
+def test_before_the_first_install_status_tells_how_the_update_went(home: Path) -> None:
+    status, headers, body = cgi(home, "GET", "/api/status", headers=signed_get("/api/status"))
+    assert (status, headers["Content-Type"]) == (503, "application/json")
+    answer = json.loads(body)
+    assert answer["error"] == "no release is installed yet" and answer["version"] is None
+    assert answer["update"] == {
+        "checked_at": None,
+        "available_version": None,
+        "last_result": None,
+        "last_error": None,
+    }
+
+    # A first install that outlasted its request, and then failed.
+    write_update_state(
+        home, checked_at="2026-11-12T10:00:00Z", last_result="failed", last_error="pip install: x"
+    )
+    answer = json.loads(cgi(home, "GET", "/api/status", headers=signed_get("/api/status"))[2])
+    assert answer["update"]["last_result"] == "failed" and answer["update"]["last_error"] == "pip install: x"
+
+    assert cgi(home, "GET", "/api/status")[0] == 401  # still only for intern
+    assert cgi(home, "GET", "/api/status", headers=signed_get("/api/status", key="x" * 40))[0] == 401
+    assert cgi(home, "GET", "/faciliteter")[0] == 503
+
+
 def test_without_any_updater_the_update_says_so(home: Path) -> None:
     shutil.rmtree(home / "gahk_web" / "bin")
     status, _, body = cgi(home, "POST", "/api/update", b"{}", signed())
@@ -183,6 +216,14 @@ def test_packages_for_another_python_are_not_imported_until_an_update_reinstalls
     assert status == 503
     assert headers["Retry-After"] == "300"
     assert body.decode().startswith("<h1>Siden opdateres</h1>")
+
+    # A repair that outlasted its request: intern (or an operator) reads how it ended.
+    write_update_state(home, last_result="failed", last_error="pip install: no wheel")
+    status, _, body = cgi(home, "GET", "/api/status", headers=signed_get("/api/status"), stub=stub)
+    answer = json.loads(body)
+    assert (status, answer["version"]) == (503, v1)
+    assert "cpython-399" in answer["error"]
+    assert answer["update"]["last_error"] == "pip install: no wheel"
 
     status, _, body = cgi(home, "POST", "/api/update", b"{}", signed(), stub=stub)
     assert status == 200, body

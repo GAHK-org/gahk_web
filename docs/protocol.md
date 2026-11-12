@@ -87,6 +87,14 @@ the running release, or `"dev"` in a checkout.
 intern compares `revision` with its own to decide whether to publish, and shows `version`,
 `update.available_version` and `update.last_result` in the Hjemmeside overview.
 
+While no release can run (none is installed yet, or the running one's packages were installed for
+another Python), the cgi-bin stub answers a signed request itself: `503` with the same keys, plus
+`error` naming the reason. `version` is the installed sha or null; `revision`, `published_at`,
+`rendered_at` and `outbox` are null; `update` comes from the updater's state as usual. That way how
+a slow first install or repair ended can still be read. intern treats every 5xx as gahk.dk being
+unavailable and does not read the body, so its overview shows gahk.dk as unavailable until the
+release runs again; the body is for an operator sending the request by hand (DEPLOY.md).
+
 ### POST /api/images/missing
 
 Body `{"sha256": ["<64 hex>", …]}` (at most 10 000) → `200 {"missing": ["<64 hex>", …]}`: the images
@@ -178,7 +186,8 @@ when no release is installed yet (bootstrap) or the active one is broken.
 - The update, including the pip install of a release's packages from PyPI, runs in a process of its
   own; the request waits for it at most 45 seconds, so intern's read timeout must be longer (it is
   60 seconds).
-- A failure still answers `200`, with `updated: false`. `GET /api/status` reports the outcome too.
+- A failure still answers `200`, with `updated: false`. `GET /api/status` reports the outcome too,
+  with `503` while no release can run (see above).
 - Before a release is installed, the stub answers `503` if `~/gahk_web/bin/updater.py` is missing.
   A checkout (`version` `"dev"`) answers `409`.
 

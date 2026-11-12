@@ -300,8 +300,9 @@ Until step 4, the old site keeps serving gahk.dk from Coolify.
 
    An answer with `"still running"` means the install took over 45 seconds and is finishing in the
    background; the first install also downloads the packages from PyPI, which usually takes well
-   under a minute. Ask `gahk_api GET /api/status` a minute later. gahk_web is now live but empty: pages
-   answer the 503 page *"Siden opdateres"*.
+   under a minute. Ask `gahk_api GET /api/status` a minute later: until the release runs it answers
+   503 with the reason and the updater's `update.last_result` and `last_error`. gahk_web is now live
+   but empty: pages answer the 503 page *"Siden opdateres"*.
 4. **Switch DNS**: `@` and `www` to the webhost (section 6). As resolvers pick it up, visitors see
    *"Siden opdateres"* for a few minutes. Once both names resolve to the webhost, re-issue the
    certificate with file validation (section 5), or it will not renew.
