@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from conftest import Client
 
 from gahk_web import db
 from gahk_web.config import ConfigError, DatabaseConfig, load_config
@@ -38,6 +39,21 @@ def test_a_config_that_cannot_be_parsed_never_quotes_its_lines(tmp_path: Path, l
         load_config(path)
     assert "S3cretPw" not in str(raised.value) and str(tmp_path) not in str(raised.value)
     assert raised.value.__cause__ is None and raised.value.__suppress_context__
+
+
+@pytest.mark.parametrize("persistent", [True, False])
+def test_database_errors_never_show_the_bound_values(persistent: bool) -> None:
+    """A failed commit of an application must not write the applicant's data to the error log."""
+    cfg = DatabaseConfig("h", 5432, "n", "u", "")
+    assert db.engine_options(cfg, persistent=persistent)["hide_parameters"] is True
+    assert db.make_engine(cfg).hide_parameters
+
+
+def test_the_apps_engine_hides_the_bound_values(client: Client) -> None:
+    from gahk_web.db import Database
+
+    database: Database = client.app.extensions["gahk_db"]
+    assert database.engine.hide_parameters
 
 
 def test_unknown_sslmode_is_refused(tmp_path: Path) -> None:

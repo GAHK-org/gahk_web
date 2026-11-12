@@ -111,8 +111,11 @@ def _system_cafile() -> str:
 def engine_options(cfg: DatabaseConfig, *, persistent: bool) -> dict[str, Any]:
     """create_engine()'s options (Flask-SQLAlchemy's SQLALCHEMY_ENGINE_OPTIONS). persistent: one
     pooled connection for the FastCGI process (single-threaded, one request at a time); otherwise
-    none is kept (CGI, commands, tests)."""
-    options: dict[str, Any] = {"connect_args": conninfo(cfg)}
+    none is kept (CGI, commands, tests).
+
+    hide_parameters: a failed statement's error (logged to Apache's error log) leaves out its bound
+    values, which hold applicants' names, e-mail addresses and motivations."""
+    options: dict[str, Any] = {"connect_args": conninfo(cfg), "hide_parameters": True}
     if persistent:
         options.update(
             pool_size=1,
