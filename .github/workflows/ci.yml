@@ -1,0 +1,211 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The webhost runs the system python3 as CGI: 3.13 today (verified 2026-11-12). The lint and type
+# jobs use it; `test` and `bundle` also run on 3.14, the next Python a Hetzner upgrade would bring.
+env:
+  UV_PYTHON: "3.13"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with: { enable-cache: true }
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with: { enable-cache: true }
+      - run: uv run mypy
+
+  # Hetzner's PostgreSQL is 15 today and 17 after its next update; each pairing is tested as it
+  # will run (today's python with today's database, the next with the next).
+  test:
+    name: test (Python ${{ matrix.python }}, PostgreSQL ${{ matrix.postgres }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { python: "3.13", postgres: "15" }
+          - { python: "3.14", postgres: "17" }
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env: { POSTGRES_DB: gahk_web_test, POSTGRES_USER: gahk, POSTGRES_PASSWORD: gahk }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U gahk" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+      GAHK_WEB_TEST_DATABASE: postgres://gahk:gahk@localhost:5432/gahk_web_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with: { enable-cache: true }
+      - run: uv run pytest -q
+
+  # Builds the release bundle and tries it the way the webhost will, on x86_64 Linux like the host.
+  # For 3.13 and 3.14 each: pip installs requirements.lock from PyPI with exactly the updater's
+  # command (bin/updater.py packages), so a missing wheel or a compiled package that will not load
+  # fails here, not in production; then both self-tests run with only the bundle and those packages
+  # on sys.path. Then a first install through the CGI stub from the four bootstrap files, a
+  # publish, requests to the FastCGI stub run as mod_fcgid runs it, an update that must change
+  # nothing, and the repair after a python upgrade (scripts/smoke_bundle.py).
+  bundle:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env: { POSTGRES_DB: gahk_web_smoke, POSTGRES_USER: gahk, POSTGRES_PASSWORD: gahk }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U gahk" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with: { enable-cache: true }
+      - run: uv python install 3.13 3.14
+      - run: uv run python scripts/build_bundle.py
+      - run: >-
+          uv run python scripts/smoke_bundle.py --python 3.13 --python 3.14
+          --database postgres://gahk:gahk@localhost:5432/gahk_web_smoke
+      - name: Bundle size
+        run: |
+          ls -l dist
+          cat dist/manifest.json >> "$GITHUB_STEP_SUMMARY"
+
+  # The bundle on a fake Hetzner account (scripts/fake_webhost): Debian trixie's Apache 2.4 with
+  # mod_rewrite, mod_fcgid, CGI and suEXEC, and the system python3 3.13 with Debian's pip, as on
+  # the webhost (glibc 2.41, the host's own; this runner's 2.39 is older, so a wheel the `bundle`
+  # job accepts also loads there), beside PostgreSQL 17. From the four bootstrap files a signed
+  # POST /api/update installs the release (pip from PyPI); then the real .htaccess, both stubs and
+  # the updater are tried end to end, including updates that must be refused or rolled back
+  # (DEPLOY.md section 13). The image's layers are cached between runs.
+  webhost:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with: { enable-cache: true }
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: scripts/fake_webhost
+          load: true
+          tags: gahkweb-fake-webhost
+          cache-from: type=gha,scope=fake-webhost
+          cache-to: type=gha,mode=max,scope=fake-webhost
+      - run: uv run python scripts/build_bundle.py
+      - run: uv run python scripts/fake_webhost/e2e.py --no-build
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      # Audit the locked runtime dependencies (exported from uv.lock, no requirements file committed).
+      - run: uv export --frozen --no-dev --no-emit-project --format requirements-txt -o /tmp/req.txt
+      - run: uvx pip-audit -r /tmp/req.txt
+
+  # Publishes the bundle to the rolling GitHub release `production`, the webhost's update channel:
+  # its updater reads manifest.json there whenever intern nudges it (DEPLOY.md). The bundle is built
+  # again from this commit (the build is reproducible) and self-tested before it is uploaded.
+  # `security` is left out on purpose, as in gahk_intern: a new advisory against a dependency should
+  # not freeze releases, least of all the one that bumps it.
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint, typecheck, test, bundle, webhost]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release-production
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: production
+    steps:
+      # Two merges in quick succession race, and the older run can finish last. Only the current
+      # tip of main may become the production manifest, or the webhost would roll back.
+      - name: Is this still the tip of main?
+        id: tip
+        run: |
+          tip=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)
+          if [ "$tip" = "$GITHUB_SHA" ]; then
+            echo "result=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=false" >> "$GITHUB_OUTPUT"
+            echo "main has moved on to \`${tip}\` — leaving the release to that run." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - if: steps.tip.outputs.result == 'true'
+        uses: actions/checkout@v7
+      - if: steps.tip.outputs.result == 'true'
+        uses: astral-sh/setup-uv@v7
+        with: { enable-cache: true }
+      - if: steps.tip.outputs.result == 'true'
+        name: Build and self-test the bundle
+        run: |
+          uv python install 3.13 3.14
+          uv run python scripts/build_bundle.py
+          uv run python scripts/smoke_bundle.py --python 3.13 --python 3.14
+
+      - if: steps.tip.outputs.result == 'true'
+        name: Create the release if it is missing
+        run: |
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+              --title "Production (rolling)" \
+              --notes "The webhost's update channel. gahk.dk fetches manifest.json from here when intern.gahk.dk asks it to update (every 15 minutes, and with the \"Opdatér gahk.dk nu\" button), and installs the bundle the manifest names. CI replaces the files on every merge into main; the tag does not move and says nothing about the version, which is in manifest.json. updater.py, gahk.cgi, gahk.fcgi and htaccess are the four files for the first install (see DEPLOY.md). Do not delete this release."
+          fi
+
+      # The bundle first and the manifest last, so the manifest never names a file not there yet.
+      - if: steps.tip.outputs.result == 'true'
+        name: Upload the bundle
+        run: |
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            dist/gahk_web-*.tar.gz dist/manifest-*.json dist/updater.py dist/gahk.cgi dist/gahk.fcgi \
+            dist/htaccess
+      - if: steps.tip.outputs.result == 'true'
+        name: Upload the manifest (main must still be here)
+        run: |
+          tip=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)
+          if [ "$tip" != "$GITHUB_SHA" ]; then
+            echo "main moved on to \`${tip}\` during the build — leaving manifest.json to that run." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber dist/manifest.json
+          {
+            echo "### Published to the \`${TAG}\` release"
+            echo
+            echo '```json'
+            cat dist/manifest.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Keep the newest 5 bundles (and their manifest-<sha>.json), so [update] pin can roll back.
+      - if: steps.tip.outputs.result == 'true'
+        name: Delete old bundles
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | select(.name | test("^gahk_web-[0-9a-f]{40}\\.tar\\.gz$")) | [.createdAt, .name] | @tsv' \
+            | sort -r | tail -n +6 | while IFS=$'\t' read -r _ name; do
+              sha=${name#gahk_web-}
+              sha=${sha%.tar.gz}
+              echo "deleting ${name}"
+              gh release delete-asset "$TAG" "$name" --repo "$GITHUB_REPOSITORY" --yes
+              gh release delete-asset "$TAG" "manifest-${sha}.json" --repo "$GITHUB_REPOSITORY" --yes || true
+            done

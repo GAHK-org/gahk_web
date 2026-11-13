@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block hero_title %}<h1 class="font-display hero__title">{{ spec.title }}</h1>{% endblock %}
+
+{% block content %}
+{% macro field_input(field) %}
+{% set value = values.get(field.name, "") %}
+{% set described = ' aria-invalid="true" aria-describedby="error-' ~ field.name ~ '"' if field.name in errors else '' %}
+{% if field.widget == "select" %}
+            <select name="{{ field.name }}" id="id_{{ field.name }}"{% if field.required %} required{% endif %}{{ described|safe }}>
+{% for key, label in field.choices %}
+              <option value="{{ key }}"{% if key == value %} selected{% endif %}>{{ label }}</option>
+{% endfor %}
+            </select>
+{% elif field.widget == "textarea" %}
+            <textarea name="{{ field.name }}" id="id_{{ field.name }}" rows="5"{% if field.max_length %} maxlength="{{ field.max_length }}"{% endif %}{% if field.required %} required{% endif %}{{ described|safe }}>{{ value }}</textarea>
+{% else %}
+            <input type="{{ field.widget }}" name="{{ field.name }}" id="id_{{ field.name }}" value="{{ value }}"{% if field.max_length %} maxlength="{{ field.max_length }}"{% endif %}{% if field.required %} required{% endif %}{% if field.widget == "email" %} autocomplete="email"{% elif field.name == "full_name" %} autocomplete="name"{% endif %}{{ described|safe }}>
+{% endif %}
+{% endmacro %}
+    <div class="form-layout{% if spec.show_criteria %} form-layout--aside{% endif %}">
+{% if spec.show_criteria %}
+      <div class="form-aside">
+        <p class="prose-gahk">{{ spec.intro }}</p>
+{% if admissions_url %}
+        <a class="card card--link" href="{{ admissions_url }}">
+          <div class="font-display card--link__title">Før du søger ›</div>
+          <p>Læs om kriterierne for at søge ind, husleje og hvornår der er ledige værelser.</p>
+        </a>
+{% endif %}
+      </div>
+{% endif %}
+      <div class="form-main">
+{% if not spec.show_criteria %}
+        <p class="prose-gahk">{{ spec.intro }}</p>
+{% endif %}
+        <div class="card">
+{% if errors.get("__all__") %}
+          <div class="alert alert--error" role="alert">{{ errors["__all__"] }}</div>
+{% elif errors %}
+          <div class="alert alert--error" role="alert">Ret venligst fejlene nedenfor.</div>
+{% endif %}
+          <form method="post" action="{{ action }}" class="apply-form">
+{% for field in spec.fields %}
+            <div>
+              <label for="id_{{ field.name }}">{{ field.label }}</label>
+{{ field_input(field) }}
+{% if field.name in errors %}
+              <div class="errorlist" id="error-{{ field.name }}">{{ errors[field.name] }}</div>
+{% endif %}
+            </div>
+{% endfor %}
+            <input type="hidden" name="website" value="">
+{% if turnstile_site_key %}
+            <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}"></div>
+            <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+{% endif %}
+            <div class="apply-form__submit"><button type="submit" class="btn">Send</button></div>
+          </form>
+        </div>
+      </div>
+    </div>
+{% endblock %}

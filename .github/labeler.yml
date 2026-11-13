@@ -1,0 +1,65 @@
+# Path-based PR labels, applied by .github/workflows/labeler.yml (actions/labeler v5).
+# Each top-level key is a label name; a PR gets the label if it touches any matching file.
+# Labels are created on first use if they don't exist yet.
+
+# What visitors see: rendering, templates and the routing of addresses.
+"area:website":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/gahk_web/render.py"
+          - "src/gahk_web/routing.py"
+          - "src/gahk_web/templates/**"
+          - "public_html/.htaccess"
+
+"area:admissions":
+  - changed-files:
+      - any-glob-to-any-file: ["src/gahk_web/forms.py", "src/gahk_web/templates/form.html", "src/gahk_web/templates/success.html"]
+
+"area:statistics":
+  - changed-files:
+      - any-glob-to-any-file: ["src/gahk_web/stats.py"]
+
+# The contract with intern.gahk.dk: a change here needs the matching change in gahk_intern.
+"area:sync":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/gahk_web/api.py"
+          - "src/gahk_web/snapshot.py"
+          - "src/gahk_web/signing.py"
+          - "src/gahk_web/images.py"
+          - "src/gahk_web/outbox.py"
+          - "docs/protocol.md"
+
+"area:operations":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/gahk_web/updater.py"
+          - "src/gahk_web/selftest.py"
+          - "public_html/cgi-bin/**"
+          - "bundle/**"
+          - "scripts/**"
+          - "DEPLOY.md"
+
+database:
+  - changed-files:
+      - any-glob-to-any-file: ["src/gahk_web/migrations/**", "src/gahk_web/db.py", "src/gahk_web/models.py"]
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file: ["tests/**"]
+
+frontend:
+  - changed-files:
+      - any-glob-to-any-file: ["src/gahk_web/static/**", "**/*.css", "src/gahk_web/templates/**"]
+
+infra:
+  - changed-files:
+      - any-glob-to-any-file: ["Taskfile.yml", "DEPLOY.md", "pyproject.toml", "uv.lock", "public_html/**"]
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: [".github/**"]
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file: ["**/*.md"]

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8">
+{% if https %}
+  <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+{% endif %}
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+{% if base_href %}
+  <base href="{{ base_href }}">
+{% endif %}
+  <title>{% if title %}{{ title }} - {% endif %}{{ site_name }}</title>
+  <meta name="description" content="{{ description }}">
+{% if noindex %}
+  <meta name="robots" content="noindex">
+{% endif %}
+{% if canonical %}
+  <link rel="canonical" href="{{ canonical }}">
+{% endif %}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ site_name }}">
+  <meta property="og:locale" content="da_DK">
+  <meta property="og:title" content="{{ title or site_name }}">
+  <meta property="og:description" content="{{ description }}">
+{% if canonical %}
+  <meta property="og:url" content="{{ canonical }}">
+{% endif %}
+  <meta property="og:image" content="{{ og_image }}">
+  <meta name="theme-color" content="#065f46">
+  <link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
+  <link rel="icon" href="{{ static_url('img/favicon-32.png') }}" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="{{ static_url('img/apple-touch-icon.png') }}">
+  <link rel="preload" href="/static/fonts/ubuntu-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{{ static_url('css/site.css') }}">
+{% block head %}{% endblock %}
+</head>
+<body>
+  <header class="site-header">
+    <div class="site-header__bar">
+      <a href="/" class="site-brand">
+        <img src="{{ static_url('img/lamassu-128.png') }}" alt="" width="80" height="64" class="site-brand__logo">
+        <span class="site-brand__name font-display">{{ site_name }}</span>
+      </a>
+      <span class="site-header__spacer"></span>
+      <a href="{{ intern_url }}/" class="site-intern">Intern&nbsp;›</a>
+    </div>
+{% if menu %}
+    <nav class="site-nav" aria-label="Hovedmenu">
+      <ul>
+{% for item in menu %}
+        <li><a href="{{ item.url }}"{% if item.url == current_url %} aria-current="page"{% endif %}>{{ item.label }}</a></li>
+{% endfor %}
+      </ul>
+    </nav>
+{% endif %}
+  </header>
+
+{% block hero %}
+{% set hero_image = default_background %}
+  <section class="hero{% if not hero_image %} hero--plain{% endif %}">
+{% if hero_image %}
+    {{ site.hero_img(hero_image) }}
+    <div class="hero__shade"></div>
+{% endif %}
+    <div class="hero__inner">
+{% block hero_title %}{% endblock %}
+    </div>
+  </section>
+{% endblock %}
+
+{% block body_main %}
+  <main class="main">
+{% block content %}{% endblock %}
+  </main>
+{% endblock %}
+
+  <footer class="site-footer">
+    G. A. Hagemanns Kollegium · Kristianiagade 10 · 2100 København Ø
+  </footer>
+{% if not site.preview %}
+  <a id="edit-link" class="editor-link" href="{{ edit_url }}" hidden>Rediger siden</a>
+  <script>
+    (function () {
+      if (/(?:^|;\s*)gahk_editor=1(?:;|$)/.test(document.cookie)) {
+        document.getElementById("edit-link").hidden = false;
+      }
+{% if beacon %}{# the page's own address, not the one it was opened at: /velkommen counts as the front page #}
+      if (navigator.sendBeacon) { navigator.sendBeacon("/s", {% if current_url %}{{ current_url|tojson }}{% else %}location.pathname{% endif %}); }
+{% endif %}
+    })();
+  </script>
+{% endif %}
+</body>
+</html>

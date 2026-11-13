@@ -1,0 +1,57 @@
+name: Bug report
+description: Something on gahk.dk is broken or behaving unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting! Please fill in what you can — even a partial report helps. Wrong text or pictures are edited in intern.gahk.dk (Hjemmeside), not here.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected instead.
+      placeholder: On gahk.dk/begivenheder/ a past event is still listed as upcoming.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open https://gahk.dk/optagelse/ansoeg on a phone
+        2. Submit the form
+        3. See ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the site is affected?
+      options:
+        - "pages / menu / layout"
+        - "news and events"
+        - "admission forms"
+        - "statistics"
+        - "sync with intern.gahk.dk"
+        - "self-update / webhost"
+        - "other / not sure"
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: Where did you see this? (gahk.dk or local dev, which browser and device)
+      placeholder: gahk.dk, Safari on iPhone
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Paste any error output (e.g. from ~/gahk_web/var/update.log) or attach screenshots. Redact secrets first.
+      render: shell
