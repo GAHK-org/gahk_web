@@ -153,9 +153,11 @@ it renders as an ordinary page and leaves the front page alone. Previews are nev
   admissions forms: `full_name`, `email`, `gender` (`male`/`female`/`other`), `age`,
   `heard_about_us`, `motivation`. A `tour` adds `study_year`, `year_left`, `university` and
   `field_of_study`; a `sublet` adds `occupation`. intern stores a `tour` as its application type
-  `rundvisning` and a `sublet` as `fremleje`, and refuses any other kind.
+  `rundvisning` and a `sublet` as `fremleje`. It does not acknowledge an application of any other
+  kind, so that one stays in the outbox until an intern that knows the kind pulls it.
 - `heard_about_us` is one of the codes below. The form shows a Danish label for each; intern stores
-  the value it has always stored for that answer, and refuses any other code.
+  the value it has always stored for that answer. Any other code fails intern's form rules, and
+  intern acknowledges and drops that application.
 
   | Code             | intern stores    |
   | ---------------- | ---------------- |
