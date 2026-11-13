@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{# The page's picture fills the whole content area; there is no separate top band. #}
+{% block head %}
+{% if background %}
+  <style>{{ site.background_css(background) }}</style>
+{% endif %}
+{% endblock %}
+{% block hero %}{% endblock %}
+
+{% block body_main %}
+  <div class="page-stage {{ 'page-stage--photo' if background else 'page-stage--plain' }}">
+    <div class="page-stage__shade"></div>
+    <div class="page-stage__inner">
+      <h1 class="font-display page-title">{{ page.title }}</h1>
+      <div class="page-grid{% if section_links %} page-grid--with-nav{% endif %}">
+{% if section_links %}
+        <nav aria-label="{{ section_title }}" class="section-nav">
+          <h2 class="font-display section-nav__title">{{ section_title }}</h2>
+          <ul>
+{% for link in section_links %}
+            <li><a href="{{ link.url }}"{% if link.current %} class="is-current" aria-current="page"{% endif %}>{{ link.title }}</a></li>
+{% endfor %}
+          </ul>
+        </nav>
+{% endif %}
+        <article class="prose-gahk page-card">
+          {{ site.body(page.body)|safe }}
+        </article>
+      </div>
+    </div>
+  </div>
+{% endblock %}

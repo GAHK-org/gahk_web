@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /cgi-bin/
+Disallow: /{{ success_path }}
+
+Sitemap: {{ base_url }}/sitemap.xml

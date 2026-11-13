@@ -1,0 +1,68 @@
+[project]
+name = "gahk-web"
+version = "0.1.0"
+description = "gahk.dk: the public site of G. A. Hagemanns Kollegium, rendered from intern.gahk.dk's snapshot"
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.13"
+# Runtime dependencies. The bundle carries them as requirements.lock (uv.lock, hash-pinned), and the
+# webhost's updater pip-installs that for its own python3. Each needs binary wheels for CPython 3.13
+# and 3.14 on manylinux x86_64: the CI bundle job installs them just as the webhost does.
+dependencies = [
+    # The dynamic part (API, forms, beacon, redirects, 404s) is a Flask app, served by flup as a
+    # persistent FastCGI process (cgi-bin/gahk.fcgi) and through wsgiref's CGI handler (gahk.cgi).
+    "flask>=3.1",
+    "flup>=1.0.3",
+    "jinja2>=3.1.4",
+    "markupsafe>=2.1",
+    # Defence-in-depth sanitising of the published HTML (the same allowlist as intern).
+    "nh3>=0.2.18",
+    # Responsive WebP variants of the published images.
+    "pillow>=11",
+    # The binary extra ships libpq and the C implementation; the webhost has no libpq of its own.
+    "psycopg[binary]>=3.2",
+    # The database layer: typed SQLAlchemy 2 models (models.py), the engine through Flask-SQLAlchemy,
+    # and the schema's migrations with Alembic, which the updater runs on the webhost.
+    "sqlalchemy>=2.1",
+    "flask-sqlalchemy>=3.1.1",
+    "alembic>=1.14",
+]
+
+[dependency-groups]
+dev = [
+    # `flask db ...` (task migration): Alembic's commands for the dev app. Not needed on the webhost,
+    # which runs the migrations with Alembic directly.
+    "flask-migrate>=4.1",
+    "mypy>=1.13",
+    # The updater installs each release's packages with `python -m pip`; its tests run real pip.
+    "pip>=25",
+    "pip-audit>=2.7",
+    "prek>=0.2",
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-ra"
+# SQLAlchemy warns before it changes behaviour; such a warning fails the tests.
+filterwarnings = ["error::sqlalchemy.exc.SADeprecationWarning"]
+
+[tool.mypy]
+python_version = "3.13"
+mypy_path = "src"
+# The package, the build scripts, the release's selftest.py and the two stubs (Python without .py).
+files = ["src/gahk_web", "scripts", "bundle", "public_html/cgi-bin/gahk.cgi", "public_html/cgi-bin/gahk.fcgi"]
+strict = true
+warn_unreachable = true
+# The stubs are scripts without a .py name; check them as modules of their own, not both as __main__.
+scripts_are_modules = true
+
+[[tool.mypy.overrides]]
+# flup (the FastCGI server) and Flask-Migrate (the dev's `flask db`) have no type hints.
+module = ["flup.*", "flask_migrate.*"]
+ignore_missing_imports = true

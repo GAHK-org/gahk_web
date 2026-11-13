@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block hero %}
+  <section class="hero hero--home{% if not background %} hero--plain{% endif %}">
+{% if background %}
+    {{ site.hero_img(background) }}
+    <div class="hero__shade hero__shade--home"></div>
+{% endif %}
+    <div class="hero__inner hero__inner--home">
+      <h1 class="font-display hero__home-title">Velkommen til GAHK</h1>
+      <p class="hero__tagline">Studenterkollegium på Kristianiagade på Østerbro - 61 værelser, fællesskab og selvstyre.</p>
+      <div><a href="/optagelse/" class="btn">Søg optagelse</a></div>
+    </div>
+  </section>
+{% endblock %}
+
+{% block content %}
+{% if page and page.body %}
+    <div class="prose-gahk">{{ site.body(page.body, eager_first=True)|safe }}</div>
+{% endif %}
+
+{% if upcoming_events or latest_news %}
+    <section class="home-lists">
+      <div>
+        <h2 class="font-display home-lists__title">Kommende begivenheder</h2>
+{% if upcoming_events %}
+        <ul class="home-list">
+{% for event in upcoming_events %}
+          <li class="home-list__event">
+            <span class="home-list__date">{{ event.starts_on|da_date("short") }}</span>
+            <span>{{ event.title }}</span>
+          </li>
+{% endfor %}
+        </ul>
+{% else %}
+        <p class="muted">Ingen annonceret lige nu.</p>
+{% endif %}
+      </div>
+      <div>
+        <h2 class="font-display home-lists__title">Seneste nyt</h2>
+        <ul class="home-list">
+{% for item in latest_news %}
+          <li><span class="home-list__news-date">{{ item.published_at|da_date("medium") }}</span> — {{ item.title }}</li>
+{% endfor %}
+        </ul>
+      </div>
+    </section>
+    <p class="home-more"><a class="btn" href="/begivenheder/">Se nyheder &amp; begivenheder ›</a></p>
+{% endif %}
+{% endblock %}

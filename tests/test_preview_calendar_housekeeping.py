@@ -1,0 +1,291 @@
+import io
+import os
+import subprocess
+import sys
+from datetime import timedelta
+from email.message import Message
+from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request
+
+import jinja2
+import pytest
+from conftest import SYNC_KEY, Client, execute, page, publish, query, query_one, snapshot, upload_images
+from sqlalchemy.orm import Session
+
+from gahk_web import calendar_feed, db, housekeeping, render, updater
+from gahk_web.clock import copenhagen_today
+from gahk_web.config import Config
+from gahk_web.snapshot import validate
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+# --- preview ---
+
+
+def test_preview_renders_an_unsaved_page_in_the_current_site(client: Client, cfg: Config) -> None:
+    publish(client)
+    item = page(3, "faciliteter/kokken", "Nyt <køkken>", '<p><img src="/media/cms/2026/11/k.jpg"></p>')
+    item["background"] = "/media/cms/2026/11/bg.jpg"
+    result = client.api(
+        "POST", "/api/preview", {"kind": "page", "item": item, "media_base": "https://intern.gahk.dk"}
+    )
+    assert result.status == 200
+    html = result.text
+    assert "Nyt &lt;køkken&gt;" in html
+    assert 'src="https://intern.gahk.dk/media/cms/2026/11/k.jpg"' in html
+    assert "url('https://intern.gahk.dk/media/cms/2026/11/bg.jpg')" in html
+    assert '<base href="https://gahk.dk/">' in html
+    assert '<a href="/kontakt">Kontakt</a>' in html  # the current menu
+    assert 'class="section-nav"' in html
+    assert "sendBeacon" not in html
+    assert "noindex" in html
+    # Never stored: the published page is unchanged.
+    assert "Nyt" not in (cfg.public_html / "faciliteter/kokken/index.html").read_text()
+
+
+def test_preview_shows_percent_encoded_media_names(client: Client) -> None:
+    publish(client)
+    name = "/media/cms/2026/11/k%C3%B8kken%20nyt.jpg"
+    item = page(3, "faciliteter/kokken", "Køkken", f'<p><img src="{name}"></p>', background=name)
+    result = client.api(
+        "POST", "/api/preview", {"kind": "page", "item": item, "media_base": "https://intern.gahk.dk"}
+    )
+    assert result.status == 200, result.text
+    assert f'src="https://intern.gahk.dk{name}"' in result.text
+    assert f"url('https://intern.gahk.dk{name}')" in result.text
+
+
+def test_preview_news_and_event(client: Client) -> None:
+    publish(client)
+    news = {
+        "id": 99,
+        "title": "Forhåndsvist",
+        "body": "<p>x</p>",
+        "published_at": "2026-11-12T10:00:00+01:00",
+    }
+    result = client.api(
+        "POST", "/api/preview", {"kind": "news", "item": news, "media_base": "https://intern.gahk.dk"}
+    )
+    assert result.status == 200
+    assert "Forhåndsvist" in result.text
+    event = {
+        "id": 1,
+        "title": "Ny dato",
+        "description": "",
+        "starts_on": (copenhagen_today() + timedelta(days=3)).isoformat(),
+    }
+    result = client.api(
+        "POST", "/api/preview", {"kind": "event", "item": event, "media_base": "https://intern.gahk.dk"}
+    )
+    assert "Ny dato" in result.text
+    assert "Julefrokost" not in result.text  # replaced by the edited version with the same id
+
+
+def test_preview_of_a_page_without_an_address(
+    client: Client, cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A draft that is not the front page and has no address yet renders as an ordinary page."""
+    publish(client)
+    sites: list[render.Site] = []
+
+    class RecordingSite(render.Site):
+        def __post_init__(self) -> None:
+            super().__post_init__()
+            sites.append(self)
+
+    monkeypatch.setattr(render, "Site", RecordingSite)
+    item = page(2**31 - 1, "", "Ny side uden adresse", "<p>Kladde</p>")
+    result = client.api(
+        "POST", "/api/preview", {"kind": "page", "item": item, "media_base": "https://intern.gahk.dk"}
+    )
+    assert result.status == 200
+    assert '<h1 class="font-display page-title">Ny side uden adresse</h1>' in result.text
+    assert "hero--home" not in result.text
+    assert 'class="section-nav"' not in result.text
+    # The stored front page stays in the previewed site, and stays its front page.
+    [site] = sites
+    assert [p["id"] for p in site.snapshot["pages"] if p["path"] == ""] == [1, 2**31 - 1]
+    front = site.front_page()
+    assert front is not None
+    assert front["id"] == 1
+
+
+def test_preview_works_before_the_first_publish(client: Client) -> None:
+    item = page(1, "", "Velkommen", "<p>Hej</p>")
+    result = client.api(
+        "POST", "/api/preview", {"kind": "page", "item": item, "media_base": "https://intern.gahk.dk"}
+    )
+    assert result.status == 200
+    assert "Velkommen til GAHK" in result.text
+
+
+def test_preview_is_validated(client: Client) -> None:
+    result = client.api(
+        "POST", "/api/preview", {"kind": "page", "item": {"id": 1}, "media_base": "https://intern.gahk.dk"}
+    )
+    assert result.status == 400
+
+
+# --- calendar pass-through ---
+
+
+class Upstream(io.BytesIO):
+    def __init__(self, body: bytes, status: int = 200, headers: dict[str, str] | None = None) -> None:
+        super().__init__(body)
+        self.status = status
+        self.headers = Message()
+        for name, value in (headers or {}).items():
+            self.headers[name] = value
+
+
+def test_calendar_is_streamed_from_intern(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_urlopen(request: Request, timeout: float) -> Upstream:
+        seen["url"], seen["timeout"] = request.full_url, timeout
+        return Upstream(
+            b"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+            headers={"Content-Type": "text/calendar; charset=utf-8", "Cache-Control": "private, no-store"},
+        )
+
+    monkeypatch.setattr(calendar_feed, "HTTPResponse", Upstream)
+    monkeypatch.setattr(calendar_feed, "urlopen", fake_urlopen)
+    result = client.get("/kalender/abc_DEF-123.ics")
+    assert result.status == 200
+    assert result.body.startswith(b"BEGIN:VCALENDAR")
+    assert result.headers["Content-Type"] == "text/calendar; charset=utf-8"
+    assert result.headers["Cache-Control"] == "private, no-store"
+    assert seen == {"url": "https://intern.gahk.dk/kalender/abc_DEF-123.ics", "timeout": 20}
+
+
+def test_calendar_errors_pass_through(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
+    def gone(request: Request, timeout: float) -> Upstream:
+        headers = Message()
+        headers["Content-Type"] = "text/plain"
+        raise HTTPError(request.full_url, 404, "Not Found", headers, io.BytesIO(b"nope"))
+
+    monkeypatch.setattr(calendar_feed, "urlopen", gone)
+    result = client.get("/kalender/old-token.ics")
+    assert result.status == 404
+    assert result.headers["Cache-Control"] == "private, no-store"
+
+    def down(request: Request, timeout: float) -> Upstream:
+        raise URLError("unreachable")
+
+    monkeypatch.setattr(calendar_feed, "urlopen", down)
+    assert client.get("/kalender/abc.ics").status == 502
+    assert client.get("/kalender/../x.ics").status in (404, 503)  # not a feed address
+
+
+# --- housekeeping: the day changes, nobody runs cron ---
+
+
+def test_lazy_rebuild_when_the_day_changed(client: Client, cfg: Config, con: Session) -> None:
+    today = copenhagen_today()
+    yesterday = today - timedelta(days=1)
+    data = snapshot()
+    data["events"] = [{"id": 9, "title": "Igaar-fest", "description": "", "starts_on": yesterday.isoformat()}]
+    upload_images(client)
+    with db.advisory_lock(con, db.LOCK_RENDER):
+        from gahk_web import images
+
+        snap = validate(data)
+        images.materialize(con, cfg, snap)
+        render.render_site(con, cfg, snap, yesterday, store_snapshot=True)
+    execute(
+        con,
+        "INSERT INTO visit_seen (day, path, visitor) VALUES (:d, '*', 'old')",
+        d=today - timedelta(days=3),
+    )
+    assert "Igaar-fest" in (cfg.public_html / "index.html").read_text()
+
+    client.post("/s", b"/", headers={"User-Agent": "Mozilla/5.0"})  # any request that reaches the app
+
+    assert "Igaar-fest" not in (cfg.public_html / "index.html").read_text()
+    state = query_one(con, "SELECT rendered_on FROM site_state")
+    assert state is not None and state["rendered_on"] == today
+    assert query(con, "SELECT * FROM visit_seen WHERE visitor = 'old'") == []
+
+
+def test_no_rebuild_on_the_same_day(client: Client, cfg: Config) -> None:
+    publish(client)
+    (cfg.public_html / "kontakt/index.html").write_text("edited by hand")
+    client.get("/findes-ikke")
+    assert (cfg.public_html / "kontakt/index.html").read_text() == "edited by hand"
+
+
+def test_a_superseded_release_never_renders(
+    client: Client, cfg: Config, con: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A FastCGI process of the release before an update (a request in flight across the switch)
+    must not render the site again with its old templates."""
+    publish(client)
+    old, active = "a" * 40, "b" * 40
+    monkeypatch.setattr(housekeeping, "code_version", lambda: old)  # this process runs `old`
+    monkeypatch.setenv("GAHK_WEB_HOME", str(tmp_path / "home"))
+    (tmp_path / "home" / "gahk_web").mkdir(parents=True)
+    (tmp_path / "home" / "gahk_web" / "CURRENT").write_text(active + "\n")
+    execute(con, "UPDATE site_state SET rendered_on = rendered_on - 1")  # the day changed, too
+    (cfg.public_html / "kontakt/index.html").write_text("rendered by the active release")
+
+    client.post("/s", b"/", headers={"User-Agent": "Mozilla/5.0"})
+    client.get("/findes-ikke")
+    refused = client.api("POST", "/api/rebuild", {})
+    assert refused.status == 503 and active in refused.json()["error"]
+    refused = client.api("POST", "/api/publish", snapshot())
+    assert refused.status == 503 and active in refused.json()["error"]
+    assert (cfg.public_html / "kontakt/index.html").read_text() == "rendered by the active release"
+
+    # The process that runs the active release renders as before.
+    (tmp_path / "home" / "gahk_web" / "CURRENT").write_text(old + "\n")
+    assert client.api("POST", "/api/rebuild", {}).status == 200
+    assert "rendered by" not in (cfg.public_html / "kontakt/index.html").read_text()
+
+
+# --- the CGI stub, end to end ---
+
+
+def run_cgi(home: Path, environ: dict[str, str]) -> str:
+    env = {"PATH": os.environ.get("PATH", ""), "GAHK_WEB_HOME": str(home), **environ}
+    stub = REPO / "public_html" / "cgi-bin" / "gahk.cgi"
+    done = subprocess.run([sys.executable, str(stub)], env=env, capture_output=True, check=True, timeout=60)
+    return done.stdout.decode()
+
+
+def test_cgi_stub_without_a_release_answers_503(tmp_path: Path) -> None:
+    (tmp_path / "gahk_web").mkdir()
+    output = run_cgi(tmp_path, {"REQUEST_METHOD": "GET", "PATH_INFO": "/"})
+    assert output.startswith("Status: 503")
+
+
+def test_cgi_stub_runs_the_current_release(tmp_path: Path, cfg: Config, con: Session) -> None:
+    release = tmp_path / "gahk_web" / "releases" / "abc1234"
+    release.mkdir(parents=True)
+    (release / "src").symlink_to(REPO / "src")
+    # The packages as the updater installs them: this virtualenv's, for this python.
+    vendor = release / "vendor"
+    vendor.mkdir()
+    for entry in Path(jinja2.__file__).parents[1].iterdir():
+        (vendor / entry.name).symlink_to(entry)
+    (vendor / updater.ABI_FILE).write_text(updater.interpreter_abi() + "\n")
+    (tmp_path / "gahk_web" / "CURRENT").write_text("abc1234\n")
+    database = cfg.database
+    (tmp_path / "gahk_web" / "config.ini").write_text(
+        f"[database]\nhost = {database.host}\nport = {database.port}\nname = {database.name}\n"
+        f"user = {database.user}\npassword = {database.password}\nsslmode = disable\n"
+        f"[sync]\nkey = {SYNC_KEY}\n[stats]\nsecret = {'s' * 40}\n"
+        f"[paths]\npublic_html = {cfg.public_html}\nstate_dir = {cfg.state_dir}\n"
+    )
+    output = run_cgi(
+        tmp_path, {"REQUEST_METHOD": "GET", "PATH_INFO": "/api/health", "SERVER_PROTOCOL": "HTTP/1.1"}
+    )
+    assert output.startswith("Status: 200 OK")
+    assert '"ok": true' in output
+    output = run_cgi(
+        tmp_path, {"REQUEST_METHOD": "GET", "PATH_INFO": "/intern/x", "REQUEST_URI": "/intern/x?y=1"}
+    )
+    assert "Status: 308" in output
+    assert "Location: https://intern.gahk.dk/intern/x?y=1" in output
