@@ -32,10 +32,14 @@ intern or its storage is down.
 - Old intranet addresses redirect to intern.gahk.dk, keeping the query and the method, so a form
   posted to an old address still arrives. intern runs at intern.gahk.dk's root, so `/intern/…` and
   `/nyintern/…` lose their prefix (`/intern/den-hurtige/` → `/den-hurtige/`, `/intern` → `/`);
-  `/admin`, `/wiki`, `/photo-album/…`, `/media/…` and the old admissions admin pages keep their
-  path. A GET of `/intern/…` gets a page instead (below). The old intranet's static files
+  `/admin`, `/photo-album/…`, `/media/…` and the old admissions admin pages keep their path. A GET
+  of `/intern/…` gets a page instead (below). The old intranet's static files
   (`/static/manifest.json`, its icons, `/static/dist/…`, the pictures its templates show) redirect
   to the same path on intern.gahk.dk when gahk.dk has no file of that name.
+- Old wiki addresses go to wiki.gahk.dk, where the wiki runs at the root, keeping the query and the
+  method: `/wiki/` to its front page, MediaWiki's own scripts and folders without the `/wiki`
+  prefix (`/wiki/index.php?title=…` → `/index.php?title=…`, `/wiki/load.php`, `/wiki/images/…`),
+  and any other `/wiki/<title>` to the same `/wiki/<title>` there. Danish titles arrive unchanged.
 - Old picture addresses (`/static/legacy/image/…`, `/public/image/…`) redirect in one step to the
   picture's new address, when intern has moved it into the image library. Nothing is ever served at
   an address with `/legacy/` in it; the old logo's address redirects to the site's own copy. So do the fingerprinted names the old

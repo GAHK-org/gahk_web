@@ -18,7 +18,7 @@ from urllib.parse import quote
 # a path that starts with "//" (and a backslash, which browsers read as a slash, the same).
 _INTERN_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^/(?:intern|nyintern)(?:/[/\\]*(.*))?$"), r"/\1"),
-    (re.compile(r"^/((?:admin|django-admin|wiki)(?:/.*)?)$"), r"/\1"),
+    (re.compile(r"^/((?:admin|django-admin)(?:/.*)?)$"), r"/\1"),
     (re.compile(r"^/((?:photo-album|media)/.*)$"), r"/\1"),
     (re.compile(r"^/health(z?)/?$"), r"/health\1"),
     (re.compile(r"^/(optagelse/(?:listansoegninger|eksport))/?$"), r"/\1"),
@@ -26,8 +26,25 @@ _INTERN_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 # What a URL path keeps as it is, as Apache's redirects do; anything else is percent-encoded (a
 # Danish letter, a space, and "%", "#" and "?", which would end the path), so the path on intern
-# has the same bytes as the one asked for here.
+# or the wiki has the same bytes as the one asked for here.
 _PATH_SAFE = "/:@!$&'()*+,;=~"
+
+# The old wiki (MediaWiki at gahk.dk/wiki/) moved to its own host, where it runs at the root: its
+# scripts and files at /index.php, /load.php, /images/… ($wgScriptPath ""), its pages at
+# /wiki/<title> ($wgArticlePath "/wiki/$1"). /wiki/ goes to the front page, the root's entries lose
+# the /wiki prefix, and anything else is a page's address. 308 as above: its login form POSTs.
+WIKI_ORIGIN = "https://wiki.gahk.dk"
+_WIKI_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^/wiki/?$"), "/"),
+    (
+        re.compile(
+            r"^/wiki/((?:(?:index|load|api|rest|img_auth|thumb|thumb_handler|opensearch_desc)\.php"
+            r"|images|skins|resources|extensions)(?:/.*)?)$"
+        ),
+        r"/\1",
+    ),
+    (re.compile(r"^/wiki/(.+)$"), r"/wiki/\1"),
+)
 
 # The old intranet's installed app ("Den Hurtige": scope /intern/, start_url /intern/den-hurtige/)
 # cannot follow a redirect to another origin, so a GET or HEAD of /intern and /intern/… gets this
@@ -57,6 +74,15 @@ def intern_redirect(path: str) -> str | None:
         match = pattern.match(path)
         if match:
             return quote(match.expand(replacement), safe=_PATH_SAFE)
+    return None
+
+
+def wiki_redirect(path: str) -> str | None:
+    """The URL on wiki.gahk.dk an old wiki address now lives at, or None."""
+    for pattern, replacement in _WIKI_RULES:
+        match = pattern.match(path)
+        if match:
+            return WIKI_ORIGIN + quote(match.expand(replacement), safe=_PATH_SAFE)
     return None
 
 

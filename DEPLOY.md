@@ -305,6 +305,7 @@ webhost.
 |---|---|---|---|
 | `_acme-challenge`, `_acme-challenge.www` | TXT | from konsoleH's SSL Manager | before the switch; delete once the certificate uses file validation (section 5) |
 | `intern` | A / AAAA | the Coolify server (today's gahk.dk addresses) | before the switch |
+| `wiki` | A / AAAA | the server that runs the wiki (MediaWiki at its root) | before the switch |
 | `@` (gahk.dk) | A / AAAA | the webhost's IPv4 / IPv6 from konsoleH | **the switch** |
 | `www` | A / AAAA (or CNAME `gahk.dk.`) | the webhost | the switch |
 | MX, SPF (TXT), DKIM, DMARC | unchanged | mail stays on one.com | never touch |
@@ -334,7 +335,9 @@ gahk.dk still points at Coolify, so when DNS moves, both sides already show the 
 1. **Prepare the webhost**: database (section 2), `config.ini` (section 3), the bootstrap upload
    (section 4), the TLS certificate by DNS validation (section 5), and `gahk.dk` and `www` in
    konsoleH (section 6). Give the account a second name that already points at it (e.g.
-   `hetznerdemo.gahk.dk`) to reach it before the DNS switch.
+   `hetznerdemo.gahk.dk`) to reach it before the DNS switch. Point `intern.gahk.dk` and
+   `wiki.gahk.dk` at the Coolify server; the wiki must answer at the root of its host
+   (`/index.php`, `/wiki/<title>`).
 2. **Install gahk_web by hand**, at that address (the signature covers the path, not the host):
 
    ```sh
@@ -383,7 +386,7 @@ curl -sI https://gahk.dk/intern/           # 200, the old app's page (static/int
 curl -so /dev/null -w '%{http_code} %{redirect_url}\n' -X POST 'https://gahk.dk/intern/x?y=1'   # 308 https://intern.gahk.dk/x?y=1
 curl -sI https://gahk.dk/nyintern/den-hurtige/   # 308 → https://intern.gahk.dk/den-hurtige/
 curl -sI https://gahk.dk/nyintern//evil.example  # 308 → https://intern.gahk.dk/evil.example (never "//")
-curl -sI https://gahk.dk/wiki/             # 308 → https://intern.gahk.dk/wiki/
+curl -sI https://gahk.dk/wiki/             # 308 → https://wiki.gahk.dk/
 curl -sI https://gahk.dk/findes-ikke       # 404 with the site's 404 page
 curl -sI https://gahk.dk/.htaccess         # 403
 curl -sI https://gahk.dk/fcgitest/test.fcgi   # 403 (and delete the folder, section 4 step 3)
@@ -409,10 +412,11 @@ In a browser:
 
 Every page address that answered on the old gahk.dk answers at the same address after the cutover.
 Media and other files are never served at an address with `/legacy/` in it: an old media address
-redirects to where the file lives now. The intranet moved to intern.gahk.dk by design, and its old
-addresses redirect there with their query and method: `/intern/…` and `/nyintern/…` without the
-prefix (intern runs at the root), the rest with the same path (a GET of `/intern/…` by way of a
-page that forwards it, for the old installed app's sake). Check these once DNS has switched:
+redirects to where the file lives now. The intranet moved to intern.gahk.dk and the wiki to
+wiki.gahk.dk by design, and their old addresses redirect there with their query and method:
+`/intern/…` and `/nyintern/…` without the prefix (intern runs at the root), the wiki's as below,
+the rest with the same path (a GET of `/intern/…` by way of a page that forwards it, for the old
+installed app's sake). Check these once DNS has switched:
 
 | Address | Answer |
 |---|---|
@@ -427,7 +431,10 @@ page that forwards it, for the old installed app's sake). Check these once DNS h
 | `/sw.js` | 200; now a worker that removes itself (the old one was the intranet's push worker) |
 | `/intern`, `/intern/…` (GET, HEAD) | 200, the page for the old Den Hurtige app (`static/intern-moved.html`): a browser goes on at once to `https://intern.gahk.dk/…`, the prefix dropped (`/intern` to `/`; the rest of the path, the query and the fragment kept); the installed app shows how to install GAHK Intern. Open `https://gahk.dk/intern/den-hurtige/?x=1#top` in a browser: it must land on `https://intern.gahk.dk/den-hurtige/?x=1#top` |
 | `/intern`, `/intern/…` (other methods), `/nyintern`, `/nyintern/…` (every method) | 308 to `https://intern.gahk.dk/…`, the prefix dropped: `/nyintern` and `/intern/` to `/`, `/intern/den-hurtige/send?x=1` to `/den-hurtige/send?x=1`. The rest of the path keeps its bytes (`%C3%A6` comes back as `%c3%a6`); the slashes right after the prefix are dropped, so the path never starts with `//` |
-| `/admin/…`, `/django-admin/…`, `/wiki/…` (also `/wiki/index.php?title=…`, `/wiki/load.php?…`), `/photo-album/…`, `/media/…`, `/health`, `/healthz`, `/optagelse/listansoegninger`, `/optagelse/eksport`, `/optagelse/showAnsoegning/…` | 308 to the same path on intern.gahk.dk |
+| `/admin/…`, `/django-admin/…`, `/photo-album/…`, `/media/…`, `/health`, `/healthz`, `/optagelse/listansoegninger`, `/optagelse/eksport`, `/optagelse/showAnsoegning/…` | 308 to the same path on intern.gahk.dk |
+| `/wiki`, `/wiki/` | 308 to `https://wiki.gahk.dk/` |
+| `/wiki/` followed by one of MediaWiki's root entries (`index.php`, `load.php`, `api.php`, `rest.php`, `img_auth.php`, `thumb.php`, `thumb_handler.php`, `opensearch_desc.php`, `images`, `skins`, `resources`, `extensions`) and anything after it | 308 to the same path without `/wiki` on wiki.gahk.dk: `/wiki/index.php?title=Forside` → `https://wiki.gahk.dk/index.php?title=Forside` |
+| any other `/wiki/<title>` | 308 to `https://wiki.gahk.dk/wiki/<title>` |
 | `/static/manifest.json`, `/static/icons/icon-512x512.png` (and the other icons this site has no file for), `/static/dist/…`, `/static/legacy/image/elements/logo.png` (and the rest of `elements/` and `intern/`) | 301 to the same path on intern.gahk.dk |
 
 ```sh
@@ -438,13 +445,14 @@ for p in faciliteter faciliteter/kokken kollegielivet/historie legater kontakt v
   done
 done                                       # 200 on every line
 curl -sI https://gahk.dk/static/legacy/image/elements/lamassu.b8dc291a4e43.svg   # 301 → /static/img/lamassu.svg
-curl -sI 'https://gahk.dk/wiki/index.php?title=Forside'   # 308 → https://intern.gahk.dk/wiki/index.php?title=Forside
+curl -sI 'https://gahk.dk/wiki/index.php?title=Forside'   # 308 → https://wiki.gahk.dk/index.php?title=Forside
+curl -sI https://gahk.dk/wiki/K%C3%A6lderen   # 308 → https://wiki.gahk.dk/wiki/K%c3%a6lderen (the same bytes)
 curl -sI https://gahk.dk/healthz           # 308 → https://intern.gahk.dk/healthz
 curl -sI https://gahk.dk/static/manifest.json   # 301 → https://intern.gahk.dk/static/manifest.json
 ```
 
-Apart from the intranet and the old picture addresses (which lead to the same picture), only two
-addresses now redirect where the old site answered 200, both on purpose:
+Apart from the intranet, the wiki and the old picture addresses (which lead to the same picture),
+only two addresses now redirect where the old site answered 200, both on purpose:
 
 - `https://www.gahk.dk/…` answers 301 to `https://gahk.dk/…`. One canonical host keeps the site
   from being indexed twice, and the forms' Origin check accepts `gahk.dk` only.
