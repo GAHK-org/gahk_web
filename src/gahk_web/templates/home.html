@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 
 {% block hero %}
-  <section class="hero hero--home{% if not background %} hero--plain{% endif %}">
+  <section class="relative h-80 overflow-hidden {{ 'bg-gray-800' if background else 'bg-linear-160 from-emerald-800 to-emerald-900' }}">
 {% if background %}
     {{ site.hero_img(background) }}
-    <div class="hero__shade hero__shade--home"></div>
+    <div class="absolute inset-0 bg-gradient-to-t from-black/75 to-black/20"></div>
 {% endif %}
-    <div class="hero__inner hero__inner--home">
-      <h1 class="font-display hero__home-title">Velkommen til GAHK</h1>
-      <p class="hero__tagline">Studenterkollegium på Kristianiagade på Østerbro - 61 værelser, fællesskab og selvstyre.</p>
+    <div class="relative max-w-3xl mx-auto h-full w-full flex flex-col justify-end px-6 pb-8 text-white">
+      <h1 class="font-display text-4xl drop-shadow mb-2">Velkommen til GAHK</h1>
+      <p class="max-w-xl text-white/90 mb-4">Studenterkollegium på Kristianiagade på Østerbro - 61 værelser, fællesskab og selvstyre.</p>
       <div><a href="/optagelse/" class="btn">Søg optagelse</a></div>
     </div>
   </section>
@@ -20,14 +20,14 @@
 {% endif %}
 
 {% if upcoming_events or latest_news %}
-    <section class="home-lists">
+    <section class="mt-10 grid gap-8 sm:grid-cols-2">
       <div>
-        <h2 class="font-display home-lists__title">Kommende begivenheder</h2>
+        <h2 class="font-display text-xl text-emerald-900 mb-3">Kommende begivenheder</h2>
 {% if upcoming_events %}
-        <ul class="home-list">
+        <ul class="space-y-2">
 {% for event in upcoming_events %}
-          <li class="home-list__event">
-            <span class="home-list__date">{{ event.starts_on|da_date("short") }}</span>
+          <li class="flex gap-3">
+            <span class="text-emerald-700 font-semibold whitespace-nowrap">{{ event.starts_on|da_date("short") }}</span>
             <span>{{ event.title }}</span>
           </li>
 {% endfor %}
@@ -37,14 +37,14 @@
 {% endif %}
       </div>
       <div>
-        <h2 class="font-display home-lists__title">Seneste nyt</h2>
-        <ul class="home-list">
+        <h2 class="font-display text-xl text-emerald-900 mb-3">Seneste nyt</h2>
+        <ul class="space-y-2">
 {% for item in latest_news %}
-          <li><span class="home-list__news-date">{{ item.published_at|da_date("medium") }}</span> — {{ item.title }}</li>
+          <li><span class="text-gray-400 text-sm">{{ item.published_at|da_date("medium") }}</span> — {{ item.title }}</li>
 {% endfor %}
         </ul>
       </div>
     </section>
-    <p class="home-more"><a class="btn" href="/begivenheder/">Se nyheder &amp; begivenheder ›</a></p>
+    <p class="mt-6"><a class="btn" href="/begivenheder/">Se nyheder &amp; begivenheder ›</a></p>
 {% endif %}
 {% endblock %}

@@ -9,22 +9,23 @@
 {% block hero %}{% endblock %}
 
 {% block body_main %}
-  <div class="page-stage {{ 'page-stage--photo' if background else 'page-stage--plain' }}">
-    <div class="page-stage__shade"></div>
-    <div class="page-stage__inner">
-      <h1 class="font-display page-title">{{ page.title }}</h1>
-      <div class="page-grid{% if section_links %} page-grid--with-nav{% endif %}">
+{# page-stage--photo is where the <style> above puts the picture; without one, a green gradient. #}
+  <div class="relative flex-1 w-full bg-cover bg-center bg-no-repeat {{ 'page-stage--photo bg-gray-800' if background else 'bg-linear-160 from-emerald-800 to-emerald-900' }}">
+    <div class="absolute inset-0 {{ 'bg-black/60' if background else 'bg-black/15' }}"></div>
+    <div class="relative w-full max-w-5xl mx-auto px-4 py-10 sm:py-14">
+      <h1 class="font-display text-3xl sm:text-4xl text-white text-center drop-shadow-lg mb-8">{{ page.title }}</h1>
+      <div class="grid gap-6 items-start {{ 'md:grid-cols-[16rem_minmax(0,1fr)]' if section_links else 'max-w-3xl mx-auto' }}">
 {% if section_links %}
-        <nav aria-label="{{ section_title }}" class="section-nav">
-          <h2 class="font-display section-nav__title">{{ section_title }}</h2>
-          <ul>
+        <nav aria-label="{{ section_title }}" class="rounded-xl bg-white/95 backdrop-blur p-4 shadow-xl md:sticky md:top-4">
+          <h2 class="font-display text-lg text-emerald-800 mb-3 px-1">{{ section_title }}</h2>
+          <ul class="space-y-1">
 {% for link in section_links %}
-            <li><a href="{{ link.url }}"{% if link.current %} class="is-current" aria-current="page"{% endif %}>{{ link.title }}</a></li>
+            <li><a href="{{ link.url }}" class="block rounded-lg px-3 py-2 text-sm transition-colors {{ 'bg-emerald-700 text-white font-medium' if link.current else 'text-gray-700 hover:bg-emerald-50 hover:text-emerald-800' }}"{% if link.current %} aria-current="page"{% endif %}>{{ link.title }}</a></li>
 {% endfor %}
           </ul>
         </nav>
 {% endif %}
-        <article class="prose-gahk page-card">
+        <article class="prose-gahk flow-root min-w-0 rounded-xl bg-white/95 backdrop-blur p-6 sm:p-8 shadow-xl">
           {{ site.body(page.body)|safe }}
         </article>
       </div>

@@ -1,23 +1,23 @@
 {% extends "base.html" %}
 
-{% block hero_title %}<h1 class="font-display hero__title">Nyheder &amp; begivenheder</h1>{% endblock %}
+{% block hero_title %}<h1 class="font-display text-3xl text-white drop-shadow">Nyheder &amp; begivenheder</h1>{% endblock %}
 
 {% block content %}
-    <div class="stack-lg">
+    <div class="space-y-10">
       <section>
-        <h2 class="font-display section-title">Kommende begivenheder</h2>
+        <h2 class="font-display text-2xl text-emerald-900 mb-4">Kommende begivenheder</h2>
 {% if upcoming_events %}
-        <ul class="event-list">
+        <ul class="space-y-3">
 {% for event in upcoming_events %}
-          <li class="card event">
-            <div class="event__date">
-              <div class="font-display event__day">{{ event.starts_on|da_date("day") }}</div>
-              <div class="event__month">{{ event.starts_on|da_date("month") }}</div>
+          <li class="card flex gap-4 items-start">
+            <div class="shrink-0 text-center leading-tight">
+              <div class="font-display text-2xl text-emerald-700">{{ event.starts_on|da_date("day") }}</div>
+              <div class="text-xs uppercase text-gray-500">{{ event.starts_on|da_date("month") }}</div>
             </div>
             <div>
-              <div class="event__title">{{ event.title }}</div>
+              <div class="font-semibold">{{ event.title }}</div>
 {% if event.description %}
-              <div class="event__text">{{ site.body(event.description)|safe }}</div>
+              <div class="text-sm text-gray-600 mt-1 [&_a]:text-emerald-700 [&_a]:underline">{{ site.body(event.description)|safe }}</div>
 {% endif %}
             </div>
           </li>
@@ -29,14 +29,14 @@
       </section>
 
       <section>
-        <h2 class="font-display section-title">Nyheder</h2>
+        <h2 class="font-display text-2xl text-emerald-900 mb-4">Nyheder</h2>
 {% if news %}
-        <div class="news-list">
+        <div class="space-y-6">
 {% for item in news %}
-          <article class="news">
-            <h3 class="font-display news__title">{{ item.title }}</h3>
-            <div class="news__date">{{ item.published_at|da_date("long") }}</div>
-            <div class="prose-gahk">{{ site.body(item.body)|safe }}</div>
+          <article class="border-b border-gray-100 pb-5 last:border-0">
+            <h3 class="font-display text-lg text-emerald-800">{{ item.title }}</h3>
+            <div class="text-xs text-gray-400 mb-2">{{ item.published_at|da_date("long") }}</div>
+            <div class="prose-gahk flow-root">{{ site.body(item.body)|safe }}</div>
           </article>
 {% endfor %}
         </div>
@@ -47,10 +47,10 @@
 
 {% if past_events %}
       <section>
-        <h2 class="font-display section-title">Tidligere begivenheder</h2>
-        <ul class="past-events">
+        <h2 class="font-display text-2xl text-emerald-900 mb-4">Tidligere begivenheder</h2>
+        <ul class="space-y-1 text-sm text-gray-600">
 {% for event in past_events %}
-          <li><span class="past-events__date">{{ event.starts_on|da_date("iso") }}</span> · {{ event.title }}</li>
+          <li><span class="text-gray-400">{{ event.starts_on|da_date("iso") }}</span> · {{ event.title }}</li>
 {% endfor %}
         </ul>
       </section>
