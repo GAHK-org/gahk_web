@@ -65,6 +65,13 @@ ErrorDocument 404 /404.html
   # /intern/x and /nyintern/x keep their prefix: intern.gahk.dk/intern/x works on whatever runs
   # there, the old code (which serves /intern/…) and the new (which sends /intern/x on to /x itself,
   # keeping the query and the method).
+  # The old intranet's installed app (Den Hurtige, scope /intern/) cannot follow a redirect to
+  # another origin. So a GET or HEAD of /intern and /intern/… gets one page of the release instead
+  # (a rewrite: nothing runs, /intern/x.php neither). In a browser it sends the visitor on to
+  # intern.gahk.dk/intern/… at once; inside the old app it asks for intern's new app to be installed.
+  # Every other method takes the 308 below. routing.OLD_APP_PAGE.
+  RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
+  RewriteRule ^intern(?:/.*)?$ static/intern-moved.html [L]
   RewriteRule ^((?:intern|nyintern|admin|django-admin|wiki)(?:/.*)?)$ https://intern.gahk.dk/$1 [R=308,L]
   RewriteRule ^((?:photo-album|media)/.*)$ https://intern.gahk.dk/$1 [R=308,L]
   # intern's health checks: /health (readiness) and /healthz (liveness), which a monitor may poll.

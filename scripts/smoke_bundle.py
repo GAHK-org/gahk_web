@@ -356,7 +356,8 @@ def install(python: str, dist: Path, version: str, database: str, scratch: Path)
     code, content = cgi(python, home, "GET", "/faciliteter/")
     if code != 200 or "Røgtest".encode() not in content:
         raise SmokeError(f"the stub's fallback did not serve the page: {code}")
-    answers = fastcgi(python, home, ["/api/health", "/faciliteter/", "/intern/x", "/api/health"])
+    paths = ["/api/health", "/faciliteter/", "/nyintern/x", "/intern/den-hurtige/", "/api/health"]
+    answers = fastcgi(python, home, paths)
     (health_code, health_headers, health_body), (page_code, _, page_body) = answers[0], answers[1]
     if (health_code, health_headers.get("X-Gahk-Runner")) != (200, "fastcgi") or json.loads(health_body)[
         "version"
@@ -364,7 +365,11 @@ def install(python: str, dist: Path, version: str, database: str, scratch: Path)
         raise SmokeError(f"gahk.fcgi's health: {answers[0]}")
     if page_code != 200 or "Røgtest".encode() not in page_body or answers[2][0] != 308:
         raise SmokeError(f"gahk.fcgi did not serve the page and the redirect: {answers[1:3]}")
-    print("  fastcgi: one process answered health, a page, a redirect and health again")
+    # The old intranet app's page, from the file the release installed into public_html/static.
+    old_app = (home / "public_html" / "static" / "intern-moved.html").read_bytes()
+    if answers[3][0] != 200 or answers[3][2] != old_app:
+        raise SmokeError(f"gahk.fcgi did not serve the old intranet app's page: {answers[3][:2]}")
+    print("  fastcgi: one process answered health, a page, a redirect, the old app's page and health again")
 
     again = update(python, home, key, "second update")
     if again.get("updated") or not str(again.get("detail", "")).startswith("already running"):

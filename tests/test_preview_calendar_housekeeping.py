@@ -285,7 +285,7 @@ def test_cgi_stub_runs_the_current_release(tmp_path: Path, cfg: Config, con: Ses
     assert output.startswith("Status: 200 OK")
     assert '"ok": true' in output
     output = run_cgi(
-        tmp_path, {"REQUEST_METHOD": "GET", "PATH_INFO": "/intern/x", "REQUEST_URI": "/intern/x?y=1"}
+        tmp_path, {"REQUEST_METHOD": "GET", "PATH_INFO": "/nyintern/x", "REQUEST_URI": "/nyintern/x?y=1"}
     )
     assert "Status: 308" in output
-    assert "Location: https://intern.gahk.dk/intern/x?y=1" in output
+    assert "Location: https://intern.gahk.dk/nyintern/x?y=1" in output
