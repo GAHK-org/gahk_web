@@ -1,7 +1,12 @@
 """The CGI fallback, the development server's .htaccess emulation, and their agreement with .htaccess."""
 
+import importlib.util
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 import pytest
 from conftest import HALLWAY, KITCHEN, Client, image, publish, rename_image, snapshot
@@ -12,7 +17,8 @@ from gahk_web.config import Config
 from gahk_web.devserver import make_dev_app
 from gahk_web.render import STATIC_DIR
 
-HTACCESS = Path(__file__).resolve().parents[1] / "public_html" / ".htaccess"
+ROOT = Path(__file__).resolve().parents[1]
+HTACCESS = ROOT / "public_html" / ".htaccess"
 
 
 def test_no_snapshot_yet_is_503(client: Client) -> None:
@@ -33,14 +39,17 @@ def test_unknown_path_is_the_404_page(client: Client) -> None:
 @pytest.mark.parametrize(
     ("path", "target"),
     [
-        # The prefix stays: intern.gahk.dk sends /intern/x on to /x itself (or, running the old
-        # code, serves it).
-        ("/intern", "https://intern.gahk.dk/intern"),
-        ("/intern/", "https://intern.gahk.dk/intern/"),
-        ("/intern/den-hurtige/", "https://intern.gahk.dk/intern/den-hurtige/"),
-        ("/intern/admin/login", "https://intern.gahk.dk/intern/admin/login"),
-        ("/nyintern", "https://intern.gahk.dk/nyintern"),
-        ("/nyintern/x", "https://intern.gahk.dk/nyintern/x"),
+        # intern runs at the root: the /intern and /nyintern prefixes are dropped.
+        ("/intern", "https://intern.gahk.dk/"),
+        ("/intern/", "https://intern.gahk.dk/"),
+        ("/intern/den-hurtige/", "https://intern.gahk.dk/den-hurtige/"),
+        ("/intern/admin/login", "https://intern.gahk.dk/admin/login"),
+        ("/intern/x.php", "https://intern.gahk.dk/x.php"),
+        ("/nyintern", "https://intern.gahk.dk/"),
+        ("/nyintern/", "https://intern.gahk.dk/"),
+        ("/nyintern/x", "https://intern.gahk.dk/x"),
+        ("/nyintern/den-hurtige/", "https://intern.gahk.dk/den-hurtige/"),
+        # The rest keep their path.
         ("/admin", "https://intern.gahk.dk/admin"),
         ("/admin/roles", "https://intern.gahk.dk/admin/roles"),
         ("/django-admin/", "https://intern.gahk.dk/django-admin/"),
@@ -58,9 +67,176 @@ def test_unknown_path_is_the_404_page(client: Client) -> None:
     ],
 )
 def test_intranet_addresses_go_to_intern_with_308(client: Client, path: str, target: str) -> None:
-    result = client.get(path, query="a=1")
-    assert result.status == 308
-    assert result.headers["Location"] == target + "?a=1"
+    methods = ["POST", "PUT", "DELETE"]  # every method; a GET or HEAD of /intern… gets the old app's page
+    if routing.old_app_page("GET", path) is None:
+        methods += ["GET", "HEAD"]
+    for method in methods:
+        result = client.request(method, path, query="a=1")
+        assert (result.status, result.headers["Location"]) == (308, target + "?a=1"), method
+
+
+# --- the old intranet's installed app (Den Hurtige, scope /intern/): a page, not a redirect ---
+
+OLD_APP_PATHS = ("/intern", "/intern/", "/intern/den-hurtige/", "/intern/admin/login", "/intern/x.php")
+
+
+def old_app_page() -> bytes:
+    return (STATIC_DIR / routing.OLD_APP_PAGE.removeprefix("/static/")).read_bytes()
+
+
+@pytest.mark.parametrize("path", OLD_APP_PATHS)
+def test_a_get_of_the_old_intranet_gets_the_old_apps_page(client: Client, dev: Client, path: str) -> None:
+    """Before anything is published, too: the page is a file of the release."""
+    for app in (dev, client):
+        for query in ("", "x=1&y=%C3%A6"):
+            result = app.get(path, query=query)
+            assert (result.status, result.body) == (200, old_app_page()), (path, query)
+            assert result.headers["Content-Type"] == "text/html; charset=utf-8"
+            assert "Location" not in result.headers
+        head = app.request("HEAD", path)
+        assert (head.status, head.body) == (200, b"")
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+def test_other_methods_to_the_old_intranet_still_go_to_intern(
+    client: Client, dev: Client, method: str
+) -> None:
+    for app in (dev, client):
+        for path in OLD_APP_PATHS:
+            result = app.request(method, path, query="a=1")
+            target = "https://intern.gahk.dk/" + path.removeprefix("/intern").lstrip("/") + "?a=1"
+            assert (result.status, result.headers["Location"]) == (308, target), (method, path)
+
+
+# (path as the browser sends it, query, Location without the query). The path keeps its bytes:
+# what is percent-encoded stays so (a Danish letter, "%", "?", "#", a space), nothing twice.
+INTERN_PREFIX_ADDRESSES = (
+    ("/intern", "", "https://intern.gahk.dk/"),
+    ("/intern/", "", "https://intern.gahk.dk/"),
+    ("/intern", "x=1&y=%C3%A6", "https://intern.gahk.dk/"),
+    ("/intern/den-hurtige/", "x=1", "https://intern.gahk.dk/den-hurtige/"),
+    ("/intern/den-hurtige", "", "https://intern.gahk.dk/den-hurtige"),
+    ("/nyintern/den-hurtige/", "side=2", "https://intern.gahk.dk/den-hurtige/"),
+    ("/intern/K%C3%A6lderen/f%C3%B8rste", "", "https://intern.gahk.dk/K%C3%A6lderen/f%C3%B8rste"),
+    ("/nyintern/s%C3%B8g", "q=%C3%A5", "https://intern.gahk.dk/s%C3%B8g"),
+    ("/intern/100%25", "", "https://intern.gahk.dk/100%25"),
+    ("/intern/hvad%3F", "", "https://intern.gahk.dk/hvad%3F"),
+    ("/intern/a%23b", "", "https://intern.gahk.dk/a%23b"),
+    ("/intern/a%20b", "", "https://intern.gahk.dk/a%20b"),
+    ("/intern/a&b+c=d'(e);f", "", "https://intern.gahk.dk/a&b+c=d'(e);f"),
+    # The slashes after the prefix go, so the path never starts with "//" (a protocol-relative
+    # address, should anything on the way treat it as one) and the host stays intern.gahk.dk.
+    ("/intern//evil.example", "", "https://intern.gahk.dk/evil.example"),
+    ("/intern///evil.example/x", "", "https://intern.gahk.dk/evil.example/x"),
+    ("/nyintern//evil.example", "", "https://intern.gahk.dk/evil.example"),
+    ("/intern/%5Cevil.example", "", "https://intern.gahk.dk/evil.example"),
+    ("/intern/%2F%2Fevil.example", "", "https://intern.gahk.dk/evil.example"),
+    ("/intern/x//y", "", "https://intern.gahk.dk/x//y"),  # only right after the prefix
+    ("/intern/@evil.example", "", "https://intern.gahk.dk/@evil.example"),
+)
+
+
+@pytest.mark.parametrize(("path", "query", "target"), INTERN_PREFIX_ADDRESSES)
+def test_the_intern_prefixes_are_dropped(
+    client: Client, dev: Client, path: str, query: str, target: str
+) -> None:
+    location = target + (f"?{query}" if query else "")
+    assert urlsplit(location).netloc == "intern.gahk.dk" and not urlsplit(location).path.startswith("//")
+    for method in ("POST", "PUT", "GET"):  # a GET of /nyintern…; /intern… gets the old app's page
+        if method == "GET" and routing.old_app_page(method, unquote(path)):
+            continue
+        for app in (dev, client):
+            answer = app.request(method, path, query=query)
+            assert (answer.status, answer.headers["Location"]) == (308, location), (method, path)
+
+
+def test_the_old_apps_page_forwards_as_the_redirect_does() -> None:
+    """The page's script, run on each address (with node, when there is one), lands where the 308
+    goes, the fragment kept. A browser's location.pathname is percent-encoded, as the request."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("no node")
+    script = re.search(r"<script>(.*?)</script>", old_app_page().decode(), re.DOTALL)
+    assert script is not None
+    for path, query, target in INTERN_PREFIX_ADDRESSES:
+        if not path.startswith("/intern"):
+            continue
+        search = f"?{query}" if query else ""
+        stub = f"""
+            var replaced = null;
+            (function (location, navigator, window, document) {{
+                {script.group(1)}
+            }})(
+                {{pathname: {json.dumps(path)}, search: {json.dumps(search)}, hash: "#top",
+                 replace: function (url) {{ replaced = url; }}}},
+                {{}},
+                {{matchMedia: function () {{ return {{matches: false}}; }}}},
+                {{documentElement: {{}}, addEventListener: function () {{}}}}
+            );
+            process.stdout.write(replaced);
+        """
+        done = subprocess.run([node, "-e", stub], capture_output=True, text=True, check=True)
+        assert done.stdout == target + search + "#top", path
+
+
+def test_the_old_apps_page_is_only_for_intern() -> None:
+    assert routing.old_app_page("GET", "/intern/den-hurtige/") == routing.OLD_APP_PAGE
+    assert routing.old_app_page("HEAD", "/intern") == routing.OLD_APP_PAGE
+    assert routing.old_app_page("POST", "/intern/den-hurtige/") is None
+    for path in ("/nyintern", "/nyintern/x", "/internat", "/intern.php", "/admin", "/wiki/", "/x/intern/"):
+        assert routing.old_app_page("GET", path) is None, path
+
+
+def test_the_old_apps_page() -> None:
+    """Inside an installed app it asks for the new one; in a browser it sends the visitor on to
+    where the 308 would go: intern.gahk.dk without the /intern prefix."""
+    page = old_app_page().decode("utf-8")
+    assert '<meta name="robots" content="noindex">' in page
+    assert "navigator.standalone === true" in page
+    assert '"(display-mode: " + mode + ")"' in page
+    assert (
+        r'var rest = location.pathname.replace(/^\/intern(?=\/|$)/, "").replace(/^(?:[\/\\]|%2F|%5C)+/i, "");'
+        in page
+    )
+    assert 'var target = "https://intern.gahk.dk/" + rest + location.search + location.hash;' in page
+    assert "location.replace(target);" in page
+    assert '<a class="btn" href="https://intern.gahk.dk/install">' in page
+    assert "GAHK Intern" in page
+    assert "<noscript>" in page and 'href="https://intern.gahk.dk/"' in page
+    # Nothing from elsewhere, and only the release's unhashed files (the stylesheet's name is hashed).
+    assert "<script src" not in page and "<link" not in page
+    for asset in re.findall(r'(?:src|url\()="?(/static/[^")]+)', page):
+        assert (STATIC_DIR / asset.removeprefix("/static/")).is_file(), asset
+        assert not re.search(r"\.[0-9a-f]{8,}\.", asset), asset
+
+
+def test_the_old_apps_page_is_in_the_bundle(tmp_path: Path) -> None:
+    """build_bundle copies the package's static/ into public_html/static/ (installed by the updater);
+    the page keeps its name, so .htaccess can name it."""
+    spec = importlib.util.spec_from_file_location("build_bundle", ROOT / "scripts" / "build_bundle.py")
+    assert spec and spec.loader
+    build_bundle = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(build_bundle)
+    manifest = build_bundle.build_static(tmp_path)
+    installed = tmp_path / "public_html" / routing.OLD_APP_PAGE.lstrip("/")
+    assert installed.read_bytes() == old_app_page()
+    assert "intern-moved.html" not in manifest  # not renamed with a hash
+
+
+def test_htaccess_serves_the_old_apps_page_for_a_get_of_intern() -> None:
+    lines = rule_lines(HTACCESS.read_text())
+    rule = f"RewriteRule ^{routing._OLD_APP_RE.pattern.removeprefix('^/')} {routing.OLD_APP_PAGE.lstrip('/')} [L]"
+    index = lines.index(rule)
+    assert lines[index - 1] == "RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$"
+    redirects = [
+        i for i, line in enumerate(lines) if "https://intern.gahk.dk/" in line and "[R=308,L]" in line
+    ]
+    scripts = next(i for i, line in enumerate(lines) if line.endswith("- [F,L,NC]"))
+    assert index < min(redirects) and index < scripts
+    # Its second round finds the file: nothing before the files' own rule refuses or redirects it.
+    path = routing.OLD_APP_PAGE
+    assert not routing.is_hidden(path) and not routing.is_stub(path) and not routing.is_script(path)
+    assert routing.intern_redirect(path) is None and routing.old_asset_redirect(path) is None
 
 
 # The old wiki's own addresses: $wgArticlePath is /wiki/index.php?title=$1, and its pages load
@@ -90,14 +266,11 @@ def test_htaccess_redirects_the_intranet_before_it_refuses_scripts() -> None:
     assert intern and max(intern) < scripts
 
 
-def test_old_intranet_posts_keep_their_method_and_prefix(client: Client, dev: Client) -> None:
+def test_old_intranet_posts_keep_their_method_without_the_prefix(client: Client, dev: Client) -> None:
     moved = dev.post("/intern/den-hurtige/send", query="x=1")
-    assert (moved.status, moved.headers["Location"]) == (
-        308,
-        "https://intern.gahk.dk/intern/den-hurtige/send?x=1",
-    )
+    assert (moved.status, moved.headers["Location"]) == (308, "https://intern.gahk.dk/den-hurtige/send?x=1")
     moved = client.post("/nyintern/login")
-    assert (moved.status, moved.headers["Location"]) == (308, "https://intern.gahk.dk/nyintern/login")
+    assert (moved.status, moved.headers["Location"]) == (308, "https://intern.gahk.dk/login")
 
 
 def test_not_intranet() -> None:
@@ -106,6 +279,9 @@ def test_not_intranet() -> None:
     assert routing.intern_redirect("/nyinternet") is None
     assert routing.intern_redirect("/healthy") is None
     assert routing.intern_redirect("/optagelse/") is None
+    assert routing.intern_redirect("/intern.php") is None
+    assert routing.intern_redirect("/intern%2F") is None
+    assert routing.intern_redirect("/x/intern/") is None
 
 
 def test_old_image_addresses_follow_the_legacy_map(client: Client) -> None:
@@ -245,9 +421,10 @@ def test_htaccess_names_the_same_rules() -> None:
     rules = re.findall(
         r"^\s*RewriteRule \^(\S+) https://intern\.gahk\.dk/\S* \[R=308,L\]$", text, re.MULTILINE
     )
-    assert len(rules) == 5
+    assert len(rules) == 6
     for prefix in (
-        "intern|nyintern|admin|django-admin|wiki",
+        "intern|nyintern",
+        "admin|django-admin|wiki",
         "photo-album|media",
         "health",
         "listansoegninger|eksport",
@@ -268,6 +445,30 @@ def test_htaccess_encodes_the_path_again_when_it_sends_www_and_http_to_https() -
     ]
 
 
+def htaccess_intern_rules() -> list[tuple[str, str]]:
+    return re.findall(
+        r"^\s*RewriteRule \^(\S+) (https://intern\.gahk\.dk/\S*) \[R=308,L\]$",
+        HTACCESS.read_text(),
+        re.MULTILINE,
+    )
+
+
+def test_htaccess_redirects_the_intranet_as_routing_does() -> None:
+    """Apply .htaccess's intranet rules (their regexes are Python's too) to the decoded path, as
+    mod_rewrite does, and compare with routing.intern_redirect (which encodes as mod_rewrite does)."""
+    rules = htaccess_intern_rules()
+    assert [pattern for pattern, _ in rules] == [
+        pattern.pattern.removeprefix("^/") for pattern, _ in routing._INTERN_RULES
+    ]
+    paths = [path for path, _query, _target in INTERN_PREFIX_ADDRESSES]
+    paths += ["/admin/roles", "/wiki/Forside", "/media/cms/x.jpg", "/healthz/", "/optagelse/kasser/12"]
+    for path in paths:
+        decoded = unquote(path)
+        match, to = next((m, to) for p, to in rules if (m := re.match("^" + p, decoded.lstrip("/"))))
+        expanded = re.sub(r"\$(\d)", lambda ref: match.group(int(ref.group(1))) or "", to)
+        assert expanded == "https://intern.gahk.dk" + unquote(routing.intern_redirect(decoded) or ""), path
+
+
 def rule_lines(text: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip().startswith(("Rewrite", "# Rewrite"))]
 
@@ -280,7 +481,9 @@ def test_htaccess_runs_the_stubs_only_through_its_own_rewrites() -> None:
     assert lines[refuse + 2] == "RewriteRule ^cgi-bin(?:/|$) - [F,L]"  # anything else in cgi-bin
     pattern = r"(?:^|/)[^/]*\.(?:py|cgi|fcgi|php\d?|phtml|phar|pl|shtml)(?:[./]|$)"
     scripts = lines.index(f"RewriteRule {pattern} - [F,L,NC]")
-    assert refuse < scripts < lines.index("RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$")
+    files = lines.index("RewriteCond %{REQUEST_FILENAME} -f") - 1
+    assert lines[files] == "RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$"
+    assert refuse < scripts < files
     assert routing._SCRIPT_RE.pattern == pattern
     # The stubs themselves may run; every other Python file is denied outright.
     files_match = re.search(r'<FilesMatch "([^"]+)">', HTACCESS.read_text())
@@ -404,6 +607,7 @@ def test_devserver_serves_assets_and_images(client: Client, dev: Client) -> None
 
 def test_htaccess_serves_the_same_aliases() -> None:
     rules = re.findall(r"^\s*RewriteRule \^(\S+)\$ (static/\S+) \[L\]$", HTACCESS.read_text(), re.MULTILINE)
+    rules = [(pattern, to) for pattern, to in rules if to != routing.OLD_APP_PAGE.lstrip("/")]
     assert len(rules) == 2
     for path, target in routing.ALIASES.items():
         assert [to for pattern, to in rules if re.fullmatch(pattern, path.lstrip("/"))] == [
@@ -505,7 +709,8 @@ def test_devserver_serves_images_with_other_letters(client: Client, dev: Client)
 
 def test_devserver_matches_production_routing(client: Client, dev: Client) -> None:
     publish(client)
-    assert dev.get("/intern/x").headers["Location"] == "https://intern.gahk.dk/intern/x"
+    assert dev.post("/intern/x").headers["Location"] == "https://intern.gahk.dk/x"
+    assert dev.get("/intern/x").body == old_app_page()
     hallway = image("gang.jpg", HALLWAY)["url"]
     assert dev.get("/public/image/upload/images/gang.jpg").headers["Location"] == hallway
     assert dev.get("/public/image/a.jpg").status == 404

@@ -8,18 +8,36 @@ the tests check that both name the same paths.
 
 import re
 from pathlib import Path
+from urllib.parse import quote
 
 # Paths of the old intranet and its tools, now on intern.gahk.dk. 308 keeps the method and body, so
-# a form or API POST to an old address still arrives. /intern/x and /nyintern/x keep their prefix, so
-# the link works whatever code intern.gahk.dk runs: the old serves /intern/…, the new sends /intern/x
-# on to /x itself (308, the query kept).
+# a form or API POST to an old address still arrives (a GET or HEAD of /intern… gets OLD_APP_PAGE
+# first). intern runs at intern.gahk.dk's root and has no /intern prefix of its own, so /intern/x
+# and /nyintern/x go to /x (/intern and /nyintern to /); the other paths are the same there.
+# Slashes right after the prefix are dropped: /intern//evil.example goes to /evil.example, never to
+# a path that starts with "//" (and a backslash, which browsers read as a slash, the same).
 _INTERN_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"^/((?:intern|nyintern|admin|django-admin|wiki)(?:/.*)?)$"), r"/\1"),
+    (re.compile(r"^/(?:intern|nyintern)(?:/[/\\]*(.*))?$"), r"/\1"),
+    (re.compile(r"^/((?:admin|django-admin|wiki)(?:/.*)?)$"), r"/\1"),
     (re.compile(r"^/((?:photo-album|media)/.*)$"), r"/\1"),
     (re.compile(r"^/health(z?)/?$"), r"/health\1"),
     (re.compile(r"^/(optagelse/(?:listansoegninger|eksport))/?$"), r"/\1"),
     (re.compile(r"^/(optagelse/(?:showAnsoegning|setasreceived|kasser)/.+)$"), r"/\1"),
 )
+# What a URL path keeps as it is, as Apache's redirects do; anything else is percent-encoded (a
+# Danish letter, a space, and "%", "#" and "?", which would end the path), so the path on intern
+# has the same bytes as the one asked for here.
+_PATH_SAFE = "/:@!$&'()*+,;=~"
+
+# The old intranet's installed app ("Den Hurtige": scope /intern/, start_url /intern/den-hurtige/)
+# cannot follow a redirect to another origin, so a GET or HEAD of /intern and /intern/… gets this
+# page instead of the 308 (a rewrite, not a redirect). In a browser it sends the visitor on to
+# where the 308 would (intern.gahk.dk, the /intern prefix dropped); inside the installed app it asks
+# for intern's new app to be installed and the old one deleted. A file of the release (static/), so
+# it is there before intern has published anything. Every other method still gets the 308 below.
+OLD_APP_PAGE = "/static/intern-moved.html"
+_OLD_APP_RE = re.compile(r"^/intern(?:/.*)?$")
+_READ_METHODS = ("GET", "HEAD")
 
 # The old intranet's static files, which the old gahk.dk served: its app manifest and icons, its
 # build (/static/dist/), and the pictures its templates show. intern.gahk.dk serves them at the same
@@ -33,12 +51,18 @@ LEGACY_IMAGE_PREFIX = "/static/legacy/image/"
 
 
 def intern_redirect(path: str) -> str | None:
-    """The path on intern.gahk.dk an old intranet address now lives at, or None."""
+    """The path on intern.gahk.dk an old intranet address now lives at (percent-encoded, as Apache
+    encodes it), or None. path is decoded, as Apache matches it."""
     for pattern, replacement in _INTERN_RULES:
         match = pattern.match(path)
         if match:
-            return match.expand(replacement)
+            return quote(match.expand(replacement), safe=_PATH_SAFE)
     return None
+
+
+def old_app_page(method: str, path: str) -> str | None:
+    """The page .htaccess serves for a GET or HEAD of /intern or /intern/… (OLD_APP_PAGE), or None."""
+    return OLD_APP_PAGE if method in _READ_METHODS and _OLD_APP_RE.match(path) else None
 
 
 def intern_static_redirect(path: str) -> str | None:
