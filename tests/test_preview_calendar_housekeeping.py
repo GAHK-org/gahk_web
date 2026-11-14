@@ -288,4 +288,4 @@ def test_cgi_stub_runs_the_current_release(tmp_path: Path, cfg: Config, con: Ses
         tmp_path, {"REQUEST_METHOD": "GET", "PATH_INFO": "/nyintern/x", "REQUEST_URI": "/nyintern/x?y=1"}
     )
     assert "Status: 308" in output
-    assert "Location: https://intern.gahk.dk/nyintern/x?y=1" in output
+    assert "Location: https://intern.gahk.dk/x?y=1" in output

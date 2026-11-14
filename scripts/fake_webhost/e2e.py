@@ -708,7 +708,8 @@ manifest_url = {MANIFEST_URL}
 
     def old_app_page(self, host: Webhost) -> None:
         """A GET or HEAD of /intern… is the release's static/intern-moved.html, served by Apache;
-        every other method still goes to intern.gahk.dk with a 308 (the prefix kept)."""
+        every other method still goes to intern.gahk.dk with a 308, the /intern prefix dropped, and
+        so does every method on /nyintern…."""
         page = host.read(f"{PUBLIC_HTML}/static/intern-moved.html", user=LOGIN)
         expect(b"navigator.standalone" in page, "the release installed no static/intern-moved.html")
         host.access()
@@ -718,6 +719,8 @@ manifest_url = {MANIFEST_URL}
             "/intern/den-hurtige/",
             "/intern/den-hurtige/?x=1",
             "/intern/x.php",
+            "/intern//evil.example",
+            "/intern/K%C3%A6lderen",
         ):
             answer = host.get(path)
             expect(
@@ -728,10 +731,29 @@ manifest_url = {MANIFEST_URL}
             expect(answer.header("Content-Type") == "text/html; charset=utf-8", f"GET {path}: type")
         head = host.request("HEAD", "/intern/den-hurtige/")
         expect(head.status == 200 and not head.body, f"HEAD /intern/den-hurtige/: {head.status}")
-        for method, path in (("POST", "/intern/x"), ("POST", "/intern"), ("PUT", "/intern/den-hurtige/?a=1")):
-            moved = host.request(method, path, b"x=1", {"Content-Type": "application/x-www-form-urlencoded"})
+        # The path is encoded again (lower-case hex: the same bytes, nothing twice), the query kept
+        # as it came, and the slashes after the prefix dropped: never "//", never another host.
+        for method, path, target in (
+            ("POST", "/intern/x", "/x"),
+            ("POST", "/intern", "/"),
+            ("POST", "/intern/", "/"),
+            ("PUT", "/intern/den-hurtige/?a=1", "/den-hurtige/?a=1"),
+            ("POST", "/intern/K%C3%A6lderen/f%C3%B8rste?q=%C3%A5", "/K%c3%a6lderen/f%c3%b8rste?q=%C3%A5"),
+            ("POST", "/intern/100%25/a%20b/c%23d", "/100%25/a%20b/c%23d"),
+            ("POST", "/intern//evil.example", "/evil.example"),
+            ("POST", "/intern///evil.example/x?y=1", "/evil.example/x?y=1"),
+            ("POST", "/intern/%5Cevil.example", "/evil.example"),
+            ("POST", "/intern/%5C/%5Cevil.example", "/evil.example"),
+            ("GET", "/nyintern", "/"),
+            ("GET", "/nyintern/den-hurtige/?side=2", "/den-hurtige/?side=2"),
+            ("GET", "/nyintern//evil.example", "/evil.example"),
+            ("HEAD", "/nyintern/s%C3%B8g", "/s%c3%b8g"),
+            ("DELETE", "/nyintern/x", "/x"),
+        ):
+            body = b"x=1" if method in ("POST", "PUT") else b""
+            moved = host.request(method, path, body, {"Content-Type": "application/x-www-form-urlencoded"})
             expect(
-                (moved.status, moved.header("Location")) == (308, f"https://intern.gahk.dk{path}"),
+                (moved.status, moved.header("Location")) == (308, f"https://intern.gahk.dk{target}"),
                 f"{method} {path}: {moved.status} {moved.header('Location')}",
             )
         python = [entry.request for entry in host.access() if entry.handler != "-"]
@@ -907,7 +929,7 @@ manifest_url = {MANIFEST_URL}
             ("http", "gahk.dk", "/a%20b.jpg", 301, "https://gahk.dk/a%20b.jpg"),
             ("http", "gahk.dk", "/intern/x?y=1", 301, "https://gahk.dk/intern/x?y=1"),
             ("https", "gahk.dk", "/intern/x?y=1", 200, ""),  # the old intranet app's page
-            ("https", "gahk.dk", "/nyintern/x?y=1", 308, "https://intern.gahk.dk/nyintern/x?y=1"),
+            ("https", "gahk.dk", "/nyintern/x?y=1", 308, "https://intern.gahk.dk/x?y=1"),
             ("https", "gahk.dk", "/wiki/", 308, "https://intern.gahk.dk/wiki/"),
             # The old wiki's own addresses end in .php: redirected, not refused as scripts.
             (

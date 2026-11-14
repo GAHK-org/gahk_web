@@ -363,7 +363,8 @@ def install(python: str, dist: Path, version: str, database: str, scratch: Path)
         "version"
     ] != version:
         raise SmokeError(f"gahk.fcgi's health: {answers[0]}")
-    if page_code != 200 or "Røgtest".encode() not in page_body or answers[2][0] != 308:
+    moved = (answers[2][0], answers[2][1].get("Location"))
+    if page_code != 200 or "Røgtest".encode() not in page_body or moved != (308, "https://intern.gahk.dk/x"):
         raise SmokeError(f"gahk.fcgi did not serve the page and the redirect: {answers[1:3]}")
     # The old intranet app's page, from the file the release installed into public_html/static.
     old_app = (home / "public_html" / "static" / "intern-moved.html").read_bytes()

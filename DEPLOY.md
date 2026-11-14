@@ -360,13 +360,13 @@ Until step 4, the old site keeps serving gahk.dk from Coolify.
    manual import command as a fallback (see intern's DEPLOY). The site is complete from that moment;
    with many old pictures, the last of them follow within a few syncs. The *Hjemmeside* overview on
    intern shows the publication and gahk.dk's version.
-6. **Check** everything in section 9. Old intranet links (`gahk.dk/intern/…`) now lead to
-   `intern.gahk.dk/intern/…` (the prefix kept, so the link works whichever code intern.gahk.dk
-   runs), and intern sends that on to `intern.gahk.dk/…`. A GET there is a page that forwards
-   browsers at once and, inside the old installed Den Hurtige app, explains how to install GAHK
-   Intern instead (it comes with the release, so it works before the first publish); other methods
-   get a 308. The old calendar feed URLs keep working
-   through gahk.dk.
+6. **Check** everything in section 9. Old intranet links (`gahk.dk/intern/…`, `gahk.dk/nyintern/…`)
+   now lead straight to `intern.gahk.dk/…`, the prefix dropped: the new intern runs at
+   intern.gahk.dk's root before gahk.dk moves, and `intern.gahk.dk/intern/…` is a 404 there. A GET of
+   `/intern/…` is a page that forwards browsers at once and, inside the old installed Den Hurtige
+   app, explains how to install GAHK Intern instead (it comes with the release, so it works before
+   the first publish); other methods, and every `/nyintern/…`, get a 308. The old calendar feed
+   URLs keep working through gahk.dk.
 
 ## 9. Verification checklist
 
@@ -379,8 +379,9 @@ curl -sS https://gahk.dk/api/health        # {"ok": true, "version": "<sha>", "r
 curl -sI https://gahk.dk/api/health        # X-Gahk-Runner: fastcgi (cgi with the CGI-only switch)
 curl -sI https://gahk.dk/cgi-bin/gahk.fcgi/api/health   # 403: the stubs run only through .htaccess
 curl -sI https://gahk.dk/intern/           # 200, the old app's page (static/intern-moved.html), max-age=60
-curl -so /dev/null -w '%{http_code} %{redirect_url}\n' -X POST https://gahk.dk/intern/x   # 308 https://intern.gahk.dk/intern/x
-curl -sI https://intern.gahk.dk/intern/    # 308 → https://intern.gahk.dk/ (intern drops the old prefix)
+curl -so /dev/null -w '%{http_code} %{redirect_url}\n' -X POST 'https://gahk.dk/intern/x?y=1'   # 308 https://intern.gahk.dk/x?y=1
+curl -sI https://gahk.dk/nyintern/den-hurtige/   # 308 → https://intern.gahk.dk/den-hurtige/
+curl -sI https://gahk.dk/nyintern//evil.example  # 308 → https://intern.gahk.dk/evil.example (never "//")
 curl -sI https://gahk.dk/wiki/             # 308 → https://intern.gahk.dk/wiki/
 curl -sI https://gahk.dk/findes-ikke       # 404 with the site's 404 page
 curl -sI https://gahk.dk/.htaccess         # 403
@@ -408,8 +409,9 @@ In a browser:
 Every page address that answered on the old gahk.dk answers at the same address after the cutover.
 Media and other files are never served at an address with `/legacy/` in it: an old media address
 redirects to where the file lives now. The intranet moved to intern.gahk.dk by design, and its old
-addresses redirect there with their path, query and method (a GET of `/intern/…` by way of a page
-that forwards it, for the old installed app's sake). Check these once DNS has switched:
+addresses redirect there with their query and method: `/intern/…` and `/nyintern/…` without the
+prefix (intern runs at the root), the rest with the same path (a GET of `/intern/…` by way of a
+page that forwards it, for the old installed app's sake). Check these once DNS has switched:
 
 | Address | Answer |
 |---|---|
@@ -422,8 +424,8 @@ that forwards it, for the old installed app's sake). Check these once DNS has sw
 | `/favicon.ico`, `/static/icons/icon-192x192.png`, `/static/icons/badge-72x72.png` | 200 |
 | `/kalender/<token>.ics` | 200 `text/calendar`, passed through from intern |
 | `/sw.js` | 200; now a worker that removes itself (the old one was the intranet's push worker) |
-| `/intern`, `/intern/…` (GET, HEAD) | 200, the page for the old Den Hurtige app (`static/intern-moved.html`): a browser goes on at once to `https://intern.gahk.dk/intern/…` (path, query and fragment kept); the installed app shows how to install GAHK Intern. Open `https://gahk.dk/intern/den-hurtige/` in a browser: it must land on intern.gahk.dk |
-| `/intern/…` (other methods), `/nyintern/…` | 308 to `https://intern.gahk.dk/intern/…` (`/nyintern/…`), which intern sends on to `/…` |
+| `/intern`, `/intern/…` (GET, HEAD) | 200, the page for the old Den Hurtige app (`static/intern-moved.html`): a browser goes on at once to `https://intern.gahk.dk/…`, the prefix dropped (`/intern` to `/`; the rest of the path, the query and the fragment kept); the installed app shows how to install GAHK Intern. Open `https://gahk.dk/intern/den-hurtige/?x=1#top` in a browser: it must land on `https://intern.gahk.dk/den-hurtige/?x=1#top` |
+| `/intern`, `/intern/…` (other methods), `/nyintern`, `/nyintern/…` (every method) | 308 to `https://intern.gahk.dk/…`, the prefix dropped: `/nyintern` and `/intern/` to `/`, `/intern/den-hurtige/send?x=1` to `/den-hurtige/send?x=1`. The rest of the path keeps its bytes (`%C3%A6` comes back as `%c3%a6`); the slashes right after the prefix are dropped, so the path never starts with `//` |
 | `/admin/…`, `/django-admin/…`, `/wiki/…` (also `/wiki/index.php?title=…`, `/wiki/load.php?…`), `/photo-album/…`, `/media/…`, `/health`, `/healthz`, `/optagelse/listansoegninger`, `/optagelse/eksport`, `/optagelse/showAnsoegning/…` | 308 to the same path on intern.gahk.dk |
 | `/static/manifest.json`, `/static/icons/icon-512x512.png` (and the other icons this site has no file for), `/static/dist/…`, `/static/legacy/image/elements/logo.png` (and the rest of `elements/` and `intern/`) | 301 to the same path on intern.gahk.dk |
 

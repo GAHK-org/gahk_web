@@ -62,7 +62,7 @@ def static_response(cfg: Config, method: str, path: str, query: str) -> Response
         return _file_response(file, page) if file is not None else None
     target = routing.intern_redirect(path)
     if target is not None:
-        return redirect(308, cfg.intern_url + quote_path(target), query)
+        return redirect(308, cfg.intern_url + target, query)
     if routing.is_script(path):
         return text(403, "Forbidden")
     target = routing.old_asset_redirect(path)

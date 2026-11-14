@@ -238,7 +238,7 @@ def fallback(path: str = "") -> Response:
             return serve_file(file)
     target = routing.intern_redirect(path)
     if target is not None:  # 308 for every method, as in .htaccess: a POST stays a POST
-        return redirect(308, cfg.intern_url + quote_path(target), query())
+        return redirect(308, cfg.intern_url + target, query())
     if request.method not in ("GET", "HEAD"):
         return method_not_allowed("GET, HEAD")
     target = routing.old_asset_redirect(path)
