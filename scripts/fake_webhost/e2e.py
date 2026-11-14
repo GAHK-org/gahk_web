@@ -20,7 +20,8 @@ python3 3.13 with Debian's pip) on a network of their own, and plays every party
     rejects, one whose gahk.fcgi cannot start;
   - intern.gahk.dk: signed API requests (the project's own signing helper), and a calendar feed
     stand-in (intern.test) for the /kalender/ pass-through;
-  - visitors: pages, redirects, forms, the visit beacon, addresses that must be refused.
+  - visitors: pages, redirects, the old intranet app's page, forms, the visit beacon, addresses
+    that must be refused.
 
 The updater installs the packages with pip from PyPI (or --wheelhouse), from the real
 requirements.lock. Each request's handler is read from Apache's access log (fcgid-script,
@@ -593,6 +594,7 @@ manifest_url = {MANIFEST_URL}
             ("static files: served by Apache, cache headers, both slash forms", lambda: self.static(host, snapshot)),
             ("an image name with Danish letters: the file, its percent-encoded URL, old addresses", lambda: self.danish_name(host, snapshot)),
             ("the app: redirects, 404, a POST to a page", lambda: self.dynamic(host)),
+            ("the old intranet app's page after a publish", lambda: self.old_app_page(host)),
             ("forms, the visit beacon, the outbox and its ack", lambda: self.outbox(host)),
             ("preview and the calendar pass-through", lambda: self.preview_and_calendar(host, snapshot)),
             ("refused: the stubs, any script, dot-files", lambda: self.refused(host)),
@@ -701,6 +703,39 @@ manifest_url = {MANIFEST_URL}
         expect(len(tables) == 2 and tables[0].isdigit() and tables[1] == "1", f"database: {tables}")
         mode = host.exec("stat", "-c", "%a %U", f"{PUBLIC_HTML}/cgi-bin/gahk.fcgi").strip()
         expect(mode == f"755 {LOGIN}", f"gahk.fcgi installed as {mode}")
+        # The old intranet app's page comes with the release: it answers before anything is published.
+        self.old_app_page(host)
+
+    def old_app_page(self, host: Webhost) -> None:
+        """A GET or HEAD of /intern… is the release's static/intern-moved.html, served by Apache;
+        every other method still goes to intern.gahk.dk with a 308 (the prefix kept)."""
+        page = host.read(f"{PUBLIC_HTML}/static/intern-moved.html", user=LOGIN)
+        expect(b"navigator.standalone" in page, "the release installed no static/intern-moved.html")
+        host.access()
+        for path in (
+            "/intern",
+            "/intern/",
+            "/intern/den-hurtige/",
+            "/intern/den-hurtige/?x=1",
+            "/intern/x.php",
+        ):
+            answer = host.get(path)
+            expect(
+                (answer.status, answer.body, answer.header("Location")) == (200, page, ""),
+                f"GET {path}: {answer.status} {answer.header('Location')}",
+            )
+            expect(answer.header("Cache-Control") == "public, max-age=60", f"GET {path}: cache")
+            expect(answer.header("Content-Type") == "text/html; charset=utf-8", f"GET {path}: type")
+        head = host.request("HEAD", "/intern/den-hurtige/")
+        expect(head.status == 200 and not head.body, f"HEAD /intern/den-hurtige/: {head.status}")
+        for method, path in (("POST", "/intern/x"), ("POST", "/intern"), ("PUT", "/intern/den-hurtige/?a=1")):
+            moved = host.request(method, path, b"x=1", {"Content-Type": "application/x-www-form-urlencoded"})
+            expect(
+                (moved.status, moved.header("Location")) == (308, f"https://intern.gahk.dk{path}"),
+                f"{method} {path}: {moved.status} {moved.header('Location')}",
+            )
+        python = [entry.request for entry in host.access() if entry.handler != "-"]
+        expect(not python, f"the old app's page and its redirects started Python: {python}")
 
     def publish(self, host: Webhost, snapshot: dict[str, Any], pictures: dict[str, bytes]) -> None:
         missing = host.api("POST", "/api/images/missing", {"sha256": list(pictures)})
@@ -870,7 +905,9 @@ manifest_url = {MANIFEST_URL}
             # Encoded again: a space in an old picture's name never reaches the Location as it is.
             ("https", "www.gahk.dk", "/a%20b.jpg?c=d%20e", 301, "https://gahk.dk/a%20b.jpg?c=d%20e"),
             ("http", "gahk.dk", "/a%20b.jpg", 301, "https://gahk.dk/a%20b.jpg"),
-            ("https", "gahk.dk", "/intern/x?y=1", 308, "https://intern.gahk.dk/intern/x?y=1"),
+            ("http", "gahk.dk", "/intern/x?y=1", 301, "https://gahk.dk/intern/x?y=1"),
+            ("https", "gahk.dk", "/intern/x?y=1", 200, ""),  # the old intranet app's page
+            ("https", "gahk.dk", "/nyintern/x?y=1", 308, "https://intern.gahk.dk/nyintern/x?y=1"),
             ("https", "gahk.dk", "/wiki/", 308, "https://intern.gahk.dk/wiki/"),
             # The old wiki's own addresses end in .php: redirected, not refused as scripts.
             (
@@ -949,6 +986,7 @@ manifest_url = {MANIFEST_URL}
         handlers |= {entry.request.split()[1]: entry.handler for entry in entries}
         for path in (
             "/intern/x?y=1",
+            "/nyintern/x?y=1",
             "/wiki/index.php?title=Forside",
             "/wiki/index.php?title=Speciel:Log_ind",
             "/healthz",

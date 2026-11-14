@@ -33,7 +33,7 @@ intern or its storage is down.
   `/media/…`, the old admissions admin pages) redirect to the same path on intern.gahk.dk, keeping
   the query and the method, so a form posted to an old address still arrives. `/intern/…` keeps
   its prefix: intern.gahk.dk drops it itself, so the link works before and after intern's own move
-  to the root. The old intranet's static files (`/static/manifest.json`, its icons, `/static/dist/…`,
+  to the root. A GET of `/intern/…` gets a page instead (below). The old intranet's static files (`/static/manifest.json`, its icons, `/static/dist/…`,
   the pictures its templates show) redirect to the same path on intern.gahk.dk when gahk.dk has no
   file of that name.
 - Old picture addresses (`/static/legacy/image/…`, `/public/image/…`) redirect in one step to the
@@ -90,6 +90,20 @@ intern or its storage is down.
   now serves one that removes itself and its push subscription. Residents turn notifications on
   again at intern.gahk.dk.
 
+## The old Den Hurtige app
+
+- Residents installed the old intranet's Den Hurtige as an app on gahk.dk (it opens
+  `gahk.dk/intern/den-hurtige/`). A GET of `/intern` or `/intern/…` gets one small page:
+  - in a browser it sends the visitor straight on to the same address on intern.gahk.dk, as the
+    redirect would;
+  - inside the installed app it says, in Danish, that Den Hurtige has moved, and how to install the
+    new app *GAHK Intern* from `intern.gahk.dk/install` (on an iPhone in Safari, on Android in
+    Chrome), delete the old one, and turn notifications on again. Only the steps for the phone's
+    own system are shown.
+- Any other method (a form or API POST) still gets the 308 to intern.gahk.dk.
+- The page is part of the release, so it works from the first install, before anything is
+  published. It is not indexed.
+
 ## Decisions
 
 - **Static files, not a CMS on the webhost.** Apache sends pages and pictures as files; Python only
@@ -100,6 +114,14 @@ intern or its storage is down.
 - **All pictures are content.** They live in intern's image library and are copied to the webhost
   when published; the site's code holds only the logo, icons and fonts. The old pictures were moved
   into the library once, and their old addresses redirect.
+- **A page, not a redirect, for the old app.** An installed web app belongs to one origin and
+  cannot be moved to another: a redirect to intern.gahk.dk only opens it in an in-app browser
+  sheet, and the old icon would stay. So the app has to be reinstalled, and the old one has to tell
+  its users. The page tells an installed app from a browser by `navigator.standalone` (iPhone) and
+  the `display-mode` media query; browsers are forwarded with `location.replace`, so the page does
+  not stay in their history. It is a static file with inline styles and script (the stylesheet's
+  name is hashed), written by hand, not rendered, and it names intern.gahk.dk, as `.htaccess` does.
+  Only `/intern` gets it: the app's scope was `/intern/`.
 - **No trailing-slash redirects.** The old site served both forms, and links to both exist.
 - **Picture names keep their letters.** Names are UTF-8 everywhere, so there is no reason to spell
   "æ", "ø" and "å" out as "ae", "oe" and "aa" (as an earlier version did). A name is stored in one
