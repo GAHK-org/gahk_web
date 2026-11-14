@@ -123,7 +123,7 @@ def test_head_answers_like_get_without_a_body(client: Client) -> None:
 
 def test_responses_are_not_cached_unless_they_say_so(client: Client) -> None:
     publish(client)
-    assert client.get("/intern/").headers["Cache-Control"] == "no-store"
+    assert client.get("/nyintern/").headers["Cache-Control"] == "no-store"  # a redirect
     assert client.get("/findes-ikke").headers["Cache-Control"] == "public, max-age=60"
 
 

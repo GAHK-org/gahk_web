@@ -85,7 +85,7 @@ What lives where on the webhost (`~` is the FTP home):
                                  answers everything the app answers (section 1, Python)
 ~/public_html/cgi-bin/gahk.cgi   from the release: the CGI stub, for /api/update, large bodies and
                                  the CGI-only switch; gahk.fcgi shares its code
-~/public_html/static/            from the release (css with hashed names, fonts, icons)
+~/public_html/static/            from the release (css with hashed names, fonts, icons, intern-moved.html)
 ~/public_html/images/            images, copied from intern's library, and their WebP variants
                                  (`<sha16>/_<width>w.webp`), made here; both are cache
 ~/public_html/…                  the rendered pages: index.html, <path>/index.html, 404.html, …
@@ -248,14 +248,15 @@ hand, straight to the webhost (section 8 step 3).
 It needs only `openssl` and `curl`, and works in bash and zsh (Linux, macOS). Paste the function into the shell, then call it with the `[sync]` key:
 
 ```sh
-gahk_api() {  # gahk_api METHOD PATH [BODY]   (uses $GAHK_WEB_KEY, and $RESOLVE when set)
+gahk_api() {
   local api_method="$1" api_path="$2" api_body="${3:-}" api_ts api_sig
   api_ts=$(date +%s)
   api_sig=$(printf '%s\n%s\n%s\n%s' "$api_ts" "$api_method" "$api_path" \
               "$(printf '%s' "$api_body" | openssl dgst -sha256 -r | cut -d' ' -f1)" \
             | openssl dgst -sha256 -hmac "$GAHK_WEB_KEY" -r | cut -d' ' -f1)
-  set -- -sS -X "$api_method" "https://gahk.dk$api_path" -H "X-Gahk-Timestamp: $api_ts" \
-    -H "X-Gahk-Signature: $api_sig" -H 'Content-Type: application/json'
+  set -- -sS -X "$api_method" "${GAHK_WEB_BASE:-https://gahk.dk}$api_path" \
+    -H "X-Gahk-Timestamp: $api_ts" -H "X-Gahk-Signature: $api_sig" \
+    -H 'Content-Type: application/json'
   if [ -n "${RESOLVE:-}" ]; then set -- "$@" --resolve "$RESOLVE"; fi
   if [ -n "$api_body" ]; then set -- "$@" --data "$api_body"; fi
   curl "$@"
@@ -267,8 +268,10 @@ gahk_api POST /api/update '{}'      # check for a new release and install it now
 gahk_api GET /api/status            # running version, content revision, outbox, last update
 ```
 
-To talk to the webhost before DNS points at it, set `RESOLVE=gahk.dk:443:<webhost IPv4>` (the
-address konsoleH shows for the account). The clock of the machine sending the request must be within
+Paste it into bash or zsh as it is (no comments: zsh doesn't treat `#` as a comment when typed in).
+To talk to the webhost before DNS points at it, set `GAHK_WEB_BASE` to another name of the account
+(e.g. `https://hetznerdemo.gahk.dk`), or `RESOLVE=gahk.dk:443:<webhost IPv4>` once konsoleH serves
+gahk.dk there. The signature covers the path, not the host. The clock of the machine sending the request must be within
 5 minutes of the right time.
 
 ## 5. TLS certificate
@@ -302,6 +305,7 @@ webhost.
 |---|---|---|---|
 | `_acme-challenge`, `_acme-challenge.www` | TXT | from konsoleH's SSL Manager | before the switch; delete once the certificate uses file validation (section 5) |
 | `intern` | A / AAAA | the Coolify server (today's gahk.dk addresses) | before the switch |
+| `wiki` | A / AAAA | the server that runs the wiki (MediaWiki at its root) | before the switch |
 | `@` (gahk.dk) | A / AAAA | the webhost's IPv4 / IPv6 from konsoleH | **the switch** |
 | `www` | A / AAAA (or CNAME `gahk.dk.`) | the webhost | the switch |
 | MX, SPF (TXT), DKIM, DMARC | unchanged | mail stays on one.com | never touch |
@@ -325,45 +329,48 @@ konsoleH offers Varnish in front of Apache. Leave it **off**:
 
 ## 8. The cutover
 
-Until step 4, the old site keeps serving gahk.dk from Coolify.
+The order makes the switch invisible: the new intern goes live first and fills this site while
+gahk.dk still points at Coolify, so when DNS moves, both sides already show the same content.
 
 1. **Prepare the webhost**: database (section 2), `config.ini` (section 3), the bootstrap upload
    (section 4), the TLS certificate by DNS validation (section 5), and `gahk.dk` and `www` in
-   konsoleH (section 6).
-2. **Create `intern.gahk.dk`** at Punktum, pointing at the Coolify server, and add the domain in
-   Coolify. This changes nothing for visitors yet.
-3. **Install gahk_web by hand**, straight to the webhost:
+   konsoleH (section 6). Give the account a second name that already points at it (e.g.
+   `hetznerdemo.gahk.dk`) to reach it before the DNS switch. Point `intern.gahk.dk` and
+   `wiki.gahk.dk` at the Coolify server; the wiki must answer at the root of its host
+   (`/index.php`, `/wiki/<title>`).
+2. **Install gahk_web by hand**, at that address (the signature covers the path, not the host):
 
    ```sh
-   export GAHK_WEB_KEY='<secret 1>' RESOLVE='gahk.dk:443:<webhost IPv4>'
+   export GAHK_WEB_KEY='<secret 1>' GAHK_WEB_BASE='https://hetznerdemo.gahk.dk'
    gahk_api POST /api/update '{}'
    # {"updated": true, "version": "<sha>", "available_version": "<sha>", "detail": "installed <sha>"}
-   curl -sS --resolve "$RESOLVE" https://gahk.dk/api/health
+   curl -sS "$GAHK_WEB_BASE/api/health"
    # {"ok": true, "version": "<sha>", "revision": null}
    ```
 
-   An answer with `"still running"` means the install took over 45 seconds and is finishing in the
-   background; the first install also downloads the packages from PyPI, which usually takes well
-   under a minute. Ask `gahk_api GET /api/status` a minute later: until the release runs it answers
-   503 with the reason and the updater's `update.last_result` and `last_error`. gahk_web is now live
-   but empty: pages answer the 503 page *"Siden opdateres"*.
-4. **Switch DNS**: `@` and `www` to the webhost (section 6). As resolvers pick it up, visitors see
-   *"Siden opdateres"* for a few minutes. Once both names resolve to the webhost, re-issue the
-   certificate with file validation (section 5), or it will not renew.
-5. **Deploy the new intern** with `GAHK_WEB_URL`, `GAHK_WEB_KEY` and `PUBLIC_SITE_URL` set (section 3).
-   Within about 2 minutes its sync task sees that gahk.dk has no content and publishes everything.
-   On that first sync after the deploy, intern imports the old site's pictures into its image
-   library by itself: it downloads each picture the content still references from a pinned commit
-   of the public gahk_intern repository, a bounded batch per sync, and points the content at the
-   library copy. Then it uploads the images and the snapshot, whose `legacy_images` map lets gahk.dk
-   redirect the old picture addresses. Should the automatic import fail for a picture, intern has a
-   manual import command as a fallback (see intern's DEPLOY). The site is complete from that moment;
-   with many old pictures, the last of them follow within a few syncs. The *Hjemmeside* overview on
-   intern shows the publication and gahk.dk's version.
-6. **Check** everything in section 9. Old intranet links (`gahk.dk/intern/…`) now redirect to
-   `intern.gahk.dk/intern/…` (the prefix kept, so the link works whichever code intern.gahk.dk
-   runs), and intern sends that on to `intern.gahk.dk/…`. The old calendar feed URLs keep working
-   through gahk.dk.
+   (`gahk_api` as in section 4, with `${GAHK_WEB_BASE:-https://gahk.dk}` as its address.) An answer
+   with `"still running"` means the install took over 45 seconds and is finishing in the
+   background; the first install also downloads the packages from PyPI. Ask `gahk_api GET
+   /api/status` a minute later. Until intern publishes, pages answer the 503 page *"Siden
+   opdateres"*.
+3. **Deploy the new intern** (intern's DEPLOY, "Transition") with `GAHK_WEB_URL` set to that
+   address and `GAHK_WEB_KEY`. gahk.dk still points at Coolify, where a temporary part of intern
+   keeps serving the old site. Within about 2 minutes intern publishes everything here. The old
+   site's pictures move into intern's image library (all of them, from a pinned commit of the
+   public gahk_intern repository) and come here with the snapshot, whose `legacy_images` map
+   redirects every old picture address. Check the site at that address against section 9 and
+   "Addresses kept from the old site".
+4. **Switch DNS**: `@` and `www` to the webhost (section 6). Visitors get the same content from
+   here. Once both names resolve to the webhost, re-issue the certificate with file validation
+   (section 5), or it will not renew.
+5. **intern publishes to `https://gahk.dk`** from then on (`GAHK_WEB_URL`), and its temporary part
+   is removed.
+6. **Check** everything in section 9. Old intranet links (`gahk.dk/intern/…`, `gahk.dk/nyintern/…`)
+   lead straight to `intern.gahk.dk/…`, the prefix dropped (`intern.gahk.dk/intern/…` is a 404). A
+   GET of `/intern/…` is a page that forwards browsers at once and, inside the old installed Den
+   Hurtige app, explains how to install GAHK Intern instead (it comes with the release, so it
+   works before the first publish); other methods, and every `/nyintern/…`, get a 308. Old wiki
+   addresses go to wiki.gahk.dk. The old calendar feed URLs keep working through gahk.dk.
 
 ## 9. Verification checklist
 
@@ -375,9 +382,11 @@ curl -sI https://gahk.dk/faciliteter/      # 200 (both slash forms are served, n
 curl -sS https://gahk.dk/api/health        # {"ok": true, "version": "<sha>", "revision": "<64 hex>"}
 curl -sI https://gahk.dk/api/health        # X-Gahk-Runner: fastcgi (cgi with the CGI-only switch)
 curl -sI https://gahk.dk/cgi-bin/gahk.fcgi/api/health   # 403: the stubs run only through .htaccess
-curl -sI https://gahk.dk/intern/           # 308 → https://intern.gahk.dk/intern/
-curl -sI https://intern.gahk.dk/intern/    # 308 → https://intern.gahk.dk/ (intern drops the old prefix)
-curl -sI https://gahk.dk/wiki/             # 308 → https://intern.gahk.dk/wiki/
+curl -sI https://gahk.dk/intern/           # 200, the old app's page (static/intern-moved.html), max-age=60
+curl -so /dev/null -w '%{http_code} %{redirect_url}\n' -X POST 'https://gahk.dk/intern/x?y=1'   # 308 https://intern.gahk.dk/x?y=1
+curl -sI https://gahk.dk/nyintern/den-hurtige/   # 308 → https://intern.gahk.dk/den-hurtige/
+curl -sI https://gahk.dk/nyintern//evil.example  # 308 → https://intern.gahk.dk/evil.example (never "//")
+curl -sI https://gahk.dk/wiki/             # 308 → https://wiki.gahk.dk/
 curl -sI https://gahk.dk/findes-ikke       # 404 with the site's 404 page
 curl -sI https://gahk.dk/.htaccess         # 403
 curl -sI https://gahk.dk/fcgitest/test.fcgi   # 403 (and delete the folder, section 4 step 3)
@@ -403,8 +412,11 @@ In a browser:
 
 Every page address that answered on the old gahk.dk answers at the same address after the cutover.
 Media and other files are never served at an address with `/legacy/` in it: an old media address
-redirects to where the file lives now. The intranet moved to intern.gahk.dk by design, and its old
-addresses redirect there with their path, query and method. Check these once DNS has switched:
+redirects to where the file lives now. The intranet moved to intern.gahk.dk and the wiki to
+wiki.gahk.dk by design, and their old addresses redirect there with their query and method:
+`/intern/…` and `/nyintern/…` without the prefix (intern runs at the root), the wiki's as below,
+the rest with the same path (a GET of `/intern/…` by way of a page that forwards it, for the old
+installed app's sake). Check these once DNS has switched:
 
 | Address | Answer |
 |---|---|
@@ -417,8 +429,12 @@ addresses redirect there with their path, query and method. Check these once DNS
 | `/favicon.ico`, `/static/icons/icon-192x192.png`, `/static/icons/badge-72x72.png` | 200 |
 | `/kalender/<token>.ics` | 200 `text/calendar`, passed through from intern |
 | `/sw.js` | 200; now a worker that removes itself (the old one was the intranet's push worker) |
-| `/intern/…`, `/nyintern/…` | 308 to `https://intern.gahk.dk/intern/…` (`/nyintern/…`), which intern sends on to `/…` |
-| `/admin/…`, `/django-admin/…`, `/wiki/…` (also `/wiki/index.php?title=…`, `/wiki/load.php?…`), `/photo-album/…`, `/media/…`, `/health`, `/healthz`, `/optagelse/listansoegninger`, `/optagelse/eksport`, `/optagelse/showAnsoegning/…` | 308 to the same path on intern.gahk.dk |
+| `/intern`, `/intern/…` (GET, HEAD) | 200, the page for the old Den Hurtige app (`static/intern-moved.html`): a browser goes on at once to `https://intern.gahk.dk/…`, the prefix dropped (`/intern` to `/`; the rest of the path, the query and the fragment kept); the installed app shows how to install GAHK Intern. Open `https://gahk.dk/intern/den-hurtige/?x=1#top` in a browser: it must land on `https://intern.gahk.dk/den-hurtige/?x=1#top` |
+| `/intern`, `/intern/…` (other methods), `/nyintern`, `/nyintern/…` (every method) | 308 to `https://intern.gahk.dk/…`, the prefix dropped: `/nyintern` and `/intern/` to `/`, `/intern/den-hurtige/send?x=1` to `/den-hurtige/send?x=1`. The rest of the path keeps its bytes (`%C3%A6` comes back as `%c3%a6`); the slashes right after the prefix are dropped, so the path never starts with `//` |
+| `/admin/…`, `/django-admin/…`, `/photo-album/…`, `/media/…`, `/health`, `/healthz`, `/optagelse/listansoegninger`, `/optagelse/eksport`, `/optagelse/showAnsoegning/…` | 308 to the same path on intern.gahk.dk |
+| `/wiki`, `/wiki/` | 308 to `https://wiki.gahk.dk/` |
+| `/wiki/` followed by one of MediaWiki's root entries (`index.php`, `load.php`, `api.php`, `rest.php`, `img_auth.php`, `thumb.php`, `thumb_handler.php`, `opensearch_desc.php`, `images`, `skins`, `resources`, `extensions`) and anything after it | 308 to the same path without `/wiki` on wiki.gahk.dk: `/wiki/index.php?title=Forside` → `https://wiki.gahk.dk/index.php?title=Forside` |
+| any other `/wiki/<title>` | 308 to `https://wiki.gahk.dk/wiki/<title>` |
 | `/static/manifest.json`, `/static/icons/icon-512x512.png` (and the other icons this site has no file for), `/static/dist/…`, `/static/legacy/image/elements/logo.png` (and the rest of `elements/` and `intern/`) | 301 to the same path on intern.gahk.dk |
 
 ```sh
@@ -429,13 +445,14 @@ for p in faciliteter faciliteter/kokken kollegielivet/historie legater kontakt v
   done
 done                                       # 200 on every line
 curl -sI https://gahk.dk/static/legacy/image/elements/lamassu.b8dc291a4e43.svg   # 301 → /static/img/lamassu.svg
-curl -sI 'https://gahk.dk/wiki/index.php?title=Forside'   # 308 → https://intern.gahk.dk/wiki/index.php?title=Forside
+curl -sI 'https://gahk.dk/wiki/index.php?title=Forside'   # 308 → https://wiki.gahk.dk/index.php?title=Forside
+curl -sI https://gahk.dk/wiki/K%C3%A6lderen   # 308 → https://wiki.gahk.dk/wiki/K%c3%a6lderen (the same bytes)
 curl -sI https://gahk.dk/healthz           # 308 → https://intern.gahk.dk/healthz
 curl -sI https://gahk.dk/static/manifest.json   # 301 → https://intern.gahk.dk/static/manifest.json
 ```
 
-Apart from the intranet and the old picture addresses (which lead to the same picture), only two
-addresses now redirect where the old site answered 200, both on purpose:
+Apart from the intranet, the wiki and the old picture addresses (which lead to the same picture),
+only two addresses now redirect where the old site answered 200, both on purpose:
 
 - `https://www.gahk.dk/…` answers 301 to `https://gahk.dk/…`. One canonical host keeps the site
   from being indexed twice, and the forms' Origin check accepts `gahk.dk` only.

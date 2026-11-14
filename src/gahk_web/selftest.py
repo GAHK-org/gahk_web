@@ -205,11 +205,11 @@ def check_app() -> None:
 
     with tempfile.TemporaryDirectory() as scratch:
         client = create_app(sample_config(Path(scratch))).test_client()
-        stub = {"SCRIPT_NAME": "/cgi-bin/gahk.fcgi", "REQUEST_URI": "/intern/den-hurtige/?side=2"}
+        stub = {"SCRIPT_NAME": "/cgi-bin/gahk.fcgi", "REQUEST_URI": "/nyintern/den-hurtige/?side=2"}
         moved = client.get("/den-hurtige/", environ_overrides=stub)
-        location = "https://intern.gahk.dk/intern/den-hurtige/?side=2"
+        location = "https://intern.gahk.dk/den-hurtige/?side=2"
         if moved.status_code != 308 or moved.headers.get("Location") != location:
-            raise AssertionError(f"/intern/den-hurtige/ answered {moved.status} {moved.headers}")
+            raise AssertionError(f"/nyintern/den-hurtige/ answered {moved.status} {moved.headers}")
         refused = client.get("/api/status")
         if refused.status_code != 401 or refused.get_json() != {"error": "missing signature"}:
             raise AssertionError(f"an unsigned /api/status answered {refused.status} {refused.data!r}")
