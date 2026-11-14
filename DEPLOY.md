@@ -248,14 +248,15 @@ hand, straight to the webhost (section 8 step 3).
 It needs only `openssl` and `curl`, and works in bash and zsh (Linux, macOS). Paste the function into the shell, then call it with the `[sync]` key:
 
 ```sh
-gahk_api() {  # gahk_api METHOD PATH [BODY]   (uses $GAHK_WEB_KEY, and $RESOLVE when set)
+gahk_api() {
   local api_method="$1" api_path="$2" api_body="${3:-}" api_ts api_sig
   api_ts=$(date +%s)
   api_sig=$(printf '%s\n%s\n%s\n%s' "$api_ts" "$api_method" "$api_path" \
               "$(printf '%s' "$api_body" | openssl dgst -sha256 -r | cut -d' ' -f1)" \
             | openssl dgst -sha256 -hmac "$GAHK_WEB_KEY" -r | cut -d' ' -f1)
-  set -- -sS -X "$api_method" "https://gahk.dk$api_path" -H "X-Gahk-Timestamp: $api_ts" \
-    -H "X-Gahk-Signature: $api_sig" -H 'Content-Type: application/json'
+  set -- -sS -X "$api_method" "${GAHK_WEB_BASE:-https://gahk.dk}$api_path" \
+    -H "X-Gahk-Timestamp: $api_ts" -H "X-Gahk-Signature: $api_sig" \
+    -H 'Content-Type: application/json'
   if [ -n "${RESOLVE:-}" ]; then set -- "$@" --resolve "$RESOLVE"; fi
   if [ -n "$api_body" ]; then set -- "$@" --data "$api_body"; fi
   curl "$@"
@@ -267,8 +268,10 @@ gahk_api POST /api/update '{}'      # check for a new release and install it now
 gahk_api GET /api/status            # running version, content revision, outbox, last update
 ```
 
-To talk to the webhost before DNS points at it, set `RESOLVE=gahk.dk:443:<webhost IPv4>` (the
-address konsoleH shows for the account). The clock of the machine sending the request must be within
+Paste it into bash or zsh as it is (no comments: zsh doesn't treat `#` as a comment when typed in).
+To talk to the webhost before DNS points at it, set `GAHK_WEB_BASE` to another name of the account
+(e.g. `https://hetznerdemo.gahk.dk`), or `RESOLVE=gahk.dk:443:<webhost IPv4>` once konsoleH serves
+gahk.dk there. The signature covers the path, not the host. The clock of the machine sending the request must be within
 5 minutes of the right time.
 
 ## 5. TLS certificate
@@ -326,49 +329,48 @@ konsoleH offers Varnish in front of Apache. Leave it **off**:
 
 ## 8. The cutover
 
-Until step 4, the old site keeps serving gahk.dk from Coolify.
+The order makes the switch invisible: the new intern goes live first and fills this site while
+gahk.dk still points at Coolify, so when DNS moves, both sides already show the same content.
 
 1. **Prepare the webhost**: database (section 2), `config.ini` (section 3), the bootstrap upload
    (section 4), the TLS certificate by DNS validation (section 5), and `gahk.dk` and `www` in
-   konsoleH (section 6).
-2. **Create `intern.gahk.dk`** at Punktum, pointing at the Coolify server, and add the domain in
-   Coolify; likewise `wiki.gahk.dk`, where the wiki must answer at the root (`/index.php`,
-   `/wiki/<title>`). This changes nothing for visitors yet.
-3. **Install gahk_web by hand**, straight to the webhost:
+   konsoleH (section 6). Give the account a second name that already points at it (e.g.
+   `hetznerdemo.gahk.dk`) to reach it before the DNS switch. Point `intern.gahk.dk` and
+   `wiki.gahk.dk` at the Coolify server; the wiki must answer at the root of its host
+   (`/index.php`, `/wiki/<title>`).
+2. **Install gahk_web by hand**, at that address (the signature covers the path, not the host):
 
    ```sh
-   export GAHK_WEB_KEY='<secret 1>' RESOLVE='gahk.dk:443:<webhost IPv4>'
+   export GAHK_WEB_KEY='<secret 1>' GAHK_WEB_BASE='https://hetznerdemo.gahk.dk'
    gahk_api POST /api/update '{}'
    # {"updated": true, "version": "<sha>", "available_version": "<sha>", "detail": "installed <sha>"}
-   curl -sS --resolve "$RESOLVE" https://gahk.dk/api/health
+   curl -sS "$GAHK_WEB_BASE/api/health"
    # {"ok": true, "version": "<sha>", "revision": null}
    ```
 
-   An answer with `"still running"` means the install took over 45 seconds and is finishing in the
-   background; the first install also downloads the packages from PyPI, which usually takes well
-   under a minute. Ask `gahk_api GET /api/status` a minute later: until the release runs it answers
-   503 with the reason and the updater's `update.last_result` and `last_error`. gahk_web is now live
-   but empty: pages answer the 503 page *"Siden opdateres"*.
-4. **Switch DNS**: `@` and `www` to the webhost (section 6). As resolvers pick it up, visitors see
-   *"Siden opdateres"* for a few minutes. Once both names resolve to the webhost, re-issue the
-   certificate with file validation (section 5), or it will not renew.
-5. **Deploy the new intern** with `GAHK_WEB_URL`, `GAHK_WEB_KEY` and `PUBLIC_SITE_URL` set (section 3).
-   Within about 2 minutes its sync task sees that gahk.dk has no content and publishes everything.
-   On that first sync after the deploy, intern imports the old site's pictures into its image
-   library by itself: it downloads each picture the content still references from a pinned commit
-   of the public gahk_intern repository, a bounded batch per sync, and points the content at the
-   library copy. Then it uploads the images and the snapshot, whose `legacy_images` map lets gahk.dk
-   redirect the old picture addresses. Should the automatic import fail for a picture, intern has a
-   manual import command as a fallback (see intern's DEPLOY). The site is complete from that moment;
-   with many old pictures, the last of them follow within a few syncs. The *Hjemmeside* overview on
-   intern shows the publication and gahk.dk's version.
+   (`gahk_api` as in section 4, with `${GAHK_WEB_BASE:-https://gahk.dk}` as its address.) An answer
+   with `"still running"` means the install took over 45 seconds and is finishing in the
+   background; the first install also downloads the packages from PyPI. Ask `gahk_api GET
+   /api/status` a minute later. Until intern publishes, pages answer the 503 page *"Siden
+   opdateres"*.
+3. **Deploy the new intern** (intern's DEPLOY, "Transition") with `GAHK_WEB_URL` set to that
+   address and `GAHK_WEB_KEY`. gahk.dk still points at Coolify, where a temporary part of intern
+   keeps serving the old site. Within about 2 minutes intern publishes everything here. The old
+   site's pictures move into intern's image library (all of them, from a pinned commit of the
+   public gahk_intern repository) and come here with the snapshot, whose `legacy_images` map
+   redirects every old picture address. Check the site at that address against section 9 and
+   "Addresses kept from the old site".
+4. **Switch DNS**: `@` and `www` to the webhost (section 6). Visitors get the same content from
+   here. Once both names resolve to the webhost, re-issue the certificate with file validation
+   (section 5), or it will not renew.
+5. **intern publishes to `https://gahk.dk`** from then on (`GAHK_WEB_URL`), and its temporary part
+   is removed.
 6. **Check** everything in section 9. Old intranet links (`gahk.dk/intern/…`, `gahk.dk/nyintern/…`)
-   now lead straight to `intern.gahk.dk/…`, the prefix dropped: the new intern runs at
-   intern.gahk.dk's root before gahk.dk moves, and `intern.gahk.dk/intern/…` is a 404 there. A GET of
-   `/intern/…` is a page that forwards browsers at once and, inside the old installed Den Hurtige
-   app, explains how to install GAHK Intern instead (it comes with the release, so it works before
-   the first publish); other methods, and every `/nyintern/…`, get a 308. The old calendar feed
-   URLs keep working through gahk.dk.
+   lead straight to `intern.gahk.dk/…`, the prefix dropped (`intern.gahk.dk/intern/…` is a 404). A
+   GET of `/intern/…` is a page that forwards browsers at once and, inside the old installed Den
+   Hurtige app, explains how to install GAHK Intern instead (it comes with the release, so it
+   works before the first publish); other methods, and every `/nyintern/…`, get a 308. Old wiki
+   addresses go to wiki.gahk.dk. The old calendar feed URLs keep working through gahk.dk.
 
 ## 9. Verification checklist
 
