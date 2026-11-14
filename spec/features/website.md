@@ -29,13 +29,13 @@ intern or its storage is down.
 - A page that moved or was renamed on intern answers its old address with a permanent redirect.
 - `/velkommen`, where the old site also showed the front page, still shows the front page (its
   canonical address stays `/`).
-- Old intranet addresses (`/intern/…`, `/nyintern/…`, `/admin`, `/photo-album/…`,
-  `/media/…`, the old admissions admin pages) redirect to the same path on intern.gahk.dk, keeping
-  the query and the method, so a form posted to an old address still arrives. `/intern/…` keeps
-  its prefix: intern.gahk.dk drops it itself, so the link works before and after intern's own move
-  to the root. A GET of `/intern/…` gets a page instead (below). The old intranet's static files (`/static/manifest.json`, its icons, `/static/dist/…`,
-  the pictures its templates show) redirect to the same path on intern.gahk.dk when gahk.dk has no
-  file of that name.
+- Old intranet addresses redirect to intern.gahk.dk, keeping the query and the method, so a form
+  posted to an old address still arrives. intern runs at intern.gahk.dk's root, so `/intern/…` and
+  `/nyintern/…` lose their prefix (`/intern/den-hurtige/` → `/den-hurtige/`, `/intern` → `/`);
+  `/admin`, `/photo-album/…`, `/media/…` and the old admissions admin pages keep their path. A GET
+  of `/intern/…` gets a page instead (below). The old intranet's static files
+  (`/static/manifest.json`, its icons, `/static/dist/…`, the pictures its templates show) redirect
+  to the same path on intern.gahk.dk when gahk.dk has no file of that name.
 - Old wiki addresses go to wiki.gahk.dk, where the wiki runs at the root, keeping the query and the
   method: `/wiki/` to its front page, MediaWiki's own scripts and folders without the `/wiki`
   prefix (`/wiki/index.php?title=…` → `/index.php?title=…`, `/wiki/load.php`, `/wiki/images/…`),
@@ -98,8 +98,8 @@ intern or its storage is down.
 
 - Residents installed the old intranet's Den Hurtige as an app on gahk.dk (it opens
   `gahk.dk/intern/den-hurtige/`). A GET of `/intern` or `/intern/…` gets one small page:
-  - in a browser it sends the visitor straight on to the same address on intern.gahk.dk, as the
-    redirect would;
+  - in a browser it sends the visitor straight on to where the redirect would: intern.gahk.dk
+    without the `/intern` prefix, the query and the fragment kept;
   - inside the installed app it says, in Danish, that Den Hurtige has moved, and how to install the
     new app *GAHK Intern* from `intern.gahk.dk/install` (on an iPhone in Safari, on Android in
     Chrome), delete the old one, and turn notifications on again. Only the steps for the phone's
@@ -126,6 +126,11 @@ intern or its storage is down.
   not stay in their history. It is a static file with inline styles and script (the stylesheet's
   name is hashed), written by hand, not rendered, and it names intern.gahk.dk, as `.htaccess` does.
   Only `/intern` gets it: the app's scope was `/intern/`.
+- **The intranet's prefix goes on gahk.dk.** The new intern runs at intern.gahk.dk's root before
+  gahk.dk moves, and answers `/intern/…` with a 404, so gahk.dk drops the prefix itself, in one
+  step. Only the prefix: the rest of the path keeps its bytes, and the slashes right after the
+  prefix go too (in the redirect and in the page's script), so `/intern//evil.example` can never
+  become an address on another host.
 - **No trailing-slash redirects.** The old site served both forms, and links to both exist.
 - **Picture names keep their letters.** Names are UTF-8 everywhere, so there is no reason to spell
   "æ", "ø" and "å" out as "ae", "oe" and "aa" (as an earlier version did). A name is stored in one

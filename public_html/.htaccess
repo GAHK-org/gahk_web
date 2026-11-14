@@ -63,17 +63,22 @@ ErrorDocument 404 /404.html
   # --- The intranet moved to intern.gahk.dk, the wiki to wiki.gahk.dk. 308 keeps the method and body
   # (POSTs survive). They come before the script refusal below, as the old wiki's addresses end in
   # .php. ---
-  # /intern/x and /nyintern/x keep their prefix: intern.gahk.dk/intern/x works on whatever runs
-  # there, the old code (which serves /intern/…) and the new (which sends /intern/x on to /x itself,
-  # keeping the query and the method).
+  # intern runs at intern.gahk.dk's root, without the /intern prefix: /intern/x and /nyintern/x go to
+  # /x there (/intern and /nyintern to /), the query kept. The slashes right after the prefix are
+  # dropped (and backslashes, which browsers read as slashes), so /intern//evil.example goes to
+  # https://intern.gahk.dk/evil.example: the new path never starts with "//". No NE: $1 is decoded,
+  # and mod_rewrite encodes it again (the same bytes; %25 stays %25). The other paths are the same
+  # on intern.gahk.dk.
   # The old intranet's installed app (Den Hurtige, scope /intern/) cannot follow a redirect to
   # another origin. So a GET or HEAD of /intern and /intern/… gets one page of the release instead
-  # (a rewrite: nothing runs, /intern/x.php neither). In a browser it sends the visitor on to
-  # intern.gahk.dk/intern/… at once; inside the old app it asks for intern's new app to be installed.
-  # Every other method takes the 308 below. routing.OLD_APP_PAGE.
+  # (a rewrite: nothing runs, /intern/x.php neither). In a browser it sends the visitor on at once to
+  # where the 308 would; inside the old app it asks for intern's new app to be installed. Every other
+  # method takes the 308 below, and so does every /nyintern… (it was no app's scope).
+  # routing.OLD_APP_PAGE.
   RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
   RewriteRule ^intern(?:/.*)?$ static/intern-moved.html [L]
-  RewriteRule ^((?:intern|nyintern|admin|django-admin)(?:/.*)?)$ https://intern.gahk.dk/$1 [R=308,L]
+  RewriteRule ^(?:intern|nyintern)(?:/[/\\]*(.*))?$ https://intern.gahk.dk/$1 [R=308,L]
+  RewriteRule ^((?:admin|django-admin)(?:/.*)?)$ https://intern.gahk.dk/$1 [R=308,L]
   RewriteRule ^((?:photo-album|media)/.*)$ https://intern.gahk.dk/$1 [R=308,L]
   # intern's health checks: /health (readiness) and /healthz (liveness), which a monitor may poll.
   RewriteRule ^health(z?)/?$ https://intern.gahk.dk/health$1 [R=308,L]

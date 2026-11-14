@@ -4,8 +4,8 @@
   other method gets a 308 to intern.gahk.dk). The intranet moved to intern.gahk.dk, and an installed
   web app cannot follow it to another origin: the old app ("Den Hurtige", scope /intern/) only ever
   opens gahk.dk/intern/…. So inside an installed app this page asks for the new app to be installed
-  and the old one deleted; in a browser it sends the visitor on to the same address on
-  intern.gahk.dk at once (the /intern prefix kept, as the 308 does; intern drops it itself).
+  and the old one deleted; in a browser it sends the visitor on at once to where the 308 would:
+  intern.gahk.dk without the /intern prefix (/intern/x?y#z to /x?y#z, /intern to /).
   A file of the release, not of a publish: it must work before intern has published anything.
   No external scripts; the site's stylesheet has a hashed name, so the styles are inline.
 -->
@@ -18,7 +18,11 @@
   <title>Den Hurtige er flyttet - G.A. Hagemanns Kollegium</title>
   <script>
     (function () {
-      var target = "https://intern.gahk.dk" + location.pathname + location.search + location.hash;
+      // The path without the /intern prefix and the slashes after it, encoded or not (as the 308
+      // in .htaccess), so it never starts with "//" and the host stays intern.gahk.dk. pathname
+      // is still percent-encoded: a Danish letter keeps its bytes.
+      var rest = location.pathname.replace(/^\/intern(?=\/|$)/, "").replace(/^(?:[\/\\]|%2F|%5C)+/i, "");
+      var target = "https://intern.gahk.dk/" + rest + location.search + location.hash;
       var ios = navigator.standalone === true; // an app on an iPhone's home screen
       var installed = ios;
       if (!installed && window.matchMedia) {
