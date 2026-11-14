@@ -53,8 +53,8 @@ def static_response(cfg: Config, method: str, path: str, query: str) -> Response
     """What Apache would answer before the app, or None to let the app answer."""
     if routing.is_hidden(path) or routing.is_stub(path):
         return text(403, "Forbidden")
-    # The old intranet app's page, then the intranet redirects, both before the script refusal, as
-    # in .htaccess: the old wiki's addresses end in .php (/wiki/index.php?title=…).
+    # The old intranet app's page, then the intranet and wiki redirects, all before the script
+    # refusal, as in .htaccess: the old wiki's addresses end in .php (/wiki/index.php?title=…).
     page = routing.old_app_page(method, path)
     if page is not None:
         file = routing.static_file(cfg.public_html, page) or _package_static(page)
@@ -63,6 +63,9 @@ def static_response(cfg: Config, method: str, path: str, query: str) -> Response
     target = routing.intern_redirect(path)
     if target is not None:
         return redirect(308, cfg.intern_url + quote_path(target), query)
+    target = routing.wiki_redirect(path)
+    if target is not None:
+        return redirect(308, target, query)
     if routing.is_script(path):
         return text(403, "Forbidden")
     target = routing.old_asset_redirect(path)

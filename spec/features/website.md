@@ -29,13 +29,17 @@ intern or its storage is down.
 - A page that moved or was renamed on intern answers its old address with a permanent redirect.
 - `/velkommen`, where the old site also showed the front page, still shows the front page (its
   canonical address stays `/`).
-- Old intranet addresses (`/intern/…`, `/nyintern/…`, `/admin`, `/wiki`, `/photo-album/…`,
+- Old intranet addresses (`/intern/…`, `/nyintern/…`, `/admin`, `/photo-album/…`,
   `/media/…`, the old admissions admin pages) redirect to the same path on intern.gahk.dk, keeping
   the query and the method, so a form posted to an old address still arrives. `/intern/…` keeps
   its prefix: intern.gahk.dk drops it itself, so the link works before and after intern's own move
   to the root. A GET of `/intern/…` gets a page instead (below). The old intranet's static files (`/static/manifest.json`, its icons, `/static/dist/…`,
   the pictures its templates show) redirect to the same path on intern.gahk.dk when gahk.dk has no
   file of that name.
+- Old wiki addresses go to wiki.gahk.dk, where the wiki runs at the root, keeping the query and the
+  method: `/wiki/` to its front page, MediaWiki's own scripts and folders without the `/wiki`
+  prefix (`/wiki/index.php?title=…` → `/index.php?title=…`, `/wiki/load.php`, `/wiki/images/…`),
+  and any other `/wiki/<title>` to the same `/wiki/<title>` there. Danish titles arrive unchanged.
 - Old picture addresses (`/static/legacy/image/…`, `/public/image/…`) redirect in one step to the
   picture's new address, when intern has moved it into the image library. Nothing is ever served at
   an address with `/legacy/` in it; the old logo's address redirects to the site's own copy. So do the fingerprinted names the old

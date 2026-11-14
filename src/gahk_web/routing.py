@@ -8,6 +8,7 @@ the tests check that both name the same paths.
 
 import re
 from pathlib import Path
+from urllib.parse import quote
 
 # Paths of the old intranet and its tools, now on intern.gahk.dk. 308 keeps the method and body, so
 # a form or API POST to an old address still arrives (a GET or HEAD of /intern… gets OLD_APP_PAGE
@@ -15,12 +16,32 @@ from pathlib import Path
 # intern.gahk.dk runs: the old serves /intern/…, the new sends /intern/x on to /x itself (308, the
 # query kept).
 _INTERN_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"^/((?:intern|nyintern|admin|django-admin|wiki)(?:/.*)?)$"), r"/\1"),
+    (re.compile(r"^/((?:intern|nyintern|admin|django-admin)(?:/.*)?)$"), r"/\1"),
     (re.compile(r"^/((?:photo-album|media)/.*)$"), r"/\1"),
     (re.compile(r"^/health(z?)/?$"), r"/health\1"),
     (re.compile(r"^/(optagelse/(?:listansoegninger|eksport))/?$"), r"/\1"),
     (re.compile(r"^/(optagelse/(?:showAnsoegning|setasreceived|kasser)/.+)$"), r"/\1"),
 )
+
+# The old wiki (MediaWiki at gahk.dk/wiki/) moved to its own host, where it runs at the root: its
+# scripts and files at /index.php, /load.php, /images/… ($wgScriptPath ""), its pages at
+# /wiki/<title> ($wgArticlePath "/wiki/$1"). /wiki/ goes to the front page, the root's entries lose
+# the /wiki prefix, and anything else is a page's address. 308 as above: its login form POSTs.
+WIKI_ORIGIN = "https://wiki.gahk.dk"
+_WIKI_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^/wiki/?$"), "/"),
+    (
+        re.compile(
+            r"^/wiki/((?:(?:index|load|api|rest|img_auth|thumb|thumb_handler|opensearch_desc)\.php"
+            r"|images|skins|resources|extensions)(?:/.*)?)$"
+        ),
+        r"/\1",
+    ),
+    (re.compile(r"^/wiki/(.+)$"), r"/wiki/\1"),
+)
+# What a URL path keeps as it is, as Apache's redirects do; anything else is percent-encoded (a
+# Danish letter, a space, and "%", "#" and "?", which would end the path).
+_PATH_SAFE = "/:@!$&'()*+,;=~"
 
 # The old intranet's installed app ("Den Hurtige": scope /intern/, start_url /intern/den-hurtige/)
 # cannot follow a redirect to another origin, so a GET or HEAD of /intern and /intern/… gets this
@@ -49,6 +70,15 @@ def intern_redirect(path: str) -> str | None:
         match = pattern.match(path)
         if match:
             return match.expand(replacement)
+    return None
+
+
+def wiki_redirect(path: str) -> str | None:
+    """The URL on wiki.gahk.dk an old wiki address now lives at, or None."""
+    for pattern, replacement in _WIKI_RULES:
+        match = pattern.match(path)
+        if match:
+            return WIKI_ORIGIN + quote(match.expand(replacement), safe=_PATH_SAFE)
     return None
 
 

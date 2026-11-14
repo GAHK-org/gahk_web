@@ -302,6 +302,7 @@ webhost.
 |---|---|---|---|
 | `_acme-challenge`, `_acme-challenge.www` | TXT | from konsoleH's SSL Manager | before the switch; delete once the certificate uses file validation (section 5) |
 | `intern` | A / AAAA | the Coolify server (today's gahk.dk addresses) | before the switch |
+| `wiki` | A / AAAA | the server that runs the wiki (MediaWiki at its root) | before the switch |
 | `@` (gahk.dk) | A / AAAA | the webhost's IPv4 / IPv6 from konsoleH | **the switch** |
 | `www` | A / AAAA (or CNAME `gahk.dk.`) | the webhost | the switch |
 | MX, SPF (TXT), DKIM, DMARC | unchanged | mail stays on one.com | never touch |
@@ -331,7 +332,8 @@ Until step 4, the old site keeps serving gahk.dk from Coolify.
    (section 4), the TLS certificate by DNS validation (section 5), and `gahk.dk` and `www` in
    konsoleH (section 6).
 2. **Create `intern.gahk.dk`** at Punktum, pointing at the Coolify server, and add the domain in
-   Coolify. This changes nothing for visitors yet.
+   Coolify; likewise `wiki.gahk.dk`, where the wiki must answer at the root (`/index.php`,
+   `/wiki/<title>`). This changes nothing for visitors yet.
 3. **Install gahk_web by hand**, straight to the webhost:
 
    ```sh
@@ -381,7 +383,7 @@ curl -sI https://gahk.dk/cgi-bin/gahk.fcgi/api/health   # 403: the stubs run onl
 curl -sI https://gahk.dk/intern/           # 200, the old app's page (static/intern-moved.html), max-age=60
 curl -so /dev/null -w '%{http_code} %{redirect_url}\n' -X POST https://gahk.dk/intern/x   # 308 https://intern.gahk.dk/intern/x
 curl -sI https://intern.gahk.dk/intern/    # 308 → https://intern.gahk.dk/ (intern drops the old prefix)
-curl -sI https://gahk.dk/wiki/             # 308 → https://intern.gahk.dk/wiki/
+curl -sI https://gahk.dk/wiki/             # 308 → https://wiki.gahk.dk/
 curl -sI https://gahk.dk/findes-ikke       # 404 with the site's 404 page
 curl -sI https://gahk.dk/.htaccess         # 403
 curl -sI https://gahk.dk/fcgitest/test.fcgi   # 403 (and delete the folder, section 4 step 3)
@@ -407,9 +409,10 @@ In a browser:
 
 Every page address that answered on the old gahk.dk answers at the same address after the cutover.
 Media and other files are never served at an address with `/legacy/` in it: an old media address
-redirects to where the file lives now. The intranet moved to intern.gahk.dk by design, and its old
-addresses redirect there with their path, query and method (a GET of `/intern/…` by way of a page
-that forwards it, for the old installed app's sake). Check these once DNS has switched:
+redirects to where the file lives now. The intranet moved to intern.gahk.dk and the wiki to
+wiki.gahk.dk by design, and their old addresses redirect there with their path, query and method
+(a GET of `/intern/…` by way of a page that forwards it, for the old installed app's sake). Check
+these once DNS has switched:
 
 | Address | Answer |
 |---|---|
@@ -424,7 +427,10 @@ that forwards it, for the old installed app's sake). Check these once DNS has sw
 | `/sw.js` | 200; now a worker that removes itself (the old one was the intranet's push worker) |
 | `/intern`, `/intern/…` (GET, HEAD) | 200, the page for the old Den Hurtige app (`static/intern-moved.html`): a browser goes on at once to `https://intern.gahk.dk/intern/…` (path, query and fragment kept); the installed app shows how to install GAHK Intern. Open `https://gahk.dk/intern/den-hurtige/` in a browser: it must land on intern.gahk.dk |
 | `/intern/…` (other methods), `/nyintern/…` | 308 to `https://intern.gahk.dk/intern/…` (`/nyintern/…`), which intern sends on to `/…` |
-| `/admin/…`, `/django-admin/…`, `/wiki/…` (also `/wiki/index.php?title=…`, `/wiki/load.php?…`), `/photo-album/…`, `/media/…`, `/health`, `/healthz`, `/optagelse/listansoegninger`, `/optagelse/eksport`, `/optagelse/showAnsoegning/…` | 308 to the same path on intern.gahk.dk |
+| `/admin/…`, `/django-admin/…`, `/photo-album/…`, `/media/…`, `/health`, `/healthz`, `/optagelse/listansoegninger`, `/optagelse/eksport`, `/optagelse/showAnsoegning/…` | 308 to the same path on intern.gahk.dk |
+| `/wiki`, `/wiki/` | 308 to `https://wiki.gahk.dk/` |
+| `/wiki/` followed by one of MediaWiki's root entries (`index.php`, `load.php`, `api.php`, `rest.php`, `img_auth.php`, `thumb.php`, `thumb_handler.php`, `opensearch_desc.php`, `images`, `skins`, `resources`, `extensions`) and anything after it | 308 to the same path without `/wiki` on wiki.gahk.dk: `/wiki/index.php?title=Forside` → `https://wiki.gahk.dk/index.php?title=Forside` |
+| any other `/wiki/<title>` | 308 to `https://wiki.gahk.dk/wiki/<title>` |
 | `/static/manifest.json`, `/static/icons/icon-512x512.png` (and the other icons this site has no file for), `/static/dist/…`, `/static/legacy/image/elements/logo.png` (and the rest of `elements/` and `intern/`) | 301 to the same path on intern.gahk.dk |
 
 ```sh
@@ -435,13 +441,14 @@ for p in faciliteter faciliteter/kokken kollegielivet/historie legater kontakt v
   done
 done                                       # 200 on every line
 curl -sI https://gahk.dk/static/legacy/image/elements/lamassu.b8dc291a4e43.svg   # 301 → /static/img/lamassu.svg
-curl -sI 'https://gahk.dk/wiki/index.php?title=Forside'   # 308 → https://intern.gahk.dk/wiki/index.php?title=Forside
+curl -sI 'https://gahk.dk/wiki/index.php?title=Forside'   # 308 → https://wiki.gahk.dk/index.php?title=Forside
+curl -sI https://gahk.dk/wiki/K%C3%A6lderen   # 308 → https://wiki.gahk.dk/wiki/K%c3%a6lderen (the same bytes)
 curl -sI https://gahk.dk/healthz           # 308 → https://intern.gahk.dk/healthz
 curl -sI https://gahk.dk/static/manifest.json   # 301 → https://intern.gahk.dk/static/manifest.json
 ```
 
-Apart from the intranet and the old picture addresses (which lead to the same picture), only two
-addresses now redirect where the old site answered 200, both on purpose:
+Apart from the intranet, the wiki and the old picture addresses (which lead to the same picture),
+only two addresses now redirect where the old site answered 200, both on purpose:
 
 - `https://www.gahk.dk/…` answers 301 to `https://gahk.dk/…`. One canonical host keeps the site
   from being indexed twice, and the forms' Origin check accepts `gahk.dk` only.

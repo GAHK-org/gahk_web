@@ -908,22 +908,50 @@ manifest_url = {MANIFEST_URL}
             ("http", "gahk.dk", "/intern/x?y=1", 301, "https://gahk.dk/intern/x?y=1"),
             ("https", "gahk.dk", "/intern/x?y=1", 200, ""),  # the old intranet app's page
             ("https", "gahk.dk", "/nyintern/x?y=1", 308, "https://intern.gahk.dk/nyintern/x?y=1"),
-            ("https", "gahk.dk", "/wiki/", 308, "https://intern.gahk.dk/wiki/"),
+            # The wiki runs at wiki.gahk.dk's root, its pages at /wiki/<title>.
+            ("https", "gahk.dk", "/wiki", 308, "https://wiki.gahk.dk/"),
+            ("https", "gahk.dk", "/wiki/?a=1", 308, "https://wiki.gahk.dk/?a=1"),
             # The old wiki's own addresses end in .php: redirected, not refused as scripts.
             (
                 "https",
                 "gahk.dk",
                 "/wiki/index.php?title=Forside",
                 308,
-                "https://intern.gahk.dk/wiki/index.php?title=Forside",
+                "https://wiki.gahk.dk/index.php?title=Forside",
+            ),
+            (
+                "https",
+                "gahk.dk",
+                "/wiki/index.php?title=K%C3%A6lderen",
+                308,
+                "https://wiki.gahk.dk/index.php?title=K%C3%A6lderen",
+            ),
+            ("https", "gahk.dk", "/wiki/index.php/Forside", 308, "https://wiki.gahk.dk/index.php/Forside"),
+            # A decoded path is encoded again, in lower-case hex: the same bytes, nothing twice.
+            (
+                "https",
+                "gahk.dk",
+                "/wiki/index.php/K%C3%A6lderen?action=edit",
+                308,
+                "https://wiki.gahk.dk/index.php/K%c3%a6lderen?action=edit",
             ),
             (
                 "https",
                 "gahk.dk",
                 "/wiki/load.php?modules=startup&only=scripts",
                 308,
-                "https://intern.gahk.dk/wiki/load.php?modules=startup&only=scripts",
+                "https://wiki.gahk.dk/load.php?modules=startup&only=scripts",
             ),
+            (
+                "https",
+                "gahk.dk",
+                "/wiki/images/a/ab/Hus.jpg",
+                308,
+                "https://wiki.gahk.dk/images/a/ab/Hus.jpg",
+            ),
+            ("https", "gahk.dk", "/wiki/Forside", 308, "https://wiki.gahk.dk/wiki/Forside"),
+            ("https", "gahk.dk", "/wiki/K%C3%A6lderen", 308, "https://wiki.gahk.dk/wiki/K%c3%a6lderen"),
+            ("https", "gahk.dk", "/wiki/100%25", 308, "https://wiki.gahk.dk/wiki/100%25"),
             ("https", "gahk.dk", "/healthz", 308, "https://intern.gahk.dk/healthz"),
             # The old intranet's static files that this site has no file for.
             ("https", "gahk.dk", "/static/manifest.json", 301, "https://intern.gahk.dk/static/manifest.json"),
@@ -981,7 +1009,11 @@ manifest_url = {MANIFEST_URL}
             b"x=1",
             {"Content-Type": "application/x-www-form-urlencoded"},
         )
-        expect(login.status == 308, f"a POST to the old wiki: {login.status}")
+        expect(
+            (login.status, login.header("Location"))
+            == (308, "https://wiki.gahk.dk/index.php?title=Speciel:Log_ind"),
+            f"a POST to the old wiki: {login.status} {login.header('Location')}",
+        )
         entries = host.access()
         handlers |= {entry.request.split()[1]: entry.handler for entry in entries}
         for path in (
@@ -989,6 +1021,8 @@ manifest_url = {MANIFEST_URL}
             "/nyintern/x?y=1",
             "/wiki/index.php?title=Forside",
             "/wiki/index.php?title=Speciel:Log_ind",
+            "/wiki",
+            "/wiki/Forside",
             "/healthz",
             "/static/manifest.json",
         ):

@@ -3,6 +3,7 @@
 import importlib.util
 import re
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 from conftest import HALLWAY, KITCHEN, Client, image, publish, rename_image, snapshot
@@ -48,8 +49,6 @@ def test_unknown_path_is_the_404_page(client: Client) -> None:
         ("/django-admin/", "https://intern.gahk.dk/django-admin/"),
         ("/photo-album/1/", "https://intern.gahk.dk/photo-album/1/"),
         ("/media/cms/2026/x.jpg", "https://intern.gahk.dk/media/cms/2026/x.jpg"),
-        ("/wiki/Forside", "https://intern.gahk.dk/wiki/Forside"),
-        ("/wiki/index.php", "https://intern.gahk.dk/wiki/index.php"),
         ("/health", "https://intern.gahk.dk/health"),
         ("/healthz", "https://intern.gahk.dk/healthz"),
         ("/healthz/", "https://intern.gahk.dk/healthz"),
@@ -159,31 +158,106 @@ def test_htaccess_serves_the_old_apps_page_for_a_get_of_intern() -> None:
     assert routing.intern_redirect(path) is None and routing.old_asset_redirect(path) is None
 
 
-# The old wiki's own addresses: $wgArticlePath is /wiki/index.php?title=$1, and its pages load
-# scripts and styles from /wiki/load.php. They end in .php, yet must be redirected, not refused.
+# --- the old wiki: gahk.dk/wiki/ moved to wiki.gahk.dk, where MediaWiki runs at the root ---
+
+WIKI = "https://wiki.gahk.dk"
+# (path, query, target without the query)
 WIKI_ADDRESSES = (
-    ("/wiki/index.php", "title=Forside"),
-    ("/wiki/index.php", "title=Speciel:Log_ind&returnto=Forside"),
-    ("/wiki/index.php", ""),
-    ("/wiki/load.php", "modules=startup&only=scripts&raw=1&skin=vector"),
-    ("/wiki/api.php", "action=query&format=json"),
+    # Its front page.
+    ("/wiki", "", f"{WIKI}/"),
+    ("/wiki/", "", f"{WIKI}/"),
+    ("/wiki/", "a=1", f"{WIKI}/"),
+    # The root's scripts and folders lose the /wiki prefix. They end in .php, yet are redirected,
+    # not refused: the old wiki's pages were /wiki/index.php?title=…, and they load /wiki/load.php.
+    ("/wiki/index.php", "", f"{WIKI}/index.php"),
+    ("/wiki/index.php", "title=Forside", f"{WIKI}/index.php"),
+    ("/wiki/index.php", "title=Speciel:Log_ind&returnto=Forside", f"{WIKI}/index.php"),
+    ("/wiki/index.php", "title=K%C3%A6lderen&action=edit", f"{WIKI}/index.php"),
+    ("/wiki/index.php/Forside", "", f"{WIKI}/index.php/Forside"),
+    ("/wiki/index.php/K%C3%A6lderen", "action=history", f"{WIKI}/index.php/K%C3%A6lderen"),
+    ("/wiki/load.php", "modules=startup&only=scripts&raw=1&skin=vector", f"{WIKI}/load.php"),
+    ("/wiki/api.php", "action=query&format=json", f"{WIKI}/api.php"),
+    ("/wiki/rest.php/v1/page/Forside", "", f"{WIKI}/rest.php/v1/page/Forside"),
+    ("/wiki/opensearch_desc.php", "", f"{WIKI}/opensearch_desc.php"),
+    ("/wiki/thumb.php", "f=Hus.jpg&width=180", f"{WIKI}/thumb.php"),
+    ("/wiki/img_auth.php/a/ab/Hus.jpg", "", f"{WIKI}/img_auth.php/a/ab/Hus.jpg"),
+    ("/wiki/images/a/ab/K%C3%B8kken.jpg", "", f"{WIKI}/images/a/ab/K%C3%B8kken.jpg"),
+    ("/wiki/images/thumb/a/ab/Hus.jpg/180px-Hus.jpg", "", f"{WIKI}/images/thumb/a/ab/Hus.jpg/180px-Hus.jpg"),
+    ("/wiki/skins/Vector/resources/x.svg", "", f"{WIKI}/skins/Vector/resources/x.svg"),
+    (
+        "/wiki/resources/assets/poweredby_mediawiki.svg",
+        "",
+        f"{WIKI}/resources/assets/poweredby_mediawiki.svg",
+    ),
+    ("/wiki/extensions/x/y.js", "", f"{WIKI}/extensions/x/y.js"),
+    # Anything else is a page's address: /wiki/<title> there too.
+    ("/wiki/Forside", "", f"{WIKI}/wiki/Forside"),
+    ("/wiki/Forside", "action=edit", f"{WIKI}/wiki/Forside"),
+    ("/wiki/K%C3%A6lderen", "", f"{WIKI}/wiki/K%C3%A6lderen"),
+    ("/wiki/Fil:K%C3%B8kken.jpg", "", f"{WIKI}/wiki/Fil:K%C3%B8kken.jpg"),
+    ("/wiki/Kategori:Huset/Underside", "", f"{WIKI}/wiki/Kategori:Huset/Underside"),
+    ("/wiki/Images", "", f"{WIKI}/wiki/Images"),  # a page: the folder is lower-case
+    ("/wiki/index.php5", "", f"{WIKI}/wiki/index.php5"),
+    # Encoded as Apache encodes them: what would end the path stays encoded, nothing twice. (Apache
+    # 2.4.60 and later refuse a "%3F" in any path a rule rewrites: 403 there, as on the whole site.)
+    ("/wiki/Hvad_er_GAHK%3F", "x=1", f"{WIKI}/wiki/Hvad_er_GAHK%3F"),
+    ("/wiki/100%25", "", f"{WIKI}/wiki/100%25"),
+    ("/wiki/A%23b", "", f"{WIKI}/wiki/A%23b"),
+    ("/wiki/A%20b", "", f"{WIKI}/wiki/A%20b"),
+    ("/wiki/A&b+c=d'(e)", "", f"{WIKI}/wiki/A&b+c=d'(e)"),
 )
 
 
-@pytest.mark.parametrize(("path", "query"), WIKI_ADDRESSES)
-def test_the_wikis_php_addresses_go_to_intern(client: Client, dev: Client, path: str, query: str) -> None:
-    target = "https://intern.gahk.dk" + path + (f"?{query}" if query else "")
-    for answer in (dev.get(path, query=query), client.get(path, query=query)):
-        assert (answer.status, answer.headers["Location"]) == (308, target)
-    login = dev.post(path, query=query)  # the wiki's login form posts to index.php
-    assert (login.status, login.headers["Location"]) == (308, target)
+@pytest.mark.parametrize(("path", "query", "target"), WIKI_ADDRESSES)
+def test_the_old_wikis_addresses_go_to_wiki_gahk_dk(
+    client: Client, dev: Client, path: str, query: str, target: str
+) -> None:
+    location = target + (f"?{query}" if query else "")
+    for method in ("GET", "HEAD", "POST", "PUT"):  # 308 keeps the method: its login form POSTs
+        for app in (dev, client):
+            answer = app.request(method, path, query=query)
+            assert (answer.status, answer.headers["Location"]) == (308, location), (method, path)
 
 
-def test_htaccess_redirects_the_intranet_before_it_refuses_scripts() -> None:
+@pytest.mark.parametrize("path", ["/wikipedia", "/wiki.php", "/Wiki/Forside", "/x/wiki/Forside", "/wikis/"])
+def test_not_the_wiki(path: str) -> None:
+    assert routing.wiki_redirect(path) is None
+    assert routing.intern_redirect(path) is None
+
+
+def htaccess_wiki_rules() -> list[tuple[str, str]]:
+    return re.findall(
+        r"^\s*RewriteRule \^(wiki\S*) (https://wiki\.gahk\.dk/\S*) \[R=308,L\]$",
+        HTACCESS.read_text(),
+        re.MULTILINE,
+    )
+
+
+def test_htaccess_redirects_the_wiki_as_routing_does() -> None:
+    """Apply .htaccess's wiki rules (their regexes are Python's too) to the decoded path, as
+    mod_rewrite does, and compare with routing.wiki_redirect (which encodes as mod_rewrite does)."""
+    rules = htaccess_wiki_rules()
+    assert len(rules) == len(routing._WIKI_RULES) == 3
+    for path, _query, target in WIKI_ADDRESSES:
+        decoded = unquote(path)
+        found = [(re.match("^" + pattern, decoded.lstrip("/")), to) for pattern, to in rules]
+        match, to = next(((m, to) for m, to in found if m), (None, ""))
+        assert match is not None, path
+        expanded = to.replace("$1", match.group(1)) if "$1" in to else to
+        assert expanded == unquote(target), path
+    # The intranet's rule no longer takes the wiki.
+    assert routing.intern_redirect("/wiki/Forside") is None
+
+
+def test_htaccess_redirects_the_intranet_and_the_wiki_before_it_refuses_scripts() -> None:
     lines = rule_lines(HTACCESS.read_text())
     scripts = next(i for i, line in enumerate(lines) if line.endswith("- [F,L,NC]"))
-    intern = [i for i, line in enumerate(lines) if "https://intern.gahk.dk/" in line and "[R=308,L]" in line]
-    assert intern and max(intern) < scripts
+    redirects = [
+        i
+        for i, line in enumerate(lines)
+        if ("https://intern.gahk.dk/" in line or "https://wiki.gahk.dk/" in line) and "[R=308,L]" in line
+    ]
+    assert len(redirects) == 8 and max(redirects) < scripts
 
 
 def test_old_intranet_posts_keep_their_method_and_prefix(client: Client, dev: Client) -> None:
@@ -343,13 +417,14 @@ def test_htaccess_names_the_same_rules() -> None:
     )
     assert len(rules) == 5
     for prefix in (
-        "intern|nyintern|admin|django-admin|wiki",
+        "intern|nyintern|admin|django-admin",
         "photo-album|media",
         "health",
         "listansoegninger|eksport",
         "showAnsoegning|setasreceived|kasser",
     ):
         assert any(prefix in rule for rule in rules), prefix
+    assert not any("wiki" in rule for rule in rules)  # wiki.gahk.dk's own rules
     assert "max-age=31536000, immutable" in text
 
 
