@@ -1,8 +1,9 @@
 """Development server: python -m gahk_web.devserver --port 8810 --public-html <dir>
 
 Werkzeug's development server with its reloader (the app restarts when a .py file changes), in front
-of a layer that emulates public_html/.htaccess (routing.py): the redirects to intern, existing files
-and <path>/index.html are served as files, scripts, cgi-bin/ and dot-files are refused, and
+of a layer that emulates public_html/.htaccess (routing.py): the old intranet app's page at
+/intern…, the redirects to intern, existing files and <path>/index.html are served as files,
+scripts, cgi-bin/ and dot-files are refused, and
 everything else goes to the Flask app as the stub would run it: as gahk.fcgi does (one reused
 database connection), or for /api/update, large bodies and with --cgi-only as gahk.cgi does. Site
 assets come from the package's static/ folder when public_html has no static/ of its own (in
@@ -52,11 +53,19 @@ def static_response(cfg: Config, method: str, path: str, query: str) -> Response
     """What Apache would answer before the app, or None to let the app answer."""
     if routing.is_hidden(path) or routing.is_stub(path):
         return text(403, "Forbidden")
-    # The intranet redirects come before the script refusal, as in .htaccess: the old wiki's
-    # addresses end in .php (/wiki/index.php?title=…).
+    # The old intranet app's page, then the intranet and wiki redirects, all before the script
+    # refusal, as in .htaccess: the old wiki's addresses end in .php (/wiki/index.php?title=…).
+    page = routing.old_app_page(method, path)
+    if page is not None:
+        file = routing.static_file(cfg.public_html, page) or _package_static(page)
+        # Without the file, Apache's rewrite ends at the app, which serves the page or redirects.
+        return _file_response(file, page) if file is not None else None
     target = routing.intern_redirect(path)
     if target is not None:
         return redirect(308, cfg.intern_url + quote_path(target), query)
+    target = routing.wiki_redirect(path)
+    if target is not None:
+        return redirect(308, target, query)
     if routing.is_script(path):
         return text(403, "Forbidden")
     target = routing.old_asset_redirect(path)

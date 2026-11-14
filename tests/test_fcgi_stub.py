@@ -120,10 +120,10 @@ def test_one_process_answers_request_after_request(spawn: Spawn, home: Path) -> 
     # Routed on the browser's path, not the stub's: no snapshot yet, so the 503 page.
     page = process.request("GET", "/faciliteter")
     assert page.status == 503 and "Siden opdateres" in page.text
-    moved = process.request("GET", "/intern/den-hurtige/?side=2")
+    moved = process.request("GET", "/nyintern/den-hurtige/?side=2")
     assert (moved.status, moved.headers["Location"]) == (
         308,
-        "https://intern.gahk.dk/intern/den-hurtige/?side=2",
+        "https://intern.gahk.dk/nyintern/den-hurtige/?side=2",
     )
     signed = signing.signed_headers(SYNC_KEY, "GET", "/api/status", b"")
     status = process.request("GET", "/api/status", headers=signed)
@@ -355,8 +355,8 @@ def test_cgi_still_runs_the_whole_app(home: Path) -> None:
     env = base_env(
         GAHK_WEB_HOME=str(home),
         REQUEST_METHOD="GET",
-        REQUEST_URI="/intern/x?y=1",
-        PATH_INFO="/intern/x",
+        REQUEST_URI="/nyintern/x?y=1",
+        PATH_INFO="/nyintern/x",
         SCRIPT_NAME="/cgi-bin/gahk.cgi",
         QUERY_STRING="y=1",
         SERVER_NAME="gahk.dk",
@@ -372,7 +372,7 @@ def test_cgi_still_runs_the_whole_app(home: Path) -> None:
         check=False,
     )
     head = done.stdout.partition(b"\r\n\r\n")[0].decode()
-    assert "Status: 308" in head and "Location: https://intern.gahk.dk/intern/x?y=1" in head, done.stderr
+    assert "Status: 308" in head and "Location: https://intern.gahk.dk/nyintern/x?y=1" in head, done.stderr
     env["REQUEST_URI"] = env["PATH_INFO"] = "/api/health"
     done = subprocess.run(
         [sys.executable, str(home / "public_html" / "cgi-bin" / "gahk.cgi")],

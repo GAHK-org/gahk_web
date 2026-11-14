@@ -1,7 +1,9 @@
 """The CGI fallback, the development server's .htaccess emulation, and their agreement with .htaccess."""
 
+import importlib.util
 import re
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 from conftest import HALLWAY, KITCHEN, Client, image, publish, rename_image, snapshot
@@ -12,7 +14,8 @@ from gahk_web.config import Config
 from gahk_web.devserver import make_dev_app
 from gahk_web.render import STATIC_DIR
 
-HTACCESS = Path(__file__).resolve().parents[1] / "public_html" / ".htaccess"
+ROOT = Path(__file__).resolve().parents[1]
+HTACCESS = ROOT / "public_html" / ".htaccess"
 
 
 def test_no_snapshot_yet_is_503(client: Client) -> None:
@@ -46,8 +49,6 @@ def test_unknown_path_is_the_404_page(client: Client) -> None:
         ("/django-admin/", "https://intern.gahk.dk/django-admin/"),
         ("/photo-album/1/", "https://intern.gahk.dk/photo-album/1/"),
         ("/media/cms/2026/x.jpg", "https://intern.gahk.dk/media/cms/2026/x.jpg"),
-        ("/wiki/Forside", "https://intern.gahk.dk/wiki/Forside"),
-        ("/wiki/index.php", "https://intern.gahk.dk/wiki/index.php"),
         ("/health", "https://intern.gahk.dk/health"),
         ("/healthz", "https://intern.gahk.dk/healthz"),
         ("/healthz/", "https://intern.gahk.dk/healthz"),
@@ -58,36 +59,205 @@ def test_unknown_path_is_the_404_page(client: Client) -> None:
     ],
 )
 def test_intranet_addresses_go_to_intern_with_308(client: Client, path: str, target: str) -> None:
-    result = client.get(path, query="a=1")
-    assert result.status == 308
-    assert result.headers["Location"] == target + "?a=1"
+    methods = ["POST", "PUT", "DELETE"]  # every method; a GET or HEAD of /intern… gets the old app's page
+    if routing.old_app_page("GET", path) is None:
+        methods += ["GET", "HEAD"]
+    for method in methods:
+        result = client.request(method, path, query="a=1")
+        assert (result.status, result.headers["Location"]) == (308, target + "?a=1"), method
 
 
-# The old wiki's own addresses: $wgArticlePath is /wiki/index.php?title=$1, and its pages load
-# scripts and styles from /wiki/load.php. They end in .php, yet must be redirected, not refused.
+# --- the old intranet's installed app (Den Hurtige, scope /intern/): a page, not a redirect ---
+
+OLD_APP_PATHS = ("/intern", "/intern/", "/intern/den-hurtige/", "/intern/admin/login", "/intern/x.php")
+
+
+def old_app_page() -> bytes:
+    return (STATIC_DIR / routing.OLD_APP_PAGE.removeprefix("/static/")).read_bytes()
+
+
+@pytest.mark.parametrize("path", OLD_APP_PATHS)
+def test_a_get_of_the_old_intranet_gets_the_old_apps_page(client: Client, dev: Client, path: str) -> None:
+    """Before anything is published, too: the page is a file of the release."""
+    for app in (dev, client):
+        for query in ("", "x=1&y=%C3%A6"):
+            result = app.get(path, query=query)
+            assert (result.status, result.body) == (200, old_app_page()), (path, query)
+            assert result.headers["Content-Type"] == "text/html; charset=utf-8"
+            assert "Location" not in result.headers
+        head = app.request("HEAD", path)
+        assert (head.status, head.body) == (200, b"")
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+def test_other_methods_to_the_old_intranet_still_go_to_intern(
+    client: Client, dev: Client, method: str
+) -> None:
+    for app in (dev, client):
+        for path in OLD_APP_PATHS:
+            result = app.request(method, path, query="a=1")
+            target = f"https://intern.gahk.dk{path}?a=1"
+            assert (result.status, result.headers["Location"]) == (308, target), (method, path)
+
+
+def test_the_old_apps_page_is_only_for_intern() -> None:
+    assert routing.old_app_page("GET", "/intern/den-hurtige/") == routing.OLD_APP_PAGE
+    assert routing.old_app_page("HEAD", "/intern") == routing.OLD_APP_PAGE
+    assert routing.old_app_page("POST", "/intern/den-hurtige/") is None
+    for path in ("/nyintern", "/nyintern/x", "/internat", "/intern.php", "/admin", "/wiki/", "/x/intern/"):
+        assert routing.old_app_page("GET", path) is None, path
+
+
+def test_the_old_apps_page() -> None:
+    """Inside an installed app it asks for the new one; in a browser it sends the visitor on to the
+    same address on intern.gahk.dk, as the 308 would (the prefix kept)."""
+    page = old_app_page().decode("utf-8")
+    assert '<meta name="robots" content="noindex">' in page
+    assert "navigator.standalone === true" in page
+    assert '"(display-mode: " + mode + ")"' in page
+    assert (
+        'var target = "https://intern.gahk.dk" + location.pathname + location.search + location.hash;' in page
+    )
+    assert "location.replace(target);" in page
+    assert '<a class="btn" href="https://intern.gahk.dk/install">' in page
+    assert "GAHK Intern" in page
+    assert "<noscript>" in page and 'href="https://intern.gahk.dk/"' in page
+    # Nothing from elsewhere, and only the release's unhashed files (the stylesheet's name is hashed).
+    assert "<script src" not in page and "<link" not in page
+    for asset in re.findall(r'(?:src|url\()="?(/static/[^")]+)', page):
+        assert (STATIC_DIR / asset.removeprefix("/static/")).is_file(), asset
+        assert not re.search(r"\.[0-9a-f]{8,}\.", asset), asset
+
+
+def test_the_old_apps_page_is_in_the_bundle(tmp_path: Path) -> None:
+    """build_bundle copies the package's static/ into public_html/static/ (installed by the updater);
+    the page keeps its name, so .htaccess can name it."""
+    spec = importlib.util.spec_from_file_location("build_bundle", ROOT / "scripts" / "build_bundle.py")
+    assert spec and spec.loader
+    build_bundle = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(build_bundle)
+    manifest = build_bundle.build_static(tmp_path)
+    installed = tmp_path / "public_html" / routing.OLD_APP_PAGE.lstrip("/")
+    assert installed.read_bytes() == old_app_page()
+    assert "intern-moved.html" not in manifest  # not renamed with a hash
+
+
+def test_htaccess_serves_the_old_apps_page_for_a_get_of_intern() -> None:
+    lines = rule_lines(HTACCESS.read_text())
+    rule = f"RewriteRule ^{routing._OLD_APP_RE.pattern.removeprefix('^/')} {routing.OLD_APP_PAGE.lstrip('/')} [L]"
+    index = lines.index(rule)
+    assert lines[index - 1] == "RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$"
+    redirects = [
+        i for i, line in enumerate(lines) if "https://intern.gahk.dk/" in line and "[R=308,L]" in line
+    ]
+    scripts = next(i for i, line in enumerate(lines) if line.endswith("- [F,L,NC]"))
+    assert index < min(redirects) and index < scripts
+    # Its second round finds the file: nothing before the files' own rule refuses or redirects it.
+    path = routing.OLD_APP_PAGE
+    assert not routing.is_hidden(path) and not routing.is_stub(path) and not routing.is_script(path)
+    assert routing.intern_redirect(path) is None and routing.old_asset_redirect(path) is None
+
+
+# --- the old wiki: gahk.dk/wiki/ moved to wiki.gahk.dk, where MediaWiki runs at the root ---
+
+WIKI = "https://wiki.gahk.dk"
+# (path, query, target without the query)
 WIKI_ADDRESSES = (
-    ("/wiki/index.php", "title=Forside"),
-    ("/wiki/index.php", "title=Speciel:Log_ind&returnto=Forside"),
-    ("/wiki/index.php", ""),
-    ("/wiki/load.php", "modules=startup&only=scripts&raw=1&skin=vector"),
-    ("/wiki/api.php", "action=query&format=json"),
+    # Its front page.
+    ("/wiki", "", f"{WIKI}/"),
+    ("/wiki/", "", f"{WIKI}/"),
+    ("/wiki/", "a=1", f"{WIKI}/"),
+    # The root's scripts and folders lose the /wiki prefix. They end in .php, yet are redirected,
+    # not refused: the old wiki's pages were /wiki/index.php?title=…, and they load /wiki/load.php.
+    ("/wiki/index.php", "", f"{WIKI}/index.php"),
+    ("/wiki/index.php", "title=Forside", f"{WIKI}/index.php"),
+    ("/wiki/index.php", "title=Speciel:Log_ind&returnto=Forside", f"{WIKI}/index.php"),
+    ("/wiki/index.php", "title=K%C3%A6lderen&action=edit", f"{WIKI}/index.php"),
+    ("/wiki/index.php/Forside", "", f"{WIKI}/index.php/Forside"),
+    ("/wiki/index.php/K%C3%A6lderen", "action=history", f"{WIKI}/index.php/K%C3%A6lderen"),
+    ("/wiki/load.php", "modules=startup&only=scripts&raw=1&skin=vector", f"{WIKI}/load.php"),
+    ("/wiki/api.php", "action=query&format=json", f"{WIKI}/api.php"),
+    ("/wiki/rest.php/v1/page/Forside", "", f"{WIKI}/rest.php/v1/page/Forside"),
+    ("/wiki/opensearch_desc.php", "", f"{WIKI}/opensearch_desc.php"),
+    ("/wiki/thumb.php", "f=Hus.jpg&width=180", f"{WIKI}/thumb.php"),
+    ("/wiki/img_auth.php/a/ab/Hus.jpg", "", f"{WIKI}/img_auth.php/a/ab/Hus.jpg"),
+    ("/wiki/images/a/ab/K%C3%B8kken.jpg", "", f"{WIKI}/images/a/ab/K%C3%B8kken.jpg"),
+    ("/wiki/images/thumb/a/ab/Hus.jpg/180px-Hus.jpg", "", f"{WIKI}/images/thumb/a/ab/Hus.jpg/180px-Hus.jpg"),
+    ("/wiki/skins/Vector/resources/x.svg", "", f"{WIKI}/skins/Vector/resources/x.svg"),
+    (
+        "/wiki/resources/assets/poweredby_mediawiki.svg",
+        "",
+        f"{WIKI}/resources/assets/poweredby_mediawiki.svg",
+    ),
+    ("/wiki/extensions/x/y.js", "", f"{WIKI}/extensions/x/y.js"),
+    # Anything else is a page's address: /wiki/<title> there too.
+    ("/wiki/Forside", "", f"{WIKI}/wiki/Forside"),
+    ("/wiki/Forside", "action=edit", f"{WIKI}/wiki/Forside"),
+    ("/wiki/K%C3%A6lderen", "", f"{WIKI}/wiki/K%C3%A6lderen"),
+    ("/wiki/Fil:K%C3%B8kken.jpg", "", f"{WIKI}/wiki/Fil:K%C3%B8kken.jpg"),
+    ("/wiki/Kategori:Huset/Underside", "", f"{WIKI}/wiki/Kategori:Huset/Underside"),
+    ("/wiki/Images", "", f"{WIKI}/wiki/Images"),  # a page: the folder is lower-case
+    ("/wiki/index.php5", "", f"{WIKI}/wiki/index.php5"),
+    # Encoded as Apache encodes them: what would end the path stays encoded, nothing twice. (Apache
+    # 2.4.60 and later refuse a "%3F" in any path a rule rewrites: 403 there, as on the whole site.)
+    ("/wiki/Hvad_er_GAHK%3F", "x=1", f"{WIKI}/wiki/Hvad_er_GAHK%3F"),
+    ("/wiki/100%25", "", f"{WIKI}/wiki/100%25"),
+    ("/wiki/A%23b", "", f"{WIKI}/wiki/A%23b"),
+    ("/wiki/A%20b", "", f"{WIKI}/wiki/A%20b"),
+    ("/wiki/A&b+c=d'(e)", "", f"{WIKI}/wiki/A&b+c=d'(e)"),
 )
 
 
-@pytest.mark.parametrize(("path", "query"), WIKI_ADDRESSES)
-def test_the_wikis_php_addresses_go_to_intern(client: Client, dev: Client, path: str, query: str) -> None:
-    target = "https://intern.gahk.dk" + path + (f"?{query}" if query else "")
-    for answer in (dev.get(path, query=query), client.get(path, query=query)):
-        assert (answer.status, answer.headers["Location"]) == (308, target)
-    login = dev.post(path, query=query)  # the wiki's login form posts to index.php
-    assert (login.status, login.headers["Location"]) == (308, target)
+@pytest.mark.parametrize(("path", "query", "target"), WIKI_ADDRESSES)
+def test_the_old_wikis_addresses_go_to_wiki_gahk_dk(
+    client: Client, dev: Client, path: str, query: str, target: str
+) -> None:
+    location = target + (f"?{query}" if query else "")
+    for method in ("GET", "HEAD", "POST", "PUT"):  # 308 keeps the method: its login form POSTs
+        for app in (dev, client):
+            answer = app.request(method, path, query=query)
+            assert (answer.status, answer.headers["Location"]) == (308, location), (method, path)
 
 
-def test_htaccess_redirects_the_intranet_before_it_refuses_scripts() -> None:
+@pytest.mark.parametrize("path", ["/wikipedia", "/wiki.php", "/Wiki/Forside", "/x/wiki/Forside", "/wikis/"])
+def test_not_the_wiki(path: str) -> None:
+    assert routing.wiki_redirect(path) is None
+    assert routing.intern_redirect(path) is None
+
+
+def htaccess_wiki_rules() -> list[tuple[str, str]]:
+    return re.findall(
+        r"^\s*RewriteRule \^(wiki\S*) (https://wiki\.gahk\.dk/\S*) \[R=308,L\]$",
+        HTACCESS.read_text(),
+        re.MULTILINE,
+    )
+
+
+def test_htaccess_redirects_the_wiki_as_routing_does() -> None:
+    """Apply .htaccess's wiki rules (their regexes are Python's too) to the decoded path, as
+    mod_rewrite does, and compare with routing.wiki_redirect (which encodes as mod_rewrite does)."""
+    rules = htaccess_wiki_rules()
+    assert len(rules) == len(routing._WIKI_RULES) == 3
+    for path, _query, target in WIKI_ADDRESSES:
+        decoded = unquote(path)
+        found = [(re.match("^" + pattern, decoded.lstrip("/")), to) for pattern, to in rules]
+        match, to = next(((m, to) for m, to in found if m), (None, ""))
+        assert match is not None, path
+        expanded = to.replace("$1", match.group(1)) if "$1" in to else to
+        assert expanded == unquote(target), path
+    # The intranet's rule no longer takes the wiki.
+    assert routing.intern_redirect("/wiki/Forside") is None
+
+
+def test_htaccess_redirects_the_intranet_and_the_wiki_before_it_refuses_scripts() -> None:
     lines = rule_lines(HTACCESS.read_text())
     scripts = next(i for i, line in enumerate(lines) if line.endswith("- [F,L,NC]"))
-    intern = [i for i, line in enumerate(lines) if "https://intern.gahk.dk/" in line and "[R=308,L]" in line]
-    assert intern and max(intern) < scripts
+    redirects = [
+        i
+        for i, line in enumerate(lines)
+        if ("https://intern.gahk.dk/" in line or "https://wiki.gahk.dk/" in line) and "[R=308,L]" in line
+    ]
+    assert len(redirects) == 8 and max(redirects) < scripts
 
 
 def test_old_intranet_posts_keep_their_method_and_prefix(client: Client, dev: Client) -> None:
@@ -247,13 +417,14 @@ def test_htaccess_names_the_same_rules() -> None:
     )
     assert len(rules) == 5
     for prefix in (
-        "intern|nyintern|admin|django-admin|wiki",
+        "intern|nyintern|admin|django-admin",
         "photo-album|media",
         "health",
         "listansoegninger|eksport",
         "showAnsoegning|setasreceived|kasser",
     ):
         assert any(prefix in rule for rule in rules), prefix
+    assert not any("wiki" in rule for rule in rules)  # wiki.gahk.dk's own rules
     assert "max-age=31536000, immutable" in text
 
 
@@ -280,7 +451,9 @@ def test_htaccess_runs_the_stubs_only_through_its_own_rewrites() -> None:
     assert lines[refuse + 2] == "RewriteRule ^cgi-bin(?:/|$) - [F,L]"  # anything else in cgi-bin
     pattern = r"(?:^|/)[^/]*\.(?:py|cgi|fcgi|php\d?|phtml|phar|pl|shtml)(?:[./]|$)"
     scripts = lines.index(f"RewriteRule {pattern} - [F,L,NC]")
-    assert refuse < scripts < lines.index("RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$")
+    files = lines.index("RewriteCond %{REQUEST_FILENAME} -f") - 1
+    assert lines[files] == "RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$"
+    assert refuse < scripts < files
     assert routing._SCRIPT_RE.pattern == pattern
     # The stubs themselves may run; every other Python file is denied outright.
     files_match = re.search(r'<FilesMatch "([^"]+)">', HTACCESS.read_text())
@@ -404,6 +577,7 @@ def test_devserver_serves_assets_and_images(client: Client, dev: Client) -> None
 
 def test_htaccess_serves_the_same_aliases() -> None:
     rules = re.findall(r"^\s*RewriteRule \^(\S+)\$ (static/\S+) \[L\]$", HTACCESS.read_text(), re.MULTILINE)
+    rules = [(pattern, to) for pattern, to in rules if to != routing.OLD_APP_PAGE.lstrip("/")]
     assert len(rules) == 2
     for path, target in routing.ALIASES.items():
         assert [to for pattern, to in rules if re.fullmatch(pattern, path.lstrip("/"))] == [
@@ -505,7 +679,8 @@ def test_devserver_serves_images_with_other_letters(client: Client, dev: Client)
 
 def test_devserver_matches_production_routing(client: Client, dev: Client) -> None:
     publish(client)
-    assert dev.get("/intern/x").headers["Location"] == "https://intern.gahk.dk/intern/x"
+    assert dev.post("/intern/x").headers["Location"] == "https://intern.gahk.dk/intern/x"
+    assert dev.get("/intern/x").body == old_app_page()
     hallway = image("gang.jpg", HALLWAY)["url"]
     assert dev.get("/public/image/upload/images/gang.jpg").headers["Location"] == hallway
     assert dev.get("/public/image/a.jpg").status == 404

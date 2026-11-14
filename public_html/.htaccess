@@ -60,22 +60,39 @@ ErrorDocument 404 /404.html
   RewriteRule ^cgi-bin/gahk\.f?cgi(?:/|$) - [L]
   RewriteRule ^cgi-bin(?:/|$) - [F,L]
 
-  # --- The intranet moved to intern.gahk.dk. 308 keeps the method and body (POSTs survive). They come
-  # before the script refusal below, as the old wiki's addresses end in .php. ---
+  # --- The intranet moved to intern.gahk.dk, the wiki to wiki.gahk.dk. 308 keeps the method and body
+  # (POSTs survive). They come before the script refusal below, as the old wiki's addresses end in
+  # .php. ---
   # /intern/x and /nyintern/x keep their prefix: intern.gahk.dk/intern/x works on whatever runs
   # there, the old code (which serves /intern/…) and the new (which sends /intern/x on to /x itself,
   # keeping the query and the method).
-  RewriteRule ^((?:intern|nyintern|admin|django-admin|wiki)(?:/.*)?)$ https://intern.gahk.dk/$1 [R=308,L]
+  # The old intranet's installed app (Den Hurtige, scope /intern/) cannot follow a redirect to
+  # another origin. So a GET or HEAD of /intern and /intern/… gets one page of the release instead
+  # (a rewrite: nothing runs, /intern/x.php neither). In a browser it sends the visitor on to
+  # intern.gahk.dk/intern/… at once; inside the old app it asks for intern's new app to be installed.
+  # Every other method takes the 308 below. routing.OLD_APP_PAGE.
+  RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
+  RewriteRule ^intern(?:/.*)?$ static/intern-moved.html [L]
+  RewriteRule ^((?:intern|nyintern|admin|django-admin)(?:/.*)?)$ https://intern.gahk.dk/$1 [R=308,L]
   RewriteRule ^((?:photo-album|media)/.*)$ https://intern.gahk.dk/$1 [R=308,L]
   # intern's health checks: /health (readiness) and /healthz (liveness), which a monitor may poll.
   RewriteRule ^health(z?)/?$ https://intern.gahk.dk/health$1 [R=308,L]
   RewriteRule ^(optagelse/(?:listansoegninger|eksport))/?$ https://intern.gahk.dk/$1 [R=308,L]
   RewriteRule ^(optagelse/(?:showAnsoegning|setasreceived|kasser)/.+)$ https://intern.gahk.dk/$1 [R=308,L]
 
+  # The wiki runs at wiki.gahk.dk's root: its scripts and files at /index.php, /load.php, /images/…,
+  # its pages at /wiki/<title>. /wiki/ goes to its front page, the root's entries lose the /wiki
+  # prefix (/wiki/index.php?title=X → /index.php?title=X), and anything else is a page's address
+  # (/wiki/X → /wiki/X). routing.wiki_redirect. No NE: $1 is decoded, and mod_rewrite encodes it
+  # again (a Danish title arrives as K%c3%a6lderen: the same bytes, nothing encoded twice).
+  RewriteRule ^wiki/?$ https://wiki.gahk.dk/ [R=308,L]
+  RewriteRule ^wiki/((?:(?:index|load|api|rest|img_auth|thumb|thumb_handler|opensearch_desc)\.php|images|skins|resources|extensions)(?:/.*)?)$ https://wiki.gahk.dk/$1 [R=308,L]
+  RewriteRule ^wiki/(.+)$ https://wiki.gahk.dk/wiki/$1 [R=308,L]
+
   # --- No other script runs: the server would run any *.py, *.cgi or *.fcgi under public_html (and,
   # as Apache maps handlers by every extension, a.cgi.jpg too), whatever the case of its name. The
-  # same for what the host may map to PHP, Perl or server-side includes. After the intranet redirects,
-  # which run nothing: /wiki/index.php?title=… and /wiki/load.php?… must reach intern.gahk.dk. ---
+  # same for what the host may map to PHP, Perl or server-side includes. After the intranet and wiki
+  # redirects, which run nothing: /wiki/index.php?title=… and /wiki/load.php?… must reach wiki.gahk.dk. ---
   RewriteRule (?:^|/)[^/]*\.(?:py|cgi|fcgi|php\d?|phtml|phar|pl|shtml)(?:[./]|$) - [F,L,NC]
 
   # --- Old picture addresses (/static/legacy/image/... and the older /public/image/...) have no

@@ -5,8 +5,9 @@
          /optagelse/fremlej, /optagelse/send_fremleje        the admission forms (forms.py)
     POST /s                             the visit beacon (stats.py)
     GET  /kalender/<token>.ics          the calendar pass-through to intern (calendar_feed.py)
-    anything else (GET/HEAD)            the fallback: old addresses → 301/308, a page in either
-                                        slash form → its file, else the 404 page; no snapshot yet → 503
+    anything else (GET/HEAD)            the fallback: the old intranet app's page at /intern…, old
+                                        addresses → 301/308, a page in either slash form → its
+                                        file, else the 404 page; no snapshot yet → 503
 
 On the webhost it runs as a persistent FastCGI process (fcgi_entry.py, behind cgi-bin/gahk.fcgi),
 or one request per process through CGI (cgi_entry.py, behind cgi-bin/gahk.cgi). The database is
@@ -33,7 +34,7 @@ from . import api, db, forms, housekeeping, images, routing, stats
 from .clock import copenhagen_today
 from .config import Config
 from .models import Base, GeneratedFile, SiteState
-from .render import EMPTY_SNAPSHOT, Site, load_snapshot, page_file, quote_path
+from .render import EMPTY_SNAPSHOT, STATIC_DIR, Site, load_snapshot, page_file, quote_path
 from .snapshot import PATH_RE, image_href
 from .web import (
     ALL_METHODS,
@@ -226,12 +227,22 @@ def _page_url(session: Session, path: str) -> str | None:
 @site.route("/", methods=ALL_METHODS, defaults={"path": ""})
 @site.route("/<path:path>", methods=ALL_METHODS)
 def fallback(path: str = "") -> Response:
-    """GET/HEAD for a path Apache had no file for (and an old intranet address, whatever the method)."""
+    """GET/HEAD for a path Apache had no file for (and an old intranet or wiki address, whatever the
+    method)."""
     cfg = _cfg()
     path = request.path
+    page = routing.old_app_page(request.method, path)
+    if page is not None:  # .htaccess serves it; here only if its file was missing then
+        # The release installs it into public_html/static; the package has it in development.
+        file = routing.static_file(cfg.public_html, page) or routing.static_file(STATIC_DIR.parent, page)
+        if file is not None:
+            return serve_file(file)
     target = routing.intern_redirect(path)
     if target is not None:  # 308 for every method, as in .htaccess: a POST stays a POST
         return redirect(308, cfg.intern_url + quote_path(target), query())
+    target = routing.wiki_redirect(path)
+    if target is not None:
+        return redirect(308, target, query())
     if request.method not in ("GET", "HEAD"):
         return method_not_allowed("GET, HEAD")
     target = routing.old_asset_redirect(path)
