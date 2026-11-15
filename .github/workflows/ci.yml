@@ -20,6 +20,24 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
 
+  # The stylesheet is built by Tailwind from styles/site.css and the templates' classes, and the
+  # result is committed (src/gahk_web/static/css/site.css), so nothing else here needs Node. This
+  # rebuilds it and fails when the committed file is not what the sources give.
+  css:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 24, cache: npm }
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build:css
+      - name: The committed stylesheet is the built one
+        run: |
+          git diff --exit-code -- src/gahk_web/static/css/site.css || {
+            echo "::error file=src/gahk_web/static/css/site.css::Stale. Run 'task css' and commit the result."
+            exit 1
+          }
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
@@ -128,7 +146,7 @@ jobs:
   # not freeze releases, least of all the one that bumps it.
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [lint, typecheck, test, bundle, webhost]
+    needs: [lint, css, typecheck, test, bundle, webhost]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -38,8 +38,8 @@ def test_preview_renders_an_unsaved_page_in_the_current_site(client: Client, cfg
     assert 'src="https://intern.gahk.dk/media/cms/2026/11/k.jpg"' in html
     assert "url('https://intern.gahk.dk/media/cms/2026/11/bg.jpg')" in html
     assert '<base href="https://gahk.dk/">' in html
-    assert '<a href="/kontakt">Kontakt</a>' in html  # the current menu
-    assert 'class="section-nav"' in html
+    assert 'href="/kontakt">Kontakt</a>' in html  # the current menu
+    assert '<nav aria-label="Faciliteter"' in html  # and the section's
     assert "sendBeacon" not in html
     assert "noindex" in html
     # Never stored: the published page is unchanged.
@@ -102,9 +102,9 @@ def test_preview_of_a_page_without_an_address(
         "POST", "/api/preview", {"kind": "page", "item": item, "media_base": "https://intern.gahk.dk"}
     )
     assert result.status == 200
-    assert '<h1 class="font-display page-title">Ny side uden adresse</h1>' in result.text
-    assert "hero--home" not in result.text
-    assert 'class="section-nav"' not in result.text
+    assert 'mb-8">Ny side uden adresse</h1>' in result.text  # a page, not the front page
+    assert "Velkommen til GAHK" not in result.text
+    assert "<nav" not in result.text.split("</header>")[1]
     # The stored front page stays in the previewed site, and stays its front page.
     [site] = sites
     assert [p["id"] for p in site.snapshot["pages"] if p["path"] == ""] == [1, 2**31 - 1]
