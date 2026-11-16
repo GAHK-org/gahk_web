@@ -1,0 +1,13 @@
+{
+  "name": "gahk_web-css",
+  "private": true,
+  "description": "Builds the site's stylesheet with Tailwind: styles/site.css -> src/gahk_web/static/css/site.css",
+  "scripts": {
+    "build:css": "tailwindcss --input styles/site.css --output src/gahk_web/static/css/site.css --minify",
+    "watch:css": "tailwindcss --input styles/site.css --output src/gahk_web/static/css/site.css --minify --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.3.1",
+    "tailwindcss": "4.3.1"
+  }
+}

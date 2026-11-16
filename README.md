@@ -40,6 +40,22 @@ Indtil der er publiceret indhold, svarer siden "Siden opdateres" (503). Indhold 
 intern: sæt `GAHK_WEB_URL` og `GAHK_WEB_KEY` i gahk_interns `app/.env` til de værdier, `task config`
 skrev ud (nøglen står også i `local/config.ini`), og gem en side under *Hjemmeside*.
 
+## Stylesheet
+
+Sidens stylesheet bygges med Tailwind CSS (samme version som gahk_interns) fra `styles/site.css` og
+klasserne i skabelonerne i `src/gahk_web/templates/`. Den byggede fil,
+`src/gahk_web/static/css/site.css`, ligger i repoet, så webhotellet, release-bundlen og testene ikke
+skal bruge Node. Kun den, der ændrer en skabelon eller `styles/site.css`, skal have Node og npm:
+
+```sh
+task css         # byg stylesheetet (installerer Tailwind fra package-lock.json første gang)
+task css:watch   # byg igen ved hver ændring, ved siden af task dev
+```
+
+Pre-commit-hooken bygger filen igen, når en skabelon eller `styles/site.css` ændres. Ændres den,
+fejler commit'en: stage `src/gahk_web/static/css/site.css`, og commit igen. CI fejler, hvis den
+committede fil ikke er den, kilderne giver.
+
 ## Database og migreringer
 
 Tabellerne er typede SQLAlchemy 2-modeller i `src/gahk_web/models.py`. Koden spørger databasen med

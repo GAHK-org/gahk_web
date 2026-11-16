@@ -33,7 +33,7 @@ def test_unknown_path_is_the_404_page(client: Client) -> None:
     result = client.get("/findes-ikke")
     assert result.status == 404
     assert "Siden findes ikke" in result.text
-    assert '<a href="/kontakt">Kontakt</a>' in result.text  # the rendered 404.html, with the menu
+    assert 'href="/kontakt">Kontakt</a>' in result.text  # the rendered 404.html, with the menu
 
 
 @pytest.mark.parametrize(

@@ -124,8 +124,8 @@ def test_titles_are_escaped_and_bodies_are_not(client: Client, cfg: Config) -> N
 def test_menu_and_canonical_follow_the_snapshot(client: Client, cfg: Config) -> None:
     publish(client)
     page_html = (cfg.public_html / "faciliteter/index.html").read_text()
-    assert '<a href="/kontakt">Kontakt</a>' in page_html
-    assert '<a href="/faciliteter" aria-current="page">Faciliteter</a>' in page_html
+    assert 'href="/kontakt">Kontakt</a>' in page_html
+    assert 'href="/faciliteter" aria-current="page">Faciliteter</a>' in page_html
     admissions = (cfg.public_html / "optagelse/index.html").read_text()
     assert '<link rel="canonical" href="https://gahk.dk/optagelse/">' in admissions
     sitemap = (cfg.public_html / "sitemap.xml").read_text()
@@ -136,13 +136,12 @@ def test_menu_and_canonical_follow_the_snapshot(client: Client, cfg: Config) -> 
 def test_section_sidebar_only_for_sections_with_two_pages(client: Client, cfg: Config) -> None:
     publish(client)
     kitchen = (cfg.public_html / "faciliteter/kokken/index.html").read_text()
-    assert 'class="section-nav"' in kitchen
-    assert '<a href="/faciliteter">Faciliteter</a>' in kitchen
-    assert '<a href="/faciliteter/kokken" class="is-current" aria-current="page">Køkkenet</a>' in kitchen
-    assert (
-        "section-nav"
-        not in (cfg.public_html / "kontakt/index.html").read_text().split("<main")[0].split("</header>")[1]
-    )
+    assert '<nav aria-label="Faciliteter"' in kitchen
+    assert 'href="/faciliteter">Faciliteter</a>' in kitchen
+    assert 'href="/faciliteter/kokken" class="block' in kitchen
+    assert 'aria-current="page">Køkkenet</a>' in kitchen
+    contact = (cfg.public_html / "kontakt/index.html").read_text()
+    assert "<nav" not in contact.split("</header>")[1]
 
 
 def test_backgrounds_default_and_plain(client: Client, cfg: Config) -> None:
@@ -157,8 +156,9 @@ def test_backgrounds_default_and_plain(client: Client, cfg: Config) -> None:
     data["revision"] = "b" * 64
     publish(client, data)
     contact = (cfg.public_html / "kontakt/index.html").read_text()
-    assert "page-stage--plain" in contact
-    assert "hero--plain" in (cfg.public_html / "begivenheder/index.html").read_text()
+    assert "page-stage--photo" not in contact and "background-image" not in contact  # the green one
+    events = (cfg.public_html / "begivenheder/index.html").read_text()
+    assert "hero__img" not in events and "bg-linear-160" in events
 
 
 def test_home_lists_only_upcoming_events(client: Client, cfg: Config) -> None:

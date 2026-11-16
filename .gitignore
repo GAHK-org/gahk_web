@@ -10,6 +10,9 @@ build/
 # scripts/build_bundle.py writes the release bundle and its manifest here.
 dist/
 
+# npm ci installs Tailwind here (package.json); only the stylesheet build uses it.
+node_modules/
+
 # Local runs (task dev renders into var/public_html, not into the repo's public_html)
 /public_html/*
 !/public_html/.htaccess

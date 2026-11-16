@@ -21,6 +21,18 @@ updates:
       python-major:
         update-types: ["major"]
 
+  # Tailwind, which builds the stylesheet (package.json + package-lock.json). The built file is
+  # committed, so a bump's PR must carry it rebuilt: CI's css job fails until it does.
+  - package-ecosystem: "npm"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies"]
+    groups:
+      tailwind:
+        patterns: ["*"]
+
   # GitHub Actions used by the workflows in .github/workflows/.
   - package-ecosystem: "github-actions"
     directory: "/"

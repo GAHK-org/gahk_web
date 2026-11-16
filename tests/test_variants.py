@@ -271,7 +271,7 @@ def test_pages_link_the_variants(client: Client, cfg: Config) -> None:
     ) in html
     assert f'<img src="{broken}">' in html  # no variants: the original, as it was
     assert "<script>alert" not in html  # sanitised again
-    assert gallery not in html.split("<body>")[1]  # the original is no longer linked from the page
+    assert gallery not in html.split("<body")[1]  # the original is no longer linked from the page
     assert f".page-stage--photo{{background-image:url('{folder}/_2000w.webp')}}" in html
     assert (cfg.public_html / gallery.lstrip("/")).read_bytes() == PHOTO  # still there for old links
 
@@ -304,7 +304,7 @@ def test_image_names_with_other_letters_are_percent_encoded_in_pages(client: Cli
     assert f'<img src="{broken}">' in html  # no variants: the original, encoded
     assert html.count(f'srcset="{folder}/_480w.webp 480w') == 2  # both spellings found the picture
     assert f".page-stage--photo{{background-image:url('{folder}/_2000w.webp')}}" in html
-    assert gallery not in html and "kø" not in html.split("<body>")[1]
+    assert gallery not in html and "kø" not in html.split("<body")[1]
 
     hallway = image("gangen-på-første.jpg", HALLWAY)["url"]
     hallway_href = f"/images/{hallway.split('/')[2]}/gangen-p%C3%A5-f%C3%B8rste.jpg"

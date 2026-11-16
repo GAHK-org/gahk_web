@@ -22,6 +22,21 @@ intern or its storage is down.
 - Each page has a description for search engines and link previews, either the editors' own or a
   general one. The site has a sitemap and a robots file.
 
+## Page text
+
+- A page's text keeps the formatting the editor gives it: headings, bold and italics, lists,
+  quotes, links, tables and pictures, placed left, right or in the text.
+- Five classes give a part of a text a look of its own. An editor sets them in the editor's source
+  view (`<p class="note">…</p>`), and intern's preview shows them:
+  - `lead`: a larger opening paragraph;
+  - `note`: a light green box with a green edge, for what a reader must not miss (a deadline,
+    opening hours);
+  - `button` on a link: the link looks like the site's buttons ("Søg optagelse", a PDF to download);
+  - `columns`: two columns on a wide screen, one on a phone (a list of facilities, contact details);
+  - `center`: centred text, or a centred picture.
+- Any other class in a text does nothing.
+- The site looks as gahk.dk did before it moved: the same fonts, colours, sizes and spacing.
+
 ## Addresses that keep working
 
 - A page is served with or without a trailing slash, without a redirect. Its canonical address is
@@ -148,6 +163,15 @@ intern or its storage is down.
   copies carry none of it. The original is still served at its address, link previews point at it
   (not every link-preview service reads WebP), and pictures without copies show it. So a picture
   that slipped through intern with its GPS position still shows it there.
+- **The stylesheet is built with Tailwind CSS, like intern's.** The templates use the same
+  classes as gahk.dk's old pages did, so the site looks as it did and moving it changes nothing a
+  visitor sees. Tailwind runs only where the stylesheet is built (a developer's machine, and CI to
+  check it). The built file is part of the repository and the release, so the webhost, the
+  release bundle and the tests never need Node.
+- **Classes for texts describe their purpose.** A text from intern never holds Tailwind's classes:
+  Tailwind only writes styles for classes it finds in the templates, and a stored text would tie
+  the content to Tailwind's names. `note` or `lead` keep their meaning if the design changes, and a
+  richer editor can offer them as buttons later.
 - **Texts are cleaned on gahk.dk too.** intern removes scripts and the like before it saves a text;
   gahk.dk removes them again, with exactly the same rules, before it shows one. Nothing an editor
   can do on intern is lost by it.

@@ -34,21 +34,21 @@
   <link rel="stylesheet" href="{{ static_url('css/site.css') }}">
 {% block head %}{% endblock %}
 </head>
-<body>
-  <header class="site-header">
-    <div class="site-header__bar">
-      <a href="/" class="site-brand">
-        <img src="{{ static_url('img/lamassu-128.png') }}" alt="" width="80" height="64" class="site-brand__logo">
-        <span class="site-brand__name font-display">{{ site_name }}</span>
+<body class="min-h-screen flex flex-col bg-gray-50 text-gray-900">
+  <header class="bg-emerald-800 text-white shadow">
+    <div class="max-w-5xl mx-auto w-full px-4 h-20 flex items-center gap-3">
+      <a href="/" class="flex items-center gap-3 min-w-0">
+        <img src="{{ static_url('img/lamassu-128.png') }}" alt="" width="80" height="64" class="h-14 sm:h-16 w-auto object-contain shrink-0">
+        <span class="font-display text-lg sm:text-xl text-white">{{ site_name }}</span>
       </a>
-      <span class="site-header__spacer"></span>
-      <a href="{{ intern_url }}/" class="site-intern">Intern&nbsp;›</a>
+      <span class="flex-1"></span>
+      <a href="{{ intern_url }}/" class="text-xs uppercase tracking-wide text-white/70 hover:text-white whitespace-nowrap">Intern&nbsp;›</a>
     </div>
 {% if menu %}
-    <nav class="site-nav" aria-label="Hovedmenu">
-      <ul>
+    <nav class="bg-emerald-900/40" aria-label="Hovedmenu">
+      <ul class="max-w-5xl mx-auto w-full px-4 py-2 flex flex-wrap gap-x-5 gap-y-1 uppercase text-sm">
 {% for item in menu %}
-        <li><a href="{{ item.url }}"{% if item.url == current_url %} aria-current="page"{% endif %}>{{ item.label }}</a></li>
+        <li><a class="text-white/90 hover:text-white aria-[current=page]:text-white" href="{{ item.url }}"{% if item.url == current_url %} aria-current="page"{% endif %}>{{ item.label }}</a></li>
 {% endfor %}
       </ul>
     </nav>
@@ -57,24 +57,24 @@
 
 {% block hero %}
 {% set hero_image = default_background %}
-  <section class="hero{% if not hero_image %} hero--plain{% endif %}">
+  <section class="relative h-56 overflow-hidden {{ 'bg-gray-800' if hero_image else 'bg-linear-160 from-emerald-800 to-emerald-900' }}">
 {% if hero_image %}
     {{ site.hero_img(hero_image) }}
-    <div class="hero__shade"></div>
+    <div class="absolute inset-0 bg-gradient-to-t from-black/70 to-black/10"></div>
 {% endif %}
-    <div class="hero__inner">
+    <div class="relative max-w-3xl mx-auto h-full w-full flex items-end px-6 pb-5">
 {% block hero_title %}{% endblock %}
     </div>
   </section>
 {% endblock %}
 
 {% block body_main %}
-  <main class="main">
+  <main class="flex-1 w-full max-w-3xl mx-auto px-6 py-8">
 {% block content %}{% endblock %}
   </main>
 {% endblock %}
 
-  <footer class="site-footer">
+  <footer class="bg-gray-100 text-gray-500 text-xs text-center py-5">
     G. A. Hagemanns Kollegium · Kristianiagade 10 · 2100 København Ø
   </footer>
 {% if not site.preview %}

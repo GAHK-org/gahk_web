@@ -1,0 +1,144 @@
+/* gahk.dk's stylesheet, built with Tailwind CSS (the same version as intern's).
+
+     npm run build:css    styles/site.css -> src/gahk_web/static/css/site.css
+     npm run watch:css    the same, again on every change (task css:watch)
+
+   The built file is committed: the tests, the release bundle and the webhost never need Node. The
+   pre-commit hook rebuilds it when a template or this file changes, and CI fails when it is stale.
+
+   The templates use Tailwind's classes as gahk.dk's old pages (intern's Tailwind build) did, with the
+   same base rules and components below, so the site looks as it did. Only the templates are
+   scanned: classes in page bodies come from intern's editor at run time, so they get styles of their
+   own below (.prose-gahk), never Tailwind utilities. */
+
+@import "tailwindcss" source(none);
+@source "../src/gahk_web/templates";
+
+/* ---- Fonts (self-hosted, latin subset: covers æ, ø, å). Paths are relative to the built file. ---- */
+@font-face {
+  font-family: "Julius Sans One";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/julius-sans-one-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Ubuntu";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/ubuntu-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Ubuntu";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../fonts/ubuntu-500.woff2") format("woff2");
+}
+
+/* ---- Design tokens (the same as intern's styles.css) ---- */
+:root {
+  --paper: #F6F5F1; --surface: #FFFFFF; --surface-2: #FBFAF7; --sunken: #F1EFE8;
+  --border: #E7E4DB; --border-strong: #D8D5CA;
+  --ink: #1A231D; --muted: #616B62; --faint: #8A9188;
+  --green: #1F5A3A; --green-700: #184A30; --green-050: #EAF2EC; --green-100: #D9E8DD;
+  --brass: #A9822F; --brass-ink: #7A5E1E;
+  --pos: #2E7D4F; --neg: #B23A3A; --neg-bg: #F6E7E5;
+  --radius: 12px; --radius-sm: 9px;
+  --shadow: 0 1px 2px rgba(24,40,30,.05), 0 8px 24px -12px rgba(24,40,30,.14);
+}
+
+/* ---- Element defaults (intern's base layer) ---- */
+@layer base {
+  body { font-family: "Ubuntu", system-ui, "Segoe UI", Roboto, sans-serif; background: var(--paper); color: var(--ink); }
+  h1 { @apply text-2xl font-bold my-3; letter-spacing: -.01em; text-wrap: balance; }
+  h2 { @apply text-lg font-semibold my-2; }
+  h3 { text-wrap: balance; }
+  label { @apply block font-semibold mt-3 mb-1; }
+  input[type=text], input[type=email], input[type=number], input[type=search], textarea, select {
+    @apply w-full rounded-md p-2;
+    border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink);
+  }
+  input:focus, textarea:focus, select:focus { outline: 2px solid var(--green); outline-offset: 1px; border-color: var(--green); }
+  th { @apply text-left; }
+}
+
+@layer components {
+  /* The display face sets only the family: a heading keeps its weight, as on the old pages. */
+  .font-display { font-family: "Julius Sans One", sans-serif; }
+
+  /* ---- intern's components ---- */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; margin: 16px 0; }
+  .muted { color: var(--muted); }
+  .errorlist { color: var(--neg); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px; font: inherit; font-size: 14px; font-weight: 600; line-height: 1.1;
+    border: 1px solid transparent; border-radius: var(--radius-sm); padding: 8px 15px; cursor: pointer; text-decoration: none;
+    background: var(--green); color: #fff;
+  }
+  .btn:hover { background: var(--green-700); color: #fff; }
+  :focus-visible { outline: 2px solid var(--green); outline-offset: 2px; border-radius: 8px; }
+
+  /* ---- Classes the Python code writes (render.py) ---- */
+  /* The picture in a hero band: Site.hero_img. */
+  .hero__img { @apply absolute inset-0 w-full h-full max-w-none object-cover; }
+  /* .page-stage--photo: a page's own picture, set in a <style> in its head (Site.background_css). */
+
+  /* "Rediger siden": shown only to editors (intern sets the gahk_editor cookie). */
+  .editor-link {
+    @apply fixed right-4 bottom-4 z-50 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-xl;
+    background: var(--brass);
+  }
+  .editor-link:hover { background: var(--brass-ink); }
+
+  /* ---- Page bodies: HTML from the editor on intern, and years of legacy CKEditor output ---- */
+  /* Where a body sits in a box of its own (a page's card, a news item), the template adds flow-root,
+     so a floated picture stays inside it. Not on the front page: there it would keep the last
+     paragraph's margin from merging with the lists' below, as it did on the old site. */
+  .prose-gahk { @apply leading-relaxed text-gray-800; overflow-wrap: break-word; }
+  .prose-gahk p { @apply my-3; }
+  .prose-gahk h2 { @apply text-xl font-semibold mt-6 mb-2; }
+  .prose-gahk h3 { @apply text-lg font-semibold mt-4 mb-1; }
+  .prose-gahk h4 { @apply text-base font-semibold mt-4 mb-1; }
+  .prose-gahk ul { @apply list-disc ml-6 my-3; }
+  .prose-gahk ol { @apply list-decimal ml-6 my-3; }
+  .prose-gahk a { @apply text-emerald-700 underline; overflow-wrap: anywhere; }
+  /* Legacy bodies carry inline width/height on images; never let them overflow or squash. */
+  .prose-gahk img { @apply rounded my-3; max-width: 100% !important; height: auto !important; }
+  .prose-gahk img[style*="float: left"], .prose-gahk img[style*="float:left"], .prose-gahk img[align=left] { @apply mr-4; }
+  .prose-gahk img[style*="float: right"], .prose-gahk img[style*="float:right"], .prose-gahk img[align=right] { @apply ml-4; }
+  .prose-gahk blockquote { @apply border-l-4 border-emerald-700 pl-4 my-4 italic text-gray-700; }
+  .prose-gahk hr { @apply my-6 border-t; border-color: var(--border); }
+  .prose-gahk code { @apply px-1 py-0.5 rounded text-[0.9em]; background: var(--green-050); }
+  .prose-gahk pre { @apply p-3 my-3 rounded overflow-x-auto text-sm; background: #f6f8fa; }
+  .prose-gahk pre code { @apply p-0 bg-transparent; }
+  /* A wide table scrolls inside its own box, so the page never scrolls sideways. */
+  .prose-gahk table { @apply my-4 w-full text-sm border-collapse; display: block; overflow-x: auto; }
+  .prose-gahk th, .prose-gahk td { @apply px-3 py-2 text-left align-top; border: 1px solid var(--border); }
+  .prose-gahk th { @apply font-semibold; background: var(--green-050); }
+  .prose-gahk iframe, .prose-gahk video { max-width: 100%; }
+
+  /* Classes an editor can give an element in the editor's source view (spec/features/website.md). */
+  .prose-gahk .lead { @apply text-lg text-gray-700; }
+  .prose-gahk .note { @apply my-4 rounded-r-lg border-l-4 border-emerald-700 bg-emerald-50 px-4 py-3; }
+  .prose-gahk .note > :first-child { margin-top: 0; }
+  .prose-gahk .note > :last-child { margin-bottom: 0; }
+  .prose-gahk a.button { @apply my-1; }
+  .prose-gahk a.button {
+    display: inline-flex; align-items: center; font-size: 14px; font-weight: 600; line-height: 1.1;
+    border-radius: var(--radius-sm); padding: 8px 15px; text-decoration: none;
+    background: var(--green); color: #fff;
+  }
+  .prose-gahk a.button:hover { background: var(--green-700); color: #fff; }
+  .prose-gahk .columns { @apply gap-8 sm:columns-2; }
+  .prose-gahk .columns > * { break-inside: avoid; }
+  .prose-gahk .center { text-align: center; }
+  .prose-gahk img.center { display: block; margin-inline: auto; }
+
+  /* On a phone a floated picture would leave a sliver of text beside it: stack instead. */
+  @media (max-width: 639px) {
+    .prose-gahk img { float: none !important; display: block; margin: .75rem auto !important; }
+    .prose-gahk [style*="width"] { max-width: 100% !important; }
+  }
+}

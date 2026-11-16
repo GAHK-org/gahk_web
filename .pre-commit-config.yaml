@@ -30,3 +30,14 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      # The committed stylesheet is built from styles/site.css and the classes in the templates. When
+      # either changes, this rebuilds it; a rebuilt file fails the commit, as any hook that writes
+      # does: stage src/gahk_web/static/css/site.css and commit again. Needs Node (task css:install).
+      - id: tailwind-css
+        name: Tailwind stylesheet (src/gahk_web/static/css/site.css)
+        entry: npm run --silent build:css
+        language: system
+        files: ^(styles/|src/gahk_web/templates/.*\.html$|package(-lock)?\.json$)
+        pass_filenames: false
+        require_serial: true
