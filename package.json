@@ -7,7 +7,7 @@
     "watch:css": "tailwindcss --input styles/site.css --output src/gahk_web/static/css/site.css --minify --watch"
   },
   "devDependencies": {
-    "@tailwindcss/cli": "4.3.1",
-    "tailwindcss": "4.3.1"
+    "@tailwindcss/cli": "4.3.5",
+    "tailwindcss": "4.3.5"
   }
 }
