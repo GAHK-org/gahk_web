@@ -43,3 +43,13 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+
+  # The fake webhost of the end-to-end test (scripts/fake_webhost/Dockerfile). It is on Debian's
+  # codename tag, trixie-slim, because the real webhost runs trixie: Dependabot does not move a
+  # codename tag, so this watches the file without proposing a Debian release the webhost lacks.
+  - package-ecosystem: "docker"
+    directory: "/scripts/fake_webhost"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "infra"]
