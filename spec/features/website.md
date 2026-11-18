@@ -17,8 +17,8 @@ intern or its storage is down.
   other sites.
 - `/begivenheder/` lists the upcoming events, then up to 20 past events and the 40 latest news items.
   An event moves from upcoming to past on its day in Copenhagen time, even if nobody edits anything.
-- `/optagelse/` is an ordinary page: the criteria and the rent. The two forms have their own pages
-  (see [admissions](admissions.md)).
+- `/optagelse/` is a page of its own kind: see [Pages with a layout of their own](#pages-with-a-layout-of-their-own).
+  The two forms have their own pages (see [admissions](admissions.md)).
 - Each page has a description for search engines and link previews, either the editors' own or a
   general one. The site has a sitemap and a robots file.
 
@@ -36,6 +36,21 @@ intern or its storage is down.
   - `center`: centred text, or a centred picture.
 - Any other class in a text does nothing.
 - The site looks as gahk.dk did before it moved: the same fonts, colours, sizes and spacing.
+
+## Pages with a layout of their own
+
+- A page can be of a *page type*. Such a page has a fixed layout and, instead of one text, a few
+  texts of its own (*fields*) that the editors fill in on intern. The layout decides where each
+  field goes. A field left empty leaves its part out.
+- The admissions page, `/optagelse/`, is the only one so far. It looks as gahk.dk's old admissions
+  page did: the picture band with the title, then
+  - **the text at the top**;
+  - three fixed cards, *Trin 1–3*, on how to apply;
+  - **the box**: the criteria, the rent, when rooms come free and the language. Its headings are
+    green in the display face, its italics grey. The same box stands beside the tour form;
+  - **the quote** and **who said it**, below the box;
+  - two fixed cards linking to the tour and the sublet forms.
+- A page type gahk.dk does not know renders as an ordinary page with its text.
 
 ## Addresses that keep working
 
@@ -172,6 +187,13 @@ intern or its storage is down.
   Tailwind only writes styles for classes it finds in the templates, and a stored text would tie
   the content to Tailwind's names. `note` or `lead` keep their meaning if the design changes, and a
   richer editor can offer them as buttons later.
+- **Page types are fixed in code, their texts are content.** A layout the old site had (cards,
+  a box beside a form) cannot be built from one free text without tying the content to the design.
+  A page type keeps the design in a template here and leaves the words to the editors. Intern
+  defines which fields a type has and whether each is formatted text or plain text; the template
+  places them. A new kind of page means a template here and a page type on intern.
+- **The box's look comes from the box.** The editors mark headings and italics as they always do;
+  the box makes them green and grey. No colour is stored in a text.
 - **Texts are cleaned on gahk.dk too.** intern removes scripts and the like before it saves a text;
   gahk.dk removes them again, with exactly the same rules, before it shows one. Nothing an editor
   can do on intern is lost by it.

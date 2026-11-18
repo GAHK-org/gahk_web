@@ -22,7 +22,9 @@
 {% if spec.show_criteria %}
       <div class="space-y-4">
         <p class="prose-gahk m-0">{{ spec.intro }}</p>
-{% if admissions_url %}
+{% if criteria %}
+{% include "_criteria_box.html" %}
+{% elif admissions_url %}
         <a class="card block hover:border-emerald-400 hover:shadow-md transition" href="{{ admissions_url }}">
           <div class="font-display text-lg text-emerald-800 mb-1">Før du søger ›</div>
           <p class="text-sm text-gray-600 m-0">Læs om kriterierne for at søge ind, husleje og hvornår der er ledige værelser.</p>

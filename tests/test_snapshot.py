@@ -284,3 +284,32 @@ def test_preview_media_urls_are_checked(url: str) -> None:
     item = snapshot()["pages"][1] | {"background": url}
     with pytest.raises(SnapshotError):
         validate_preview({"kind": "page", "item": item, "media_base": "https://intern.gahk.dk"})
+
+
+def test_a_page_may_have_a_page_type_and_fields() -> None:
+    data = snapshot()
+    data["pages"][4] |= {"page_type": "admissions", "fields": {"intro": "<p>Hej</p>", "quote_by": "G. A."}}
+    assert validate(copy.deepcopy(data)) == data
+    data["pages"][4] |= {"page_type": "not_known_here", "fields": {}}
+    assert validate(copy.deepcopy(data)) == data  # rendered as an ordinary page
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"page_type": "admissions"}, "come together"),
+        ({"fields": {"intro": ""}}, "come together"),
+        ({"page_type": "Admissions", "fields": {}}, "lower-case words"),
+        ({"page_type": "", "fields": {}}, "lower-case words"),
+        ({"page_type": "admissions", "fields": {"Intro": ""}}, "field name"),
+        ({"page_type": "admissions", "fields": {"intro": 1}}, "expected a string"),
+        ({"page_type": "admissions", "fields": ["intro"]}, "expected an object"),
+        ({"page_type": "admissions", "fields": {f"f{i}": "" for i in range(21)}}, "more than 20 fields"),
+        ({"page_type": "admissions", "fields": {"intro": "x" * 1_000_001}}, "longer than"),
+    ],
+)
+def test_page_types_and_fields_are_checked(changes: dict[str, object], message: str) -> None:
+    data = snapshot()
+    data["pages"][4] |= changes
+    with pytest.raises(SnapshotError, match=message):
+        validate(data)

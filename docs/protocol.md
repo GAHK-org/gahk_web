@@ -222,7 +222,8 @@ when no release is installed yet (bootstrap) or the active one is broken.
   "site": {"front_page_id": 1, "default_background": "/images/<sha16>/<name>" | ""},
   "legacy_images": {"/static/legacy/image/upload/images/gang.jpg": "/images/<sha16>/gang.jpg"},
   "pages": [{"id": 1, "path": "", "title": "Velkommen", "body": "<p>…</p>",
-             "background": "/images/<sha16>/<name>" | "", "description": "", "updated_at": "<iso>"}],
+             "background": "/images/<sha16>/<name>" | "", "description": "", "updated_at": "<iso>",
+             "page_type": "admissions", "fields": {"intro": "<p>…</p>", "quote_by": "…"}}],
   "news": [{"id": 3, "title": "…", "body": "<p>…</p>", "published_at": "<iso>"}],
   "events": [{"id": 5, "title": "…", "description": "<p>…</p>", "starts_on": "2026-12-01"}],
   "menu": [{"label": "Hjem", "url": "/"}],
@@ -242,7 +243,16 @@ when no release is installed yet (bootstrap) or the active one is broken.
     `robots.txt`, `s`, `sitemap.xml`, `static`, `sw.js`, `wiki`, `404`.
   - Full paths: `optagelse/ansoeg`, `optagelse/fremlej`, `optagelse/send_rundvisning`,
     `optagelse/send_fremleje`, `optagelse/listansoegninger`, `optagelse/eksport`.
-  - `optagelse` itself is an ordinary page.
+  - `optagelse` itself is a page like any other address.
+- **Page types**: a page may also have `page_type` and `fields`, always both (intern sends them only
+  for a page of a page type). `page_type` and each field's name are lower-case words joined by `_`
+  (at most 40 characters); there are at most 20 fields, each a string as long as a body may be.
+  The page type's template (gahk_web's `render.PAGE_TYPE_TEMPLATES`) decides which fields are HTML,
+  sanitised like a body, and which are plain text, escaped; intern sends each kind accordingly
+  (HTML through the same cleaning and image rewriting as a body). A missing field is empty, and an
+  unknown page type renders as an ordinary page with its `body`.
+  - `admissions` (`/optagelse`): `intro` (HTML), `criteria` (HTML; also shown beside the tour form),
+    `quote` and `quote_by` (plain text).
 - **Images** are content: they all live in intern's image library, and gahk_web's repository holds
   none.
   - intern rewrites `/media/cms/<name>` to `/images/<sha256[:16]>/<basename>`. The basename is

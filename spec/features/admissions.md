@@ -13,8 +13,10 @@ fremleje** (a sublet) at `/optagelse/fremlej`. Both work while intern.gahk.dk is
   checks every submission again when it pulls it. Behind the scenes a choice travels as an English
   code (`residents` for *Fra beboere der fortalte om kollegiet*), which intern stores as it always
   has.
-- Next to the tour form, a **Før du søger** card links to the admissions page (`/optagelse/`) with
-  the criteria and the rent.
+- Next to the tour form stands the admissions page's box with the criteria, the rent, when rooms
+  come free and the language, as on the old site. It is the same text as the box on `/optagelse/`
+  (see [website](website.md#pages-with-a-layout-of-their-own)). Without one, a **Før du søger** card
+  links to `/optagelse/` instead.
 - A mistake shows the form again with the visitor's values and a Danish message at each field.
 - A valid submission leads to a thank-you page. Reloading it sends nothing twice.
 - The old form addresses (`/optagelse/send_rundvisning`, `/optagelse/send_fremleje`) still accept
