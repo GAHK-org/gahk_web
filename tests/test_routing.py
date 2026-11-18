@@ -198,7 +198,8 @@ def test_the_old_apps_page() -> None:
     )
     assert 'var target = "https://intern.gahk.dk/" + rest + location.search + location.hash;' in page
     assert "location.replace(target);" in page
-    assert '<a class="btn" href="https://intern.gahk.dk/install">' in page
+    assert '<a class="btn" id="install-link" href="https://intern.gahk.dk/install?from=old-app">' in page
+    assert 'location.href = "x-safari-" + button.href.split("?")[0];' in page
     assert "GAHK Intern" in page
     assert "<noscript>" in page and 'href="https://intern.gahk.dk/"' in page
     # Nothing from elsewhere, and only the release's unhashed files (the stylesheet's name is hashed).
