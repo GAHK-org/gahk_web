@@ -14,6 +14,10 @@ Every page of the site is a pre-rendered file that Apache serves without startin
 Bodies are sanitised again and their pictures link responsive variants (bodies.py); page
 backgrounds and the top pictures use the variants too (images.Picture).
 
+A page of a page type (a fixed page with fields of its own, intern's cms.page_types) renders with its
+type's template from PAGE_TYPE_TEMPLATES instead of page.html; any other page, an unknown type
+included, renders as an ordinary page.
+
 Each file is written to a temporary name and moved into place, so a visitor never sees half a page,
 and only when its content changed. The generated_files table lists what the last render wrote; a file
 in that list that the new render does not produce (a deleted or moved page) is removed. Nothing else in
@@ -28,6 +32,7 @@ import json
 import os
 import re
 import tempfile
+from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -41,7 +46,7 @@ from sqlalchemy.orm import Session
 
 from .clock import copenhagen_today, now_utc, to_copenhagen
 from .config import Config
-from .forms import SPECS, SUCCESS_PATH, FormSpec
+from .forms import SPECS, SUBLET, SUCCESS_PATH, TOUR, FormSpec
 from .images import Picture, pictures
 from .models import GeneratedFile, SiteState
 from .snapshot import Event, NewsItem, Page, Snapshot, image_href
@@ -71,6 +76,11 @@ ARCHIVE_PAST_EVENTS = 20
 # fixed names, and only while the snapshot redirects them to the front page: every other redirect
 # stays a redirect.
 FRONT_PAGE_ALIASES = ("velkommen",)
+
+# Page types (intern's cms.page_types): their templates, which decide where each field goes and
+# whether it is HTML (Site.body) or plain text (escaped). A field a page lacks is "".
+ADMISSIONS = "admissions"  # /optagelse; its "criteria" also stand beside the tour form
+PAGE_TYPE_TEMPLATES = {ADMISSIONS: "page_types/admissions.html"}
 
 # Files outside <path>/index.html that a render produces. Only these and page folders are ever deleted.
 FIXED_FILES = ("404.html", "503.html", "sitemap.xml", "robots.txt", "sw.js")
@@ -223,6 +233,11 @@ class Site:
     def front_page(self) -> Page | None:
         return self.pages_by_path.get("")
 
+    def page_of_type(self, page_type: str) -> Page | None:
+        """The page of `page_type` (the one with the lowest id, should there be more)."""
+        pages = [page for page in self.snapshot["pages"] if page.get("page_type") == page_type]
+        return min(pages, key=lambda page: page["id"]) if pages else None
+
     # --- lists ---
 
     def upcoming_events(self) -> list[Event]:
@@ -332,6 +347,7 @@ class Site:
             "beacon": not self.preview,
             "base_href": self.cfg.base_url + "/" if self.preview else "",
             "default_background": self.snapshot["site"]["default_background"],
+            "hero_background": "",  # the top band's picture; "" for the default background
         }
         context.update(extra)
         if context["canonical"] and not context["current_url"]:
@@ -353,14 +369,20 @@ class Site:
             return self.home_html(page)
         section_title, section_links = self.section_nav(page)
         url = self.page_url(page["path"])
+        template = PAGE_TYPE_TEMPLATES.get(page.get("page_type", ""), "page.html")
+        background = self.image(page["background"]) or self.snapshot["site"]["default_background"]
         return self._render(
-            "page.html",
+            template,
             page=page,
+            fields=page_fields(page),
+            hero_background=background,
+            tour_url="/" + TOUR.path,
+            sublet_url="/" + SUBLET.path,
             title=page["title"],
             description=page["description"] or DEFAULT_DESCRIPTION,
             canonical=self.absolute(url),
             current_url=url,
-            background=self.image(page["background"]) or self.snapshot["site"]["default_background"],
+            background=background,
             section_title=section_title,
             section_links=section_links,
             edit_url=f"{self.cfg.intern_url}/hjemmeside/sider/{page['id']}/",
@@ -400,7 +422,14 @@ class Site:
         errors: Mapping[str, str] | None = None,
     ) -> str:
         url = "/" + spec.path
-        admissions_page = self.pages_by_path.get("optagelse")
+        # Beside the tour form: the admissions page's criteria, or else a link to the page at
+        # /optagelse (a snapshot from before page types).
+        admissions = self.page_of_type(ADMISSIONS)
+        criteria = page_fields(admissions)["criteria"] if admissions and spec.show_criteria else ""
+        if admissions and admissions["path"]:
+            admissions_url = self.page_url(admissions["path"])
+        else:
+            admissions_url = self.page_url("optagelse") if "optagelse" in self.pages_by_path else ""
         return self._render(
             "form.html",
             spec=spec,
@@ -410,7 +439,8 @@ class Site:
             action=url,
             values=values or {},
             errors=errors or {},
-            admissions_url=self.page_url("optagelse") if admissions_page else "",
+            criteria=criteria,
+            admissions_url=admissions_url,
             turnstile_site_key=self.cfg.turnstile_site_key,
         )
 
@@ -461,6 +491,11 @@ class Site:
         out["robots.txt"] = (self.robots_txt(), None)
         out["sw.js"] = (environment().get_template("sw.js").render(), None)
         return out
+
+
+def page_fields(page: Page) -> "defaultdict[str, str]":
+    """A page's fields, "" for any it does not have. Templates read them as fields["name"]."""
+    return defaultdict(str, page.get("fields", {}))
 
 
 def page_file(path: str) -> str:

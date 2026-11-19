@@ -5,18 +5,26 @@ sanitised once more when they are rendered (bodies.py). Everything else is check
 sizes, path syntax, reserved paths, image URLs. Unknown keys are refused too, so a contract drift
 between intern and gahk.dk shows up as a failed publish on intern instead of silently missing
 content. A refused snapshot changes nothing: the site keeps serving the previous one.
+
+A page of a page type (intern's cms.page_types; render.PAGE_TYPE_TEMPLATES) also has `page_type` and
+`fields`, its texts by name. Both are optional, so a snapshot from before page types still passes,
+and an unknown page type is accepted (it renders as an ordinary page): intern may know a page type
+before this site does. The template of a page type decides which fields are HTML (sanitised when
+rendered, like bodies) and which are plain text (escaped).
 """
 
 import re
 import unicodedata
 from datetime import date, datetime
-from typing import Any, TypedDict, cast
+from typing import Any, NotRequired, TypedDict, cast
 from urllib.parse import quote, unquote
 
 FORMAT = 1
 
 PATH_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*(?:/[a-z0-9]+(?:[-_][a-z0-9]+)*)?$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+# A page type's name and its fields' names: lower-case words joined by "_" ("admissions", "quote_by").
+NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 # /images/<sha16>/<name>. The name is UTF-8 text: words of letters and digits ([^\W_]: any
 # script, Danish letters included) joined by single "-" or "_", then one "." and the extension;
 # image_url_match() checks the rest.
@@ -93,6 +101,8 @@ MAX_LABEL = 60
 MAX_DESCRIPTION = 500
 MAX_BODY = 1_000_000
 MAX_URL = 500
+MAX_NAME = 40
+MAX_FIELDS = 20
 
 
 class Page(TypedDict):
@@ -103,6 +113,8 @@ class Page(TypedDict):
     background: str
     description: str
     updated_at: str
+    page_type: NotRequired[str]
+    fields: NotRequired[dict[str, str]]
 
 
 class NewsItem(TypedDict):
@@ -158,11 +170,13 @@ def is_reserved(path: str) -> bool:
     return path.split("/", 1)[0] in RESERVED_FIRST_SEGMENTS or path in RESERVED_PATHS
 
 
-def _keys(obj: object, where: str, required: set[str]) -> dict[str, Any]:
+def _keys(
+    obj: object, where: str, required: set[str], optional: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     if not isinstance(obj, dict):
         raise SnapshotError(f"{where}: expected an object")
     missing = required - obj.keys()
-    extra = obj.keys() - required
+    extra = obj.keys() - required - optional
     if missing:
         raise SnapshotError(f"{where}: missing {', '.join(sorted(missing))}")
     if extra:
@@ -294,8 +308,32 @@ def is_media_url(text: str) -> bool:
     return True
 
 
+def _name(value: object, where: str) -> str:
+    text = _str(value, where, MAX_NAME, single_line=True)
+    if not NAME_RE.match(text):
+        raise SnapshotError(f"{where}: {text!r} is not a name of lower-case words joined by _")
+    return text
+
+
+def page_fields(value: object, where: str) -> dict[str, str]:
+    """A page type's texts: at most MAX_FIELDS, each a name and a string as long as a body may be."""
+    if not isinstance(value, dict):
+        raise SnapshotError(f"{where}: expected an object")
+    if len(value) > MAX_FIELDS:
+        raise SnapshotError(f"{where}: more than {MAX_FIELDS} fields")
+    for name, text in value.items():
+        _name(name, f"{where}: field name")
+        _str(text, f"{where}.{name}", MAX_BODY)
+    return value
+
+
 def validate_page(obj: object, where: str, image_urls: set[str] | None, *, preview: bool = False) -> Page:
-    item = _keys(obj, where, {"id", "path", "title", "body", "background", "description", "updated_at"})
+    item = _keys(
+        obj,
+        where,
+        {"id", "path", "title", "body", "background", "description", "updated_at"},
+        frozenset({"page_type", "fields"}),
+    )
     _int(item["id"], f"{where}.id")
     page_path(item["path"], f"{where}.path")
     _str(item["title"], f"{where}.title", MAX_TITLE, required=True, single_line=True)
@@ -303,6 +341,11 @@ def validate_page(obj: object, where: str, image_urls: set[str] | None, *, previ
     background(item["background"], f"{where}.background", image_urls, allow_media=preview)
     _str(item["description"], f"{where}.description", MAX_DESCRIPTION, single_line=True)
     _datetime(item["updated_at"], f"{where}.updated_at")
+    if ("page_type" in item) != ("fields" in item):
+        raise SnapshotError(f"{where}: page_type and fields come together")
+    if "page_type" in item:
+        _name(item["page_type"], f"{where}.page_type")
+        page_fields(item["fields"], f"{where}.fields")
     return cast(Page, item)
 
 
