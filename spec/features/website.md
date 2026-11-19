@@ -25,7 +25,11 @@ intern or its storage is down.
 ## Page text
 
 - A page's text keeps the formatting the editor gives it: headings, bold and italics, lists,
-  quotes, links, tables and pictures, placed left, right or in the text.
+  quotes, links, tables and pictures.
+- A picture laid out in the editor is placed left or right with the text beside it, or in the
+  middle on its own line, and is a third, half, three quarters or all of the text's width. On a
+  phone pictures never sit beside the text: they stack, a small one at half the width and the
+  others at full width. The old pages' pictures keep their own sizes, never wider than the text.
 - Five classes give a part of a text a look of its own. An editor sets them in the editor's source
   view (`<p class="note">…</p>`), and intern's preview shows them:
   - `lead`: a larger opening paragraph;

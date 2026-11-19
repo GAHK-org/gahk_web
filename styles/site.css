@@ -136,9 +136,22 @@
   .prose-gahk .center { text-align: center; }
   .prose-gahk img.center { display: block; margin-inline: auto; }
 
-  /* On a phone a floated picture would leave a sliver of text beside it: stack instead. */
+  /* A picture's layout from intern's editor (its picture bar): a placement and a share of the text
+     column's width, so it follows the column down to a phone. Intern draws the same in its editor. */
+  .prose-gahk img.img-left { float: left; margin: .25rem 1.25rem .75rem 0; }
+  .prose-gahk img.img-right { float: right; margin: .25rem 0 .75rem 1.25rem; }
+  .prose-gahk img.img-center { display: block; margin: .75rem auto; }
+  .prose-gahk img.img-small { width: 33%; }
+  .prose-gahk img.img-medium { width: 50%; }
+  .prose-gahk img.img-large { width: 75%; }
+  .prose-gahk img.img-full { width: 100%; }
+
+  /* On a phone a floated picture would leave a sliver of text beside it: stack instead. A small
+     one takes half the width, the rest all of it. */
   @media (max-width: 639px) {
     .prose-gahk img { float: none !important; display: block; margin: .75rem auto !important; }
     .prose-gahk [style*="width"] { max-width: 100% !important; }
+    .prose-gahk img.img-small { width: 50%; }
+    .prose-gahk img.img-medium, .prose-gahk img.img-large { width: 100%; }
   }
 }
