@@ -158,7 +158,7 @@ def test_calendar_is_streamed_from_intern(client: Client, monkeypatch: pytest.Mo
     assert result.body.startswith(b"BEGIN:VCALENDAR")
     assert result.headers["Content-Type"] == "text/calendar; charset=utf-8"
     assert result.headers["Cache-Control"] == "private, no-store"
-    assert seen == {"url": "https://intern.gahk.dk/kalender/abc_DEF-123.ics", "timeout": 20}
+    assert seen == {"url": "https://intern.gahk.dk/calendar/abc_DEF-123.ics", "timeout": 20}
 
 
 def test_calendar_errors_pass_through(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
