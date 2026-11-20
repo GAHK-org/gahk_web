@@ -548,6 +548,16 @@ def rule_lines(text: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip().startswith(("Rewrite", "# Rewrite"))]
 
 
+def test_htaccess_serves_certificate_challenges_before_it_redirects_to_https() -> None:
+    """Let's Encrypt asks for the challenge over plain http, on gahk.dk and www.gahk.dk. Redirected to
+    https://gahk.dk, it fails whenever no valid certificate is installed (found 2026-11-20, when the
+    old certificate had to be removed before its replacement could be issued)."""
+    lines = rule_lines(HTACCESS.read_text())
+    challenge = lines.index(r"RewriteRule ^\.well-known/acme-challenge/ - [L]")
+    first_redirect = next(i for i, line in enumerate(lines) if "%{REQUEST_URI}" in line)
+    assert challenge < first_redirect
+
+
 def test_htaccess_runs_the_stubs_only_through_its_own_rewrites() -> None:
     lines = rule_lines(HTACCESS.read_text())
     refuse = lines.index("RewriteRule ^cgi-bin(?:/|$) - [F,L]")

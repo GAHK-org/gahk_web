@@ -287,8 +287,9 @@ konsoleH → *Services* → *SSL Manager* → Let's Encrypt, for `gahk.dk` and `
   `Strict-Transport-Security` then refuse the site outright.
 - **Right after the switch**, once `@` and `www` resolve to the webhost, re-issue the certificate in
   the SSL Manager (or switch it) with **file (HTTP) validation**. Hetzner then renews it
-  unattended while the account is active. The `.htaccess` lets `/.well-known/` through, and Let's
-  Encrypt follows the http→https redirect. Then delete the `_acme-challenge` TXT records at Punktum.
+  unattended while the account is active. The `.htaccess` serves `/.well-known/acme-challenge/` over
+  plain http on both names, without the http→https and www redirects, so a challenge validates even
+  while no valid certificate is installed. Then delete the `_acme-challenge` TXT records at Punktum.
 - Do not switch on HSTS separately in konsoleH. The `.htaccess` sends
   `Strict-Transport-Security` on https responses once the certificate works.
 
@@ -700,7 +701,7 @@ it; each of those still needs a look on Hetzner only if its Apache is set up dif
    `curl -sI https://gahk.dk/api/health` must show an `X-Gahk-Runner` header.
 2. mod_rewrite supports the lookahead in the dot-file rule: **fake webhost** (PCRE2; `/.htaccess`,
    `/.git/config` and `/static/.tmp-site.css` are refused, `/.well-known/acme-challenge/…` is
-   served). `%{HTTPS}` is `on` for TLS requests, so the http→https rule does not loop: **fake
+   served, over http too, on both names). `%{HTTPS}` is `on` for TLS requests, so the http→https rule does not loop: **fake
    webhost** only, where Apache terminates TLS itself; **not verified on Hetzner**, whose TLS
    termination may sit in front of Apache.
 3. `RewriteCond %{REQUEST_FILENAME}/index.html -f` also matches the trailing-slash form, so both
