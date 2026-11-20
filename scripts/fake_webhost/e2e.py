@@ -1013,8 +1013,12 @@ manifest_url = {MANIFEST_URL}
         expect(
             host.get("/.well-known/acme-challenge/e2e-token").text == "e2e-token.key\n", "no ACME challenge"
         )
-        plain = host.request("GET", "/.well-known/acme-challenge/e2e-token", https=False)
-        expect(plain.status == 301 and plain.header("Location").startswith("https://"), "ACME over http")
+        for name in ("gahk.dk", "www.gahk.dk"):
+            plain = host.request("GET", "/.well-known/acme-challenge/e2e-token", host=name, https=False)
+            expect(
+                plain.status == 200 and plain.text == "e2e-token.key\n",
+                f"ACME over http on {name}: {plain.status} {plain.header('Location')}",
+            )
         expect(
             missing.header("X-Content-Type-Options") == "nosniff", "the app's answers lack Apache's headers"
         )
