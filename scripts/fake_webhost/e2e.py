@@ -1101,7 +1101,7 @@ manifest_url = {MANIFEST_URL}
             preview.text[:300],
         )
         feed = b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
-        host.exec("sh", "-c", "cat > /srv/intern/calendar/tok_E2E-1.ics", data=feed)
+        host.exec("sh", "-c", "cat > /srv/intern/calendar/feed/tok_E2E-1.ics", data=feed)
         calendar = host.get("/kalender/tok_E2E-1.ics")
         expect(
             calendar.status == 200 and calendar.body == feed,
@@ -1111,7 +1111,7 @@ manifest_url = {MANIFEST_URL}
         expect(calendar.header("Cache-Control") == "private, max-age=0", calendar.header("Cache-Control"))
         expect(host.get("/kalender/unknown.ics").status == 404, "an unknown feed is not passed on as 404")
         intern_log = host.read("/var/log/apache2/intern.log").decode()
-        expect("GET /calendar/tok_E2E-1.ics" in intern_log, "the feed was not fetched from intern")
+        expect("GET /calendar/feed/tok_E2E-1.ics" in intern_log, "the feed was not fetched from intern")
 
     def refused(self, host: Webhost) -> None:
         host.access()
