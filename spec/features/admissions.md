@@ -9,6 +9,7 @@ fremleje** (a sublet) at `/optagelse/fremlej`. Both work while intern.gahk.dk is
 - The tour form asks for the full name, e-mail, gender, age, where they heard about the kollegium,
   their motivation, study year, the year they leave, university and field of study. The sublet form
   asks for the same personal fields plus occupation.
+- The motivation is at most 500 characters on both forms, so indstillingen gets a short one.
 - The fields, choices and length limits are the same as intern's admissions forms, because intern
   checks every submission again when it pulls it. Behind the scenes a choice travels as an English
   code (`residents` for *Fra beboere der fortalte om kollegiet*), which intern stores as it always
