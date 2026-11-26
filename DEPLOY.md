@@ -427,7 +427,7 @@ installed app's sake). Check these once DNS has switched:
 | `/static/legacy/image/upload/…` (also with the old site's hash in the name), `/public/image/…` | 301, in one step, to the picture's `/images/<sha16>/<name>` (200) |
 | `/static/legacy/image/elements/lamassu.svg`, `…/lamassu.b8dc291a4e43.svg` (the old logo and favicon) | 301 to `/static/img/lamassu.svg` (200, `image/svg+xml`) |
 | `/favicon.ico`, `/static/icons/icon-192x192.png`, `/static/icons/badge-72x72.png` | 200 |
-| `/kalender/<token>.ics` | 200 `text/calendar`, passed through from intern |
+| `/kalender/<token>.ics` | 200 `text/calendar`, passed through from intern's `/calendar/feed/<token>.ics` |
 | `/sw.js` | 200; now a worker that removes itself (the old one was the intranet's push worker) |
 | `/intern`, `/intern/…` (GET, HEAD) | 200, the page for the old Den Hurtige app (`static/intern-moved.html`): a browser goes on at once to `https://intern.gahk.dk/…`, the prefix dropped (`/intern` to `/`; the rest of the path, the query and the fragment kept); the installed app shows how to install GAHK Intern. Open `https://gahk.dk/intern/den-hurtige/?x=1#top` in a browser: it must land on `https://intern.gahk.dk/den-hurtige/?x=1#top` |
 | `/intern`, `/intern/…` (other methods), `/nyintern`, `/nyintern/…` (every method) | 308 to `https://intern.gahk.dk/…`, the prefix dropped: `/nyintern` and `/intern/` to `/`, `/intern/den-hurtige/send?x=1` to `/den-hurtige/send?x=1`. The rest of the path keeps its bytes (`%C3%A6` comes back as `%c3%a6`); the slashes right after the prefix are dropped, so the path never starts with `//` |

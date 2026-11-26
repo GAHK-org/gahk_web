@@ -65,7 +65,7 @@ RUN a2dismod -q -f mpm_prefork mpm_worker 2>/dev/null; a2enmod -q mpm_event \
  && a2enmod -q rewrite headers expires ssl cgid fcgid suexec mime deflate \
  && a2disconf -q serve-cgi-bin \
  && a2dissite -q 000-default \
- && install -d /srv/releases/download /srv/releases/storage /srv/intern/kalender /etc/apache2/fake-hetzner
+ && install -d /srv/releases/download /srv/releases/storage /srv/intern/calendar/feed /etc/apache2/fake-hetzner
 
 COPY apache/gahk.conf /etc/apache2/sites-available/gahk.conf
 COPY apache/test-services.conf /etc/apache2/sites-available/test-services.conf

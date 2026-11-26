@@ -1,7 +1,8 @@
 """/kalender/<token>.ics: the residents' calendar feeds, passed through from intern.
 
 Every feed URL handed out before the split reads https://gahk.dk/kalender/<token>.ics, and calendar
-apps keep polling it for years. The feed lives on intern.gahk.dk now; this streams it through
+apps keep polling it for years. The feed lives on intern.gahk.dk now, at /calendar/feed/<token>.ics
+(intern's own /kalender/ address redirects there too); this streams it through
 unchanged (status, Content-Type, Cache-Control) and caches nothing. The token is the only credential
 and is passed on as it is. It is the only request gahk.dk ever makes to intern, and it carries no
 secret of gahk.dk's.
@@ -37,7 +38,7 @@ def _stream(response: HTTPResponse | HTTPError) -> Iterator[bytes]:
 
 
 def pass_through(intern_url: str, feed_token: str, method: str) -> Response:
-    url = f"{intern_url}/kalender/{feed_token}.ics"
+    url = f"{intern_url}/calendar/feed/{feed_token}.ics"
     # intern_url is a configured http(s) origin (config.py checks it); the token matched FEED_RE.
     request_headers = {"User-Agent": "gahk.dk-calendar-feed", "Accept": "text/calendar, */*"}
     request = Request(url, method="GET", headers=request_headers)  # noqa: S310

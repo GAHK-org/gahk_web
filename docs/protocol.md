@@ -10,7 +10,8 @@ released first.
 
 - **intern starts every exchange.** gahk.dk never calls an authenticated intern endpoint and holds no
   credentials for intern's database or its S3 storage. Its only request to intern is the
-  unauthenticated calendar pass-through (`/kalender/<token>.ics`).
+  unauthenticated calendar pass-through (gahk.dk's `/kalender/<token>.ics`, fetched from intern's
+  `/calendar/feed/<token>.ics`).
 - **gahk.dk holds no durable data.** It keeps a cache (the last snapshot, images, rendered pages) and
   an outbox (form submissions, visit counts) until intern pulls it.
 - **What intern receives from gahk.dk is untrusted input.** It validates applications and visit
