@@ -90,6 +90,8 @@ _EMAIL = Field("email", "E-mail", "email", required=True, max_length=254)
 _GENDER = Field("gender", "Køn", "select", required=True, choices=GENDER_CHOICES)
 _AGE = Field("age", "Alder", "text", max_length=50)
 _HEARD = Field("heard_about_us", "Hvor hørte du om os?", "select", required=True, choices=HEARD_CHOICES)
+# Indstillingen reads every one, so both forms keep it short (issue gahk_intern#480).
+_MOTIVATION = Field("motivation", "Motivation", "textarea", max_length=500)
 
 
 @dataclass(frozen=True)
@@ -123,7 +125,7 @@ TOUR = FormSpec(
         Field("university", "Universitet", "text", max_length=255),
         Field("field_of_study", "Studieretning", "text", max_length=255),
         _HEARD,
-        Field("motivation", "Motivation", "textarea", max_length=500),
+        _MOTIVATION,
     ),
 )
 
@@ -141,8 +143,7 @@ SUBLET = FormSpec(
         _AGE,
         Field("occupation", "Beskæftigelse", "text", max_length=255),
         _HEARD,
-        # A TextField on intern: no length limit there either (the request size limit caps it).
-        Field("motivation", "Motivation", "textarea"),
+        _MOTIVATION,
     ),
 )
 

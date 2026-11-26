@@ -50,7 +50,7 @@ def test_form_pages_render_the_fields(client: Client, cfg: Config) -> None:
     assert "challenges.cloudflare.com" not in html
     sublet = (cfg.public_html / "optagelse/fremlej/index.html").read_text()
     assert '<label for="id_occupation">Beskæftigelse</label>' in sublet
-    assert 'name="motivation" id="id_motivation" rows="5">' in sublet  # no length cap
+    assert 'name="motivation" id="id_motivation" rows="5" maxlength="500"' in sublet
 
 
 def test_valid_submission_is_queued_and_redirects(client: Client, con: Session) -> None:
@@ -111,11 +111,13 @@ def test_heard_about_us_refuses_the_stored_values() -> None:
     assert errors == {"heard_about_us": forms.INVALID_CHOICE}
 
 
-def test_motivation_of_exactly_500_is_fine() -> None:
-    _cleaned, errors = forms.validate(forms.TOUR, VALID | {"motivation": "m" * 500})
+@pytest.mark.parametrize("spec", [forms.TOUR, forms.SUBLET], ids=["tour", "sublet"])
+def test_motivation_is_capped_at_500(spec: forms.FormSpec) -> None:
+    """Both forms, as on intern (issue intern#480: the sublet form had no cap)."""
+    _cleaned, errors = forms.validate(spec, VALID | {"occupation": "Studerende", "motivation": "m" * 500})
     assert errors == {}
-    _cleaned, errors = forms.validate(forms.SUBLET, VALID | {"motivation": "m" * 5000})
-    assert errors == {}
+    _cleaned, errors = forms.validate(spec, VALID | {"occupation": "Studerende", "motivation": "m" * 501})
+    assert errors == {"motivation": forms.too_long(500, 501)}
 
 
 def test_honeypot(client: Client, con: Session) -> None:
