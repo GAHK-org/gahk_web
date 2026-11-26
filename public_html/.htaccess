@@ -38,6 +38,12 @@ ErrorDocument 404 /404.html
   RewriteEngine On
   RewriteBase /
 
+  # --- Certificate challenges: served as they are, over plain http too, on both names -----------
+  # Let's Encrypt asks http://<name>/.well-known/acme-challenge/<token>. Without this, the redirects
+  # below send it to https://gahk.dk/…, which only works while a valid certificate is installed, so
+  # a first certificate (or a replacement after one was removed) could never be validated.
+  RewriteRule ^\.well-known/acme-challenge/ - [L]
+
   # --- Canonical host and scheme: www.gahk.dk → gahk.dk, http → https ---------------------------
   # [VERIFY ON HETZNER] that %{HTTPS} is "on" behind Hetzner's TLS termination (no redirect loop);
   # it is where Apache terminates TLS itself (the fake webhost).
