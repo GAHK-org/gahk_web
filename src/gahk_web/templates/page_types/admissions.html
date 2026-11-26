@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{#
+  The admissions page (page type "admissions", intern's cms.page_types): the old site's /optagelse.
+  The steps and the two links to the forms are fixed here; intern's editor fills in the fields:
+    intro     HTML, the text at the top
+    criteria  HTML, the box (also beside the tour form, form.html)
+    quote     plain text, the quote below the box, and quote_by, who said it
+  An empty field leaves its part out.
+#}
+
+{% block hero_title %}<h1 class="font-display text-3xl text-white drop-shadow">{{ page.title }}</h1>{% endblock %}
+
+{% block content %}
+{% set criteria = fields["criteria"] %}
+    <div class="space-y-10">
+{% if fields["intro"] %}
+      <section class="prose-gahk">
+        {{ site.body(fields["intro"])|safe }}
+      </section>
+{% endif %}
+
+      <section>
+        <h2 class="font-display text-2xl text-emerald-900 mb-4">Sådan foregår det</h2>
+        <ol class="grid gap-4 sm:grid-cols-3 list-none p-0 m-0">
+          <li class="card">
+            <div class="font-display text-emerald-700 text-sm mb-1">Trin 1</div>
+            <div class="font-semibold mb-1">Tjek kriterierne</div>
+            <p class="text-sm text-gray-600 m-0">Se nedenfor, om du opfylder betingelserne for at søge ind.</p>
+          </li>
+          <li class="card">
+            <div class="font-display text-emerald-700 text-sm mb-1">Trin 2</div>
+            <div class="font-semibold mb-1">Anmod om rundvisning</div>
+            <p class="text-sm text-gray-600 m-0">Udfyld formularen. Vi kontakter dig, hvis der er udsigt til
+            ledige værelser, og din profil passer.</p>
+          </li>
+          <li class="card">
+            <div class="font-display text-emerald-700 text-sm mb-1">Trin 3</div>
+            <div class="font-semibold mb-1">Send ansøgning</div>
+            <p class="text-sm text-gray-600 m-0">Efter rundvisningen sender vi dig et ansøgningsskema til en
+            motiveret ansøgning, hvis du kunne tænke dig at bo sammen med os.</p>
+          </li>
+        </ol>
+      </section>
+{% if criteria %}
+
+{% include "_criteria_box.html" %}
+{% endif %}
+{% if fields["quote"] %}
+
+      <blockquote class="border-l-4 border-emerald-700 pl-4 italic text-gray-700">
+        <p class="mb-2">{{ fields["quote"] }}</p>
+{% if fields["quote_by"] %}
+        <footer class="not-italic text-sm text-gray-500">- {{ fields["quote_by"] }}</footer>
+{% endif %}
+      </blockquote>
+{% endif %}
+
+      <section class="grid gap-4 sm:grid-cols-2">
+        <a href="{{ tour_url }}" class="card block hover:border-emerald-400 hover:shadow-md transition">
+          <div class="font-display text-lg text-emerald-800 mb-1">Anmod om rundvisning ›</div>
+          <p class="text-sm text-gray-600 m-0">For dig, der gerne vil søge om at bo fast på kollegiet.</p>
+        </a>
+        <a href="{{ sublet_url }}" class="card block hover:border-emerald-400 hover:shadow-md transition">
+          <div class="font-display text-lg text-emerald-800 mb-1">Ansøg om fremleje ›</div>
+          <p class="text-sm text-gray-600 m-0">Skal du bo her midlertidigt via en nuværende beboer?</p>
+        </a>
+      </section>
+    </div>
+{% endblock %}

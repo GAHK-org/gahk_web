@@ -136,6 +136,21 @@
   .prose-gahk .center { text-align: center; }
   .prose-gahk img.center { display: block; margin-inline: auto; }
 
+  /* The admissions page's box (_criteria_box.html): the editor's text as the old site's criteria
+     panel had it. A heading starts a section, green in the display face; the text is small; italics
+     are grey, as the old panel's English note on language. */
+  .criteria-box { @apply text-sm text-gray-700; overflow-wrap: break-word; }
+  .criteria-box > :first-child { margin-top: 0; }
+  .criteria-box > :last-child { margin-bottom: 0; }
+  .criteria-box :is(h2, h3, h4) { @apply text-lg text-emerald-900 font-normal mt-5 mb-1; font-family: "Julius Sans One", sans-serif; }
+  .criteria-box :is(p, ul, ol) { @apply my-0; }
+  .criteria-box :is(p, ul, ol) + :is(p, ul, ol) { @apply mt-1; }
+  .criteria-box ul { @apply list-disc ml-5; }
+  .criteria-box ol { @apply list-decimal ml-5; }
+  .criteria-box em { @apply text-gray-500; }
+  .criteria-box a { @apply text-emerald-700 underline; overflow-wrap: anywhere; }
+  .criteria-box img { @apply rounded my-2; max-width: 100% !important; height: auto !important; }
+
   /* On a phone a floated picture would leave a sliver of text beside it: stack instead. */
   @media (max-width: 639px) {
     .prose-gahk img { float: none !important; display: block; margin: .75rem auto !important; }

@@ -3,6 +3,7 @@ import json
 import os
 import unicodedata
 from pathlib import Path
+from typing import Any
 
 from conftest import (
     HALLWAY,
@@ -284,3 +285,57 @@ def test_edit_links_follow_the_protocol(client: Client, cfg: Config) -> None:
         html = (cfg.public_html / name).read_text()
         assert f'<a id="edit-link" class="editor-link" href="{edit_url}" hidden>Rediger siden</a>' in html
         assert "gahk_editor=1" in html
+
+
+def admissions_page(**fields: str) -> dict[str, Any]:
+    return page(5, "optagelse", "Optagelse", "", page_type="admissions", fields=fields)
+
+
+def test_the_admissions_page_type_puts_its_fields_in_place(client: Client, cfg: Config) -> None:
+    data = snapshot()
+    data["pages"][4] = admissions_page(
+        intro="<p>Her er dejligt.</p><script>alert(1)</script>",
+        criteria="<h2>Husleje</h2><p><em>Pt. 5.616 kr.</em></p>",
+        quote="«Valget <mellem> dem»",
+        quote_by="Gustav Adolph Hagemann",
+    )
+    publish(client, data)
+    html = (cfg.public_html / "optagelse/index.html").read_text()
+    assert '<h1 class="font-display text-3xl text-white drop-shadow">Optagelse</h1>' in html
+    assert "<p>Her er dejligt.</p>" in html
+    assert "<script>alert" not in html  # HTML fields are sanitised like bodies
+    assert "Trin 3" in html
+    assert '<section class="criteria-box' in html
+    assert "<h2>Husleje</h2><p><em>Pt. 5.616 kr.</em></p>" in html
+    assert "«Valget &lt;mellem&gt; dem»" in html  # plain-text fields are escaped
+    assert "- Gustav Adolph Hagemann</footer>" in html
+    assert 'href="/optagelse/ansoeg"' in html
+    assert 'href="/optagelse/fremlej"' in html
+    assert "page-stage--photo" not in html  # the old page's top band, not a full-page picture
+    tour = (cfg.public_html / "optagelse/ansoeg/index.html").read_text()
+    assert "<h2>Husleje</h2><p><em>Pt. 5.616 kr.</em></p>" in tour
+    assert "Før du søger" not in tour
+    sublet = (cfg.public_html / "optagelse/fremlej/index.html").read_text()
+    assert "criteria-box" not in sublet
+
+
+def test_empty_fields_leave_their_parts_out(client: Client, cfg: Config) -> None:
+    data = snapshot()
+    data["pages"][4] = admissions_page(intro="<p>Kun en indledning</p>")
+    publish(client, data)
+    html = (cfg.public_html / "optagelse/index.html").read_text()
+    assert "<p>Kun en indledning</p>" in html
+    assert "criteria-box" not in html
+    assert "<blockquote" not in html
+    tour = (cfg.public_html / "optagelse/ansoeg/index.html").read_text()
+    assert "criteria-box" not in tour
+    assert "Før du søger" in tour  # no criteria to show: the link to the page instead
+
+
+def test_an_unknown_page_type_renders_as_an_ordinary_page(client: Client, cfg: Config) -> None:
+    data = snapshot()
+    data["pages"][3] |= {"page_type": "from_a_newer_intern", "fields": {"x": "<p>?</p>"}}
+    publish(client, data)
+    html = (cfg.public_html / "kontakt/index.html").read_text()
+    assert "<p>Skriv til os</p>" in html
+    assert "page-stage" in html

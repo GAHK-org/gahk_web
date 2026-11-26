@@ -57,7 +57,7 @@
   </header>
 
 {% block hero %}
-{% set hero_image = default_background %}
+{% set hero_image = hero_background or default_background %}
   <section class="relative h-56 overflow-hidden {{ 'bg-gray-800' if hero_image else 'bg-linear-160 from-emerald-800 to-emerald-900' }}">
 {% if hero_image %}
     {{ site.hero_img(hero_image) }}
